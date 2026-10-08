@@ -123,6 +123,37 @@ and `REALBUD_EVAL_HERMES_CLI` (a pinned Hermes outside `~/.realbud` and
 `~/.hermes`). It refuses without them. The fake arm proves the harness, not a
 model; the live arm has not run yet.
 
+## Jev eval (gate every Jev threshold change)
+
+`scripts/eval-jev.mjs` measures the six Jev uses on fictional labelled cases
+(`scripts/eval-jev/`, 28–36 each, hard negatives included): W1 payer → tenant
+hints (`jevPayerHints`), W3 mail noise (`screenMailNoise`), ledger column naming
+(`jevMapping`), the recipe drifted-control chooser (`runPortalRecipes` on the
+fictional REI portal), the Ask pre-route (`askJevRoute`) and duplicate-bill
+labels and ranking (`rankDuplicateCandidates`; also reports whether a true
+duplicate is ranked first). It calls the real module code through jev-client's own
+`decide`, so request shape, batching, Idempotency-Key and retry are production's.
+
+```bash
+node scripts/eval-jev.mjs --arm fake                       # seeded fake Modelvia: proves harness, grader and sweep
+REALBUD_EVAL_MODEL_KEY=… REALBUD_EVAL_MODEL_BASE_URL=https://…/v1 node scripts/eval-jev.mjs --arm live
+node --test scripts/lib/eval-jev-grade.test.mjs            # wrong-accept counting and the sweep
+```
+
+Flags: `--uses w1,w3,ledger,recipe,ask,bills`, `--seed N` (fake only), `--out <new dir>`
+(default `outputs/eval-jev-<date>/<arm>-…`). `REALBUD_JEV_MODEL` picks the model
+(default `jev-1.13-decisions`). Output: `report.md` and `results.json` with, per
+use, accuracy, coverage, wrong-accepts (accepted but wrong: the safety metric),
+fallback rate, p50/p95 latency, calls, tokens, every raw answer, and a sweep:
+the setting with the most coverage at zero wrong-accepts (and at ≤ 1%) against
+the current one. Exit 0 = ran, 1 = live wrong-accept at current thresholds,
+2 = refused, a failed call, or the grader's replay disagreeing with a module.
+
+A threshold changes only on a live run's evidence, never the fake arm's, and the
+live arm is rerun after the change. The key is read only from that variable,
+held in memory, never printed or saved; data, logs and HOME are a `mkdtemp`
+folder. The live arm has not run yet.
+
 ---
 
 ## Live debug — desktop app (needs worker)

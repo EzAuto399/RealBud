@@ -119,12 +119,37 @@ describe('Jev noise pre-screen', () => {
     const decide = answering(t => t.subject.includes('edge') ? NOISE_THRESHOLD : 0.96);
     expect(await screenMailNoise([mail('a1'), mail('b2', { subject: 'Fictional edge case' })], { decide, known: nobody })).toEqual({ noise: ['b2'], model: MODEL });
   });
-  it.each(['refused', 'budget', 'unavailable', 'timeout', 'invalid'] satisfies JevFailure[])('screens nothing after a %s answer, even when an earlier batch answered', async reason => {
+  it.each(['refused', 'budget', 'unavailable', 'timeout', 'invalid'] satisfies JevFailure[])('keeps answered batches after a %s answer; the failed batch stays unscreened', async reason => {
     const ok = answering(() => 0.99);
-    const decide = vi.fn(async (request: JevRequest): Promise<JevResult> => decide.mock.calls.length === 1 ? ok(request) : { ok: false, reason });
+    const decide = vi.fn(async (request: JevRequest): Promise<JevResult> => decide.mock.calls.length === 2 ? { ok: false, reason } : ok(request));
     const threads = Array.from({ length: 20 }, (_, n) => mail((0xa0 + n).toString(16)));
-    expect(await screenMailNoise(threads, { decide, known: nobody })).toBeNull();
-    expect(decide).toHaveBeenCalledTimes(2);
+    const ids = threads.map(t => t.id);
+    expect(await screenMailNoise(threads, { decide, known: nobody })).toEqual({ noise: [...ids.slice(0, 8), ...ids.slice(16)], model: MODEL });
+    expect(decide).toHaveBeenCalledTimes(3);
+  });
+  it('screens nothing when every call fails or throws', async () => {
+    const threads = Array.from({ length: 20 }, (_, n) => mail((0xa0 + n).toString(16)));
+    const refused = vi.fn(async (): Promise<JevResult> => ({ ok: false, reason: 'refused' }));
+    expect(await screenMailNoise(threads, { decide: refused, known: nobody })).toBeNull();
+    expect(refused).toHaveBeenCalledTimes(3);
+    const throwing = vi.fn(async (): Promise<JevResult> => { throw new Error('fictional Jev failure'); });
+    expect(await screenMailNoise(threads, { decide: throwing, known: nobody })).toBeNull();
+    const ok = answering(() => 0.99);
+    const mixed = vi.fn(async (request: JevRequest): Promise<JevResult> => { if (mixed.mock.calls.length === 1) throw new Error('fictional Jev failure'); return ok(request); });
+    expect((await screenMailNoise(threads, { decide: mixed, known: nobody }))?.noise).toEqual(threads.slice(8).map(t => t.id));
+  });
+  it('keeps at most three calls in flight', async () => {
+    const ok = answering(() => 0.99);
+    let open = 0, most = 0;
+    const decide = vi.fn(async (request: JevRequest): Promise<JevResult> => {
+      most = Math.max(most, ++open);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      open--; return ok(request);
+    });
+    const threads = Array.from({ length: 40 }, (_, n) => mail((0xa0 + n).toString(16)));
+    expect((await screenMailNoise(threads, { decide, known: nobody }))?.noise).toEqual(threads.map(t => t.id));
+    expect(decide).toHaveBeenCalledTimes(5);
+    expect(most).toBe(3);
   });
   it('never sends or screens a thread from a known sender', async () => {
     const suppliers = { version: 1, purpose: 'supplier-directory', revision: 1, importedAt: 0, rejected: [],

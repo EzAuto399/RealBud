@@ -29,13 +29,13 @@ if (isWindows && process.arch !== "x64") throw new Error("This Windows installer
 const executable = isWindows ? "cua-driver.exe" : "cua-driver";
 const nativeLibrary = isWindows ? "cua_driver_sdk.dll" : "libcua_driver_sdk.dylib";
 const release = isWindows ? {
-  version: "0.19.3",
-  file: "cua-driver-rs-0.19.3-windows-x86_64-binary.zip",
-  sha256: "51a316b14ec9667c04106d8aff80d696ded427cb64cef48de09095e4709f583d",
+  version: "0.34.0",
+  file: "cua-driver-rs-0.34.0-windows-x86_64-binary.zip",
+  sha256: "bcc520e50861c7092cf775846fec76ae386d7dcd6b5b408608b0ea4423a8b888",
 } : {
-  version: "0.19.3",
-  file: "cua-driver-rs-0.19.3-darwin-universal-binary.tar.gz",
-  sha256: "733e28a3782ac8d325f8fce8b5d97486c1054af755b40dfd086151b34c79377e",
+  version: "0.34.0",
+  file: "cua-driver-rs-0.34.0-darwin-universal-binary.tar.gz",
+  sha256: "940dc008e0f7c5d217d14c0f247d1ebab91b1bac965f4a649d19e8c789bdfd81",
 };
 if (expectedVersion !== release.version) {
   throw new Error(

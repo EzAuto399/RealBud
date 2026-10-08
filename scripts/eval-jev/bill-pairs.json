@@ -1,0 +1,43 @@
+{
+  "note": "FICTIONAL. Duplicate-bill ranking cases for scripts/eval-jev.mjs, run through server/source-bills.ts rankDuplicateCandidates. Every bill is 'base' with the listed fields changed. 'pairs' are server/source-bills.test.ts's 18 labelled pairs (one candidate each); 'groups' add several candidates per bill under review, true duplicates never listed first, to measure ranking. same = the candidate is the same bill.",
+  "base": { "propertyId": "book-fict0001", "kind": "Water", "vendor": "Fictional Water Co", "amountCents": 12345, "currency": "AUD", "invoiceDate": "2026-01-31", "dueDate": "2026-02-20", "note": "Tenant Fictional Person called about it", "invoiceNumber": "FW-1001", "workDescription": "Fictional tenant name in the work notes" },
+  "pairs": [
+    { "name": "resent identical invoice", "bill": {}, "candidate": {}, "same": true },
+    { "name": "supplier name recased", "bill": {}, "candidate": { "vendor": "FICTIONAL WATER CO" }, "same": true },
+    { "name": "amount not yet confirmed on the saved copy", "bill": {}, "candidate": { "amountCents": null }, "same": true },
+    { "name": "saved copy has the supplier reference", "bill": {}, "candidate": { "supplierReference": "REI-FICT-77" }, "same": true },
+    { "name": "same reference, one copy missing the invoice number", "bill": { "invoiceNumber": null, "supplierReference": "REI-FICT-77" }, "candidate": { "supplierReference": "REI-FICT-77" }, "same": true },
+    { "name": "reminder repeats the same invoice", "bill": { "note": "Reminder" }, "candidate": {}, "same": true },
+    { "name": "strata levy, one copy with invoice number", "bill": { "vendor": "Fictional Strata", "kind": "Strata", "invoiceNumber": null, "amountCents": 90000 }, "candidate": { "vendor": "Fictional Strata", "kind": "Strata", "invoiceNumber": "ST-9", "amountCents": 90000 }, "same": true },
+    { "name": "same supplier and amount, next month (hard negative)", "bill": { "invoiceDate": "2026-02-28", "dueDate": "2026-03-20", "invoiceNumber": "FW-1002" }, "candidate": {}, "same": false },
+    { "name": "same supplier and amount, next month, no invoice numbers (hard negative)", "bill": { "invoiceDate": "2026-02-28", "dueDate": "2026-03-20", "invoiceNumber": null }, "candidate": { "invoiceNumber": null }, "same": false },
+    { "name": "same invoice number, different supplier (hard negative)", "bill": { "vendor": "Fictional Power Ltd", "kind": "Electricity", "amountCents": 20990 }, "candidate": {}, "same": false },
+    { "name": "same invoice number and amount, different supplier (hard negative)", "bill": { "vendor": "Fictional Gas Pty" }, "candidate": {}, "same": false },
+    { "name": "same invoice number, different property", "bill": { "propertyId": "book-fict0002" }, "candidate": {}, "same": false },
+    { "name": "same supplier and dates, different property", "bill": { "propertyId": "book-fict0002", "invoiceNumber": "FW-2001" }, "candidate": {}, "same": false },
+    { "name": "same supplier and date, different bill kind", "bill": { "kind": "Sewerage", "invoiceNumber": "FW-1001S" }, "candidate": {}, "same": false },
+    { "name": "quarterly repeat three months on", "bill": { "invoiceDate": "2026-04-30", "dueDate": "2026-05-20", "invoiceNumber": "FW-1004" }, "candidate": {}, "same": false },
+    { "name": "council rates instalment two of four", "bill": { "vendor": "Fictional Council", "kind": "Rates", "amountCents": 45000, "invoiceNumber": "R-2", "dueDate": "2026-05-31" }, "candidate": { "vendor": "Fictional Council", "kind": "Rates", "amountCents": 45000, "invoiceNumber": "R-1" }, "same": false },
+    { "name": "same amount and date, different supplier, no invoice numbers", "bill": { "vendor": "Fictional Gardens", "kind": "Garden", "invoiceNumber": null }, "candidate": { "invoiceNumber": null }, "same": false },
+    { "name": "same supplier and date, different amount and invoice", "bill": { "amountCents": 9900, "invoiceNumber": "FW-1009" }, "candidate": {}, "same": false }
+  ],
+  "groups": [
+    { "id": "group-water-march", "bill": { "invoiceDate": "2026-03-31", "dueDate": "2026-04-20", "invoiceNumber": "FW-1003" }, "candidates": [
+      { "name": "water, next month same amount", "facts": { "invoiceDate": "2026-04-30", "dueDate": "2026-05-20", "invoiceNumber": "FW-1004" }, "same": false },
+      { "name": "water, same invoice, other property", "facts": { "propertyId": "book-fict0003", "invoiceDate": "2026-03-31", "dueDate": "2026-04-20", "invoiceNumber": "FW-3003" }, "same": false },
+      { "name": "water, resent identical", "facts": { "invoiceDate": "2026-03-31", "dueDate": "2026-04-20", "invoiceNumber": "FW-1003" }, "same": true } ] },
+    { "id": "group-strata-q3", "bill": { "vendor": "Fictional Strata", "kind": "Strata", "amountCents": 90000, "invoiceDate": "2026-07-01", "dueDate": "2026-07-31", "invoiceNumber": "ST-31" }, "candidates": [
+      { "name": "strata, previous quarter same amount", "facts": { "vendor": "Fictional Strata", "kind": "Strata", "amountCents": 90000, "invoiceDate": "2026-04-01", "dueDate": "2026-04-30", "invoiceNumber": "ST-21" }, "same": false },
+      { "name": "strata, other manager same number", "facts": { "vendor": "Fictional Body Corporate Services", "kind": "Strata", "amountCents": 90000, "invoiceDate": "2026-07-01", "dueDate": "2026-07-31", "invoiceNumber": "ST-31" }, "same": false },
+      { "name": "strata, recased supplier with reference", "facts": { "vendor": "FICTIONAL STRATA", "kind": "Strata", "amountCents": 90000, "invoiceDate": "2026-07-01", "dueDate": "2026-07-31", "invoiceNumber": "ST-31", "supplierReference": "REI-FICT-31" }, "same": true } ] },
+    { "id": "group-rates-no-duplicate", "bill": { "vendor": "Fictional Council", "kind": "Rates", "amountCents": 45000, "invoiceDate": "2026-07-15", "dueDate": "2026-08-31", "invoiceNumber": "R-3" }, "candidates": [
+      { "name": "rates, instalment two", "facts": { "vendor": "Fictional Council", "kind": "Rates", "amountCents": 45000, "invoiceDate": "2026-07-15", "dueDate": "2026-05-31", "invoiceNumber": "R-2" }, "same": false },
+      { "name": "rates, instalment four", "facts": { "vendor": "Fictional Council", "kind": "Rates", "amountCents": 45000, "invoiceDate": "2026-07-15", "dueDate": "2026-11-30", "invoiceNumber": "R-4" }, "same": false },
+      { "name": "rates, same instalment other property", "facts": { "propertyId": "book-fict0002", "vendor": "Fictional Council", "kind": "Rates", "amountCents": 45000, "invoiceDate": "2026-07-15", "dueDate": "2026-08-31", "invoiceNumber": "R-3" }, "same": false } ] },
+    { "id": "group-plumbing", "bill": { "vendor": "Fictional Plumbing", "kind": "Repairs", "amountCents": 22000, "invoiceDate": "2026-08-04", "dueDate": "2026-08-18", "invoiceNumber": "PL-88" }, "candidates": [
+      { "name": "plumbing, other plumber same number and amount", "facts": { "vendor": "Fictional Pipes Pty", "kind": "Repairs", "amountCents": 22000, "invoiceDate": "2026-08-04", "dueDate": "2026-08-18", "invoiceNumber": "PL-88" }, "same": false },
+      { "name": "plumbing, next job a week later", "facts": { "vendor": "Fictional Plumbing", "kind": "Repairs", "amountCents": 22000, "invoiceDate": "2026-08-11", "dueDate": "2026-08-25", "invoiceNumber": "PL-89" }, "same": false },
+      { "name": "plumbing, saved before the amount was confirmed", "facts": { "vendor": "Fictional Plumbing", "kind": "Repairs", "amountCents": null, "invoiceDate": "2026-08-04", "dueDate": "2026-08-18", "invoiceNumber": "PL-88" }, "same": true },
+      { "name": "plumbing, payment reminder", "facts": { "vendor": "Fictional Plumbing", "kind": "Repairs", "amountCents": 22000, "invoiceDate": "2026-08-04", "dueDate": "2026-08-18", "invoiceNumber": "PL-88", "note": "Payment reminder" }, "same": true } ] }
+  ]
+}

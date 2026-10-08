@@ -196,6 +196,8 @@ export interface SendTurnInput {
     workflowSettings?: import("./workflow-settings-broker.ts").BudWorkflowSettings;
     /** The office's bank feed, read-only (`bank_accounts_list`, `bank_transactions_list`). No card, no writes. */
     bankSource?: import("./bank-source-broker.ts").BudBankSource;
+    /** Typed Jev questions (`decide`): suggestions only, never an approval. Bound only for a person's own attended Ask while Jev is ready. */
+    decisions?: import("./decide-broker.ts").BudDecisions;
     /** The office's added connectors: reviewed, allowlisted tools of active connectors. Reads have no card; writes show the one-time card; credentials stay with the host. */
     mcpConnectors?: import("./mcp-connector-broker.ts").BudMcpConnectors;
     /** Cloud computer, reached through RealBud's REST-to-MCP adapter. */

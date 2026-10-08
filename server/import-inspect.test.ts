@@ -11,6 +11,7 @@ import { WINDOWS_PROFILE_TEST_OPTIONS } from "./testing/private-profile-fixture.
 import { clearManagedAccess, FICTIONAL_GRANTED_KEY, grantManagedAccess } from "./testing/managed-grant.ts";
 import { startAskModelRelay } from "./ask-model-relay.ts";
 import { propertyProfileDir } from "./hermes-pack.ts";
+import type { JevAnswer, JevRequest, JevResult } from "./jev-client.ts";
 
 const CSV = `Property,Days in arrears,Rent received,Levies
 12 Oak St,5,false,false
@@ -128,5 +129,103 @@ describe("inspectLedgerColumns", () => {
     const result = await inspectLedgerColumns(CSV);
     expect(result.mapping).toBeNull();
     expect(result.detail).toMatch(/tests/);
+  });
+
+  describe("Jev first", () => {
+    const sure = (choice: string): JevAnswer => ({ type: "choice", choice, confidence: 0.95, probabilities: { [choice]: 0.95, none: 0.05 } });
+    const all = { identity: sure("h0"), daysSinceDue: sure("h1"), rentLanded: sure("h2"), levyPaid: sure("h3") };
+    const jev = (answers: Record<string, JevAnswer> | (() => Promise<JevResult>), ready = true) => {
+      const asked: JevRequest[] = [];
+      const decide = async (request: JevRequest): Promise<JevResult> => {
+        asked.push(request);
+        return typeof answers === "function" ? answers() : { ok: true, model: "fictional-decider", ms: 1, answers };
+      };
+      return { asked, jev: { decide, ready: () => ready } };
+    };
+    const BUD = `{"mapping":{"identity":"Property","daysSinceDue":"Days in arrears"},"confidence":"high"}`;
+
+    it("names every role from the header names alone, without running Bud", async () => {
+      const { asked, jev: injected } = jev(all);
+      const result = await inspectLedgerColumns(CSV, { jev: injected });
+      expect(result).toEqual({ mapping: { identity: "Property", daysSinceDue: "Days in arrears", rentLanded: "Rent received", levyPaid: "Levies" }, detail: "Bud read the columns." });
+      expect(asked).toHaveLength(1);
+      expect(asked[0].state).toEqual({ headers: ["Property", "Days in arrears", "Rent received", "Levies"] });
+      expect(Object.keys(asked[0].questions)).toEqual(["identity", "daysSinceDue", "rentLanded", "levyPaid"]);
+      expect(asked[0].questions.identity).toMatchObject({ type: "choice", criteria: { h0: "Property", h3: "Levies", none: expect.any(String) } });
+      expect(JSON.stringify(asked[0])).not.toContain("12 Oak St");
+    });
+
+    it.each([
+      ["a low-confidence role", { ...all, levyPaid: { ...sure("h3"), confidence: 0.8 } }],
+      ["a narrow lead", { ...all, levyPaid: { type: "choice", choice: "h3", confidence: 0.9, probabilities: { h3: 0.6, h2: 0.4 } } }],
+      ["missing probabilities", { ...all, levyPaid: { type: "choice", choice: "h3", confidence: 0.99 } }],
+      ["none for a role", { ...all, levyPaid: sure("none") }],
+      ["two roles on one header", { ...all, levyPaid: sure("h2") }],
+      ["an option that is not a header", { ...all, levyPaid: sure("h9") }],
+    ] as [string, Record<string, JevAnswer>][])("falls back to Bud unchanged on %s", async (_label, answers) => {
+      const { dir, script } = fakeHermes(BUD);
+      dirs.push(dir);
+      const { asked, jev: injected } = jev(answers);
+      const result = await inspectLedgerColumns(CSV, { cli: script, root: dir, jev: injected });
+      expect(asked).toHaveLength(1);
+      expect(result).toEqual({ mapping: { identity: "Property", daysSinceDue: "Days in arrears" }, detail: "Bud read the columns." });
+    });
+
+    it("falls back to Bud when Jev fails, throws or is not ready", async () => {
+      const { dir, script } = fakeHermes(BUD);
+      dirs.push(dir);
+      for (const answers of [async (): Promise<JevResult> => ({ ok: false, reason: "unavailable" }), async (): Promise<JevResult> => { throw new Error("fictional Jev failure"); }]) {
+        const { asked, jev: injected } = jev(answers);
+        expect((await inspectLedgerColumns(CSV, { cli: script, root: dir, jev: injected })).mapping).toEqual({ identity: "Property", daysSinceDue: "Days in arrears" });
+        expect(asked).toHaveLength(1);
+      }
+      const { asked, jev: off } = jev(all, false);
+      expect((await inspectLedgerColumns(CSV, { cli: script, root: dir, jev: off })).mapping).toEqual({ identity: "Property", daysSinceDue: "Days in arrears" });
+      expect(asked).toHaveLength(0);
+    });
+
+    it("sends unsafe header names only as option text under safe keys, and maps back to the real headers", async () => {
+      const csv = `__proto__,Days (in arrears)!,constructor,Levy paid? y/n\n12 Oak St,5,false,false\n`;
+      const { asked, jev: injected } = jev(all);
+      const result = await inspectLedgerColumns(csv, { jev: injected });
+      expect(result.mapping).toEqual({ identity: "__proto__", daysSinceDue: "Days (in arrears)!", rentLanded: "constructor", levyPaid: "Levy paid? y/n" });
+      for (const question of Object.values(asked[0].questions)) {
+        if (question.type !== "choice") throw new Error("expected choice");
+        expect(Object.keys(question.criteria)).toEqual(["h0", "h1", "h2", "h3", "none"]);
+      }
+    });
+
+    it("redacts credential-shaped header names before Jev sees them, and maps back to the real header", async () => {
+      const secret = "Bearer fictionalbearer0123456789";
+      const csv = `Property,Days in arrears,Rent received,${secret}\n12 Oak St,5,false,false\n`;
+      const { asked, jev: injected } = jev(all);
+      const result = await inspectLedgerColumns(csv, { jev: injected });
+      expect(result.mapping).toMatchObject({ levyPaid: secret });
+      expect(JSON.stringify(asked[0])).not.toContain("fictionalbearer0123456789");
+      expect((asked[0].state as { headers: string[] }).headers[3]).toMatch(/redacted/);
+    });
+
+    it.each([
+      ["mostly digits", "12 Oak St,5,4021,false"],
+      ["an email address", "12 Oak St,tenant@example.test,Rent,Levy"],
+      ["a currency amount", "12 Oak St,Days,$1200,Levy"],
+      ["a numeric date", "12 Oak St,Days,2026-10-08,Levy"],
+      ["a written date", "12 Oak St,Days,8 Oct 2026,Levy"],
+    ])("never sends a row 0 that reads like data (%s), and lets Bud read it", async (_label, row) => {
+      const { dir, script } = fakeHermes(BUD);
+      dirs.push(dir);
+      const { asked, jev: injected } = jev(all);
+      await inspectLedgerColumns(`${row}\n13 Elm St,2,true,true\n`, { cli: script, root: dir, jev: injected });
+      expect(asked).toHaveLength(0);
+    });
+
+    it("asks nothing when the file has more headers than Jev options, and lets Bud read it", async () => {
+      const { dir, script } = fakeHermes(BUD);
+      dirs.push(dir);
+      const wide = `${["Property", "Days in arrears", ...Array.from({ length: 62 }, (_, n) => `Fictional ${n}`)].join(",")}\n`;
+      const { asked, jev: injected } = jev(all);
+      expect((await inspectLedgerColumns(wide, { cli: script, root: dir, jev: injected })).mapping).toEqual({ identity: "Property", daysSinceDue: "Days in arrears" });
+      expect(asked).toHaveLength(0);
+    });
   });
 });

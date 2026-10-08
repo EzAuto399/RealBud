@@ -1,20 +1,20 @@
-// Cua 0.19.3's Rust host cannot pass --grant and requires its direct child's
-// PID. Keep our Job Object supervisor, authenticate its contained driver, and
-// leave the generated SDK unchanged. The pinned metadata contract comes from
-// trycua/cua@a1672e7b11951275ecfba3384264d4530185d0db embedded.rs:892-937.
+// Cua 0.34's Rust host (EmbeddedDriverHostOptions) cannot pass --grant and
+// requires its direct child's PID. Keep our Job Object supervisor, authenticate
+// its contained driver, and leave the generated SDK unchanged. The pinned
+// metadata contract is the 0.34.0 daemon's DriverMetadata (contract 0.8.0).
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
 export const WINDOWS_CUA_HOST_FLAG = "--realbud-cua-host-v1";
 export const WINDOWS_CUA_METADATA = Object.freeze({
-  driverVersion: "0.19.3", contractVersion: "0.6.0", toolsListSchemaVersion: "1",
+  driverVersion: "0.34.0", contractVersion: "0.8.0", toolsListSchemaVersion: "1",
   capabilityVersion: "1", mcpProtocolVersion: "2025-06-18",
 });
-// The bundled driver is pinned (bounded sessions require 0.19.3) and ships
+// The bundled driver is pinned (server/cua-bounded.ts CUA_PIN) and ships
 // inside RealBud, so it must not register a vendor telemetry id or check
-// GitHub for updates from a customer's computer. 0.19.3 treats 0|false|no|off
-// as off (trycua/cua tag cua-driver-rs-v0.19.3: telemetry.rs parse_env_bool,
-// version_check.rs is_enabled). Lives here because cua-launcher.mjs imports us.
+// GitHub for updates from a customer's computer. The driver treats
+// 0|false|no|off as off (telemetry.rs parse_env_bool, version_check.rs
+// is_enabled). Lives here because cua-launcher.mjs imports us.
 export const CUA_QUIET_ENV = Object.freeze({ CUA_DRIVER_RS_TELEMETRY_ENABLED: "0", CUA_DRIVER_RS_UPDATE_CHECK: "0" });
 const SAFE_ENVIRONMENT = new Set([
   "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP", "TEMP", "LANG",
@@ -25,6 +25,11 @@ const SAFE_ENVIRONMENT = new Set([
   "CUA_DRIVER_PERMISSION_MODE", "CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "CUA_DRIVER_DISABLE_UNRESTRICTED",
   "CUA_DRIVER_ALLOW_LEGACY_EXISTING_PROFILE_APPROVAL", "CUA_DRIVER_SESSION_POLICY_FILE",
   "CUA_DRIVER_SESSION_POLICY_APPROVED", "CUA_DRIVER_POLICY_FILE", "CUA_DRIVER_MANAGED_POLICY_FILE",
+  // 0.34 names for the narrow-only capability manifest (the SESSION_POLICY_*
+  // pair above are its deprecated aliases). CUA_DRIVER_PERCEPTION_CATALOG is
+  // deliberately absent: without it the daemon cannot install the perception
+  // extension (OmniParser, AGPL-3.0).
+  "CUA_DRIVER_CAPABILITY_MANIFEST_FILE", "CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED",
 ]);
 const stopped = 0, starting = 1, ready = 2, stopping = 3;
 const fail = message => new Error(`Windows desktop host: ${message}`);

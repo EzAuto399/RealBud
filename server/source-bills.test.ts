@@ -3,10 +3,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WorkflowDatabase } from './workflow-database.ts';
-import { SourceBillRegister, previewBillSource } from './source-bills.ts';
+import { SourceBillRegister, previewBillSource, rankDuplicateCandidates } from './source-bills.ts';
+import type { JevRequest, JevResult } from './jev-client.ts';
 import { listExpectedBills, upsertExpectedBill } from './expected-bills.ts';
 import { anchoredBillMonth, billDateInZone } from '../shared/bill-dates.ts';
-import type { BillMailSource, BillFacts, BillCalendarEntry } from '../shared/source-bills.ts';
+import type { BillMailSource, BillFacts, BillCalendarEntry, BillDuplicateCheck, BillDuplicateCandidate } from '../shared/source-bills.ts';
 import { sameBillFacts, isBillFinancialReviewStale } from '../shared/source-bills.ts';
 
 const resources: { dir: string; db: WorkflowDatabase }[] = [];
@@ -286,5 +287,109 @@ describe('reviewed supplier reference and work description', () => {
     const { store } = fixture(), s = source();
     expect(() => store.accept({ ...acceptance(s), facts: { ...facts(), ...changed } }, s, 'reviewer')).toThrow();
     expect(store.counts().occurrences).toBe(0);
+  });
+});
+
+describe('Jev ordering for duplicate bill review', () => {
+  const bill = (f: Partial<BillFacts> = {}): BillFacts => ({ propertyId: 'book-fict0001', kind: 'Water', vendor: 'Fictional Water Co', amountCents: 12345, currency: 'AUD',
+    invoiceDate: '2026-01-31', dueDate: '2026-02-20', note: 'Tenant Fictional Person called about it', invoiceNumber: 'FW-1001', workDescription: 'Fictional tenant name in the work notes', ...f });
+  const next = { invoiceDate: '2026-02-28', dueDate: '2026-03-20' };
+  /** Fictional labelled pairs (bill under review, saved candidate, same bill?). Kept as data so an eval script can replay them against Jev. */
+  const pairs: { name: string; bill: BillFacts; candidate: BillFacts; same: boolean }[] = [
+    { name: 'resent identical invoice', bill: bill(), candidate: bill(), same: true },
+    { name: 'supplier name recased', bill: bill(), candidate: bill({ vendor: 'FICTIONAL WATER CO' }), same: true },
+    { name: 'amount not yet confirmed on the saved copy', bill: bill(), candidate: bill({ amountCents: null }), same: true },
+    { name: 'saved copy has the supplier reference', bill: bill(), candidate: bill({ supplierReference: 'REI-FICT-77' }), same: true },
+    { name: 'same reference, one copy missing the invoice number', bill: bill({ invoiceNumber: null, supplierReference: 'REI-FICT-77' }), candidate: bill({ supplierReference: 'REI-FICT-77' }), same: true },
+    { name: 'reminder repeats the same invoice', bill: bill({ note: 'Reminder' }), candidate: bill(), same: true },
+    { name: 'strata levy, one copy with invoice number', bill: bill({ vendor: 'Fictional Strata', kind: 'Strata', invoiceNumber: null, amountCents: 90000 }), candidate: bill({ vendor: 'Fictional Strata', kind: 'Strata', invoiceNumber: 'ST-9', amountCents: 90000 }), same: true },
+    { name: 'same supplier and amount, next month (hard negative)', bill: bill({ ...next, invoiceNumber: 'FW-1002' }), candidate: bill(), same: false },
+    { name: 'same supplier and amount, next month, no invoice numbers (hard negative)', bill: bill({ ...next, invoiceNumber: null }), candidate: bill({ invoiceNumber: null }), same: false },
+    { name: 'same invoice number, different supplier (hard negative)', bill: bill({ vendor: 'Fictional Power Ltd', kind: 'Electricity', amountCents: 20990 }), candidate: bill(), same: false },
+    { name: 'same invoice number and amount, different supplier (hard negative)', bill: bill({ vendor: 'Fictional Gas Pty' }), candidate: bill(), same: false },
+    { name: 'same invoice number, different property', bill: bill({ propertyId: 'book-fict0002' }), candidate: bill(), same: false },
+    { name: 'same supplier and dates, different property', bill: bill({ propertyId: 'book-fict0002', invoiceNumber: 'FW-2001' }), candidate: bill(), same: false },
+    { name: 'same supplier and date, different bill kind', bill: bill({ kind: 'Sewerage', invoiceNumber: 'FW-1001S' }), candidate: bill(), same: false },
+    { name: 'quarterly repeat three months on', bill: bill({ invoiceDate: '2026-04-30', dueDate: '2026-05-20', invoiceNumber: 'FW-1004' }), candidate: bill(), same: false },
+    { name: 'council rates instalment two of four', bill: bill({ vendor: 'Fictional Council', kind: 'Rates', amountCents: 45000, invoiceNumber: 'R-2', dueDate: '2026-05-31' }), candidate: bill({ vendor: 'Fictional Council', kind: 'Rates', amountCents: 45000, invoiceNumber: 'R-1' }), same: false },
+    { name: 'same amount and date, different supplier, no invoice numbers', bill: bill({ vendor: 'Fictional Gardens', kind: 'Garden', invoiceNumber: null }), candidate: bill({ invoiceNumber: null }), same: false },
+    { name: 'same supplier and date, different amount and invoice', bill: bill({ amountCents: 9900, invoiceNumber: 'FW-1009' }), candidate: bill(), same: false },
+  ];
+  const candidate = (n: number, f: BillFacts = bill()): BillDuplicateCandidate => ({ billId: `source-bill:${n.toString(16).padStart(64, '0')}`, revision: 1, matchedRevision: 1,
+    sourceDigest: 'd'.repeat(64), facts: f, subject: 'Fictional subject with a tenant name', receivedAt: 1, match: 'invoice-identity' });
+  const check = (candidates: BillDuplicateCandidate[]): BillDuplicateCheck => ({ version: 1, sourceDigest: 'a'.repeat(64), reviewDigest: 'b'.repeat(64), candidates, complete: true });
+  const allowed = ['propertyId', 'kind', 'supplier', 'amountCents', 'currency', 'invoiceDate', 'dueDate', 'invoiceNumber', 'invoiceVersion', 'supplierReference'].sort();
+  /** Answers from a fixed noul per bill id; records each request and the calls in flight. */
+  function jev(noul: (state: Record<string, Record<string, unknown>>, key: string) => number | JevResult) {
+    const asked: JevRequest[] = []; let inFlight = 0, peak = 0;
+    const decide = async (request: JevRequest): Promise<JevResult> => {
+      asked.push(request); peak = Math.max(peak, ++inFlight);
+      await new Promise(resolve => setTimeout(resolve, 1)); inFlight--;
+      const state = request.state as Record<string, Record<string, unknown>>, answers: Record<string, { type: 'noul'; noul: number }> = {};
+      for (const key of Object.keys(request.questions)) { const value = noul(state, key); if (typeof value !== 'number') return value; answers[key] = { type: 'noul', noul: value }; }
+      return { ok: true, answers, model: 'fictional-jev', ms: 1 };
+    };
+    return { decide, asked, peak: () => peak };
+  }
+
+  it.each(pairs)('labels the fictional pair: $name', async ({ bill: under, candidate: saved, same }) => {
+    // The oracle answers from the label; the plumbing must carry it to the right candidate and send only minimal fields.
+    const { decide, asked } = jev(() => same ? 0.95 : 0.05);
+    const ranked = await rankDuplicateCandidates(check([candidate(1, saved)]), under, decide);
+    expect(ranked.candidates[0]!.likely).toBe(same ? 'same' : 'different');
+    const state = asked[0]!.state as Record<string, Record<string, unknown>>;
+    expect(Object.keys(state).sort()).toEqual(['bill', 'c0']);
+    for (const side of [state.bill!, state.c0!]) expect(Object.keys(side).sort()).toEqual(allowed);
+    expect(state.bill!.supplier).toBe(under.vendor); expect(state.c0!.amountCents).toBe(saved.amountCents);
+    expect(JSON.stringify(asked)).not.toMatch(/tenant|Fictional Person|subject|note|workDescription/i);
+    expect(asked[0]!.questions.c0).toMatchObject({ type: 'noul' });
+  });
+
+  it('orders by noul in batches of eight with at most two calls at once, labelling only at the edges and keeping the hold inputs', async () => {
+    const nouls = [0.5, 0.92, 0.05, 0.5, 0.3, 0.97, 0.1, 0.89, 0.11, 0.6, 0.02, 0.4, 0.9, 0.7, 0.2, 0.8, 0.55, 0.45, 0.35, 0.65];
+    const original = check(nouls.map((_, n) => candidate(n, bill({ invoiceNumber: `FW-${n}` }))));
+    const frozen = structuredClone(original);
+    const scored = jev((state, key) => nouls[Number(String(state[key]!.invoiceNumber).slice(3))]!);
+    const ranked = await rankDuplicateCandidates(original, bill(), scored.decide);
+    expect(scored.asked.map(request => Object.keys(request.questions).length)).toEqual([8, 8, 4]);
+    expect(scored.peak()).toBeLessThanOrEqual(2);
+    const order = ranked.candidates.map(c => Number(String(c.facts.invoiceNumber).slice(3)));
+    expect(order.map(n => nouls[n])).toEqual(nouls.slice().sort((a, b) => b - a));
+    expect(order.slice(order.indexOf(0), order.indexOf(0) + 2)).toEqual([0, 3]); // ties keep today's order
+    expect(Object.fromEntries(ranked.candidates.filter(c => c.likely).map(c => [nouls[Number(String(c.facts.invoiceNumber).slice(3))], c.likely]))).toEqual({
+      0.97: 'same', 0.92: 'same', 0.9: 'same', 0.1: 'different', 0.05: 'different', 0.02: 'different' });
+    expect(ranked).toMatchObject({ reviewDigest: original.reviewDigest, complete: true, sourceDigest: original.sourceDigest });
+    expect(original).toEqual(frozen);
+  });
+
+  it.each<[string, (state: Record<string, Record<string, unknown>>, key: string) => number | JevResult]>([
+    ['a refused call', () => ({ ok: false, reason: 'refused' })],
+    ['an over-budget office', () => ({ ok: false, reason: 'budget' })],
+    ['a timeout in the last batch', (state, key) => String(state[key]!.invoiceNumber) === 'FW-17' ? { ok: false, reason: 'timeout' } : 0.99],
+    ['a missing answer', (_state, key) => key === 'c3' ? ({ ok: true, answers: {}, model: 'fictional-jev', ms: 1 }) : 0.99],
+  ])('keeps today\'s order and no labels after %s', async (_name, noul) => {
+    const original = check(Array.from({ length: 18 }, (_, n) => candidate(n, bill({ invoiceNumber: `FW-${n}` }))));
+    const { decide } = jev(noul);
+    expect(await rankDuplicateCandidates(original, bill(), decide)).toEqual(original);
+  });
+
+  it('keeps today\'s order when decide throws, the review is closed, or there is nothing to rank', async () => {
+    const original = check([candidate(1), candidate(2)]);
+    expect(await rankDuplicateCandidates(original, bill(), async () => { throw new Error('fictional'); })).toEqual(original);
+    const closed = new AbortController(); closed.abort();
+    expect(await rankDuplicateCandidates(original, bill(), jev(() => 0.99).decide, { signal: closed.signal })).toEqual(original);
+    const { decide, asked } = jev(() => 0.99);
+    expect(await rankDuplicateCandidates(check([]), bill(), decide)).toEqual(check([])); expect(asked).toEqual([]);
+  });
+
+  it('never changes the hold: a "likely different" label still needs the person\'s confirmation', async () => {
+    const { store } = fixture(), first = source({ id: 'message-one' }), second = source({ id: 'message-two' }), reviewed = { ...facts(), invoiceNumber: 'FW-1001' };
+    store.accept({ ...acceptance(first), facts: reviewed }, first, 'reviewer');
+    const found = store.duplicateCandidates({ expectedSourceDigest: previewBillSource(second).digest, facts: reviewed }, second);
+    const ranked = await rankDuplicateCandidates(found, reviewed, jev(() => 0.01).decide);
+    expect(ranked.candidates[0]!.likely).toBe('different');
+    expect(ranked.reviewDigest).toBe(found.reviewDigest);
+    expect(() => store.accept({ ...acceptance(second), facts: reviewed }, second, 'reviewer')).toThrow(expect.objectContaining({ code: 'bill_duplicate_review_required' }));
+    expect(store.accept({ ...acceptance(second), facts: reviewed, reviewReason: 'Two separate fictional originals checked', duplicateReview: { reviewDigest: ranked.reviewDigest } }, second, 'reviewer').duplicateReview?.reviewDigest).toBe(found.reviewDigest);
   });
 });

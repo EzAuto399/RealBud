@@ -113,12 +113,50 @@ the `ax → ax_fg → cgevent → cgevent_fg → cgevent_hid` delivery ladder
 (background pid-addressed input first — does not steal the user's cursor) are
 handled inside the binary; the host adds nothing.
 
-Driver tool surface (per `cua-driver list-tools`): start_session, click,
-double_click, right_click, drag, scroll, type_text, press_key, hotkey,
-move_cursor, get_window_state, get_desktop_state, get_accessibility_tree,
-list_windows, list_apps, launch_app, bring_to_front, check_permissions,
-get_screen_size, zoom, screenshot. AX element paths are preferred over pixel
-coordinates and work on backgrounded/hidden windows.
+Driver tool surface (pinned 0.34.0, `cua-driver list-tools`, 58 tools; the
+pin lives in `server/cua-bounded.ts` `CUA_PIN`): sessions (`start_session`,
+`get_session`, `list_sessions`, `end_session`), native input (`click`,
+`double_click`, `right_click`, `drag`, `scroll`, `type_text`, `set_value`,
+`press_key`, `hotkey`, `move_cursor`, `invoke_menu`), observation
+(`get_window_state`, `get_desktop_state`, `get_accessibility_tree`,
+`list_windows`, `list_apps`, `get_screen_size`, `zoom`, `verify_state`),
+typed browser tools (`get_browser_state`, `browser_prepare`,
+`browser_navigate`, `browser_click`, `browser_type`, `browser_pointer`,
+`browser_dialog`, …), app control (`launch_app`, `bring_to_front`,
+`set_window_frame`, `kill_app`), plus config, recording, cursor and update
+tools.
+
+- Native element actions (`click`, `double_click`, …) take `element_token`
+  (`^s[0-9a-f]{8}:[0-9]+$`) from the latest `get_window_state` `elements[]`;
+  they no longer accept `element_index`/`snapshot_id` (the index remains only
+  as a label in the read). A newer read makes older tokens stale (explicit
+  error).
+- `get_window_state` has `timeout_ms` (default 1000) and may return
+  `truncated: true`; a truncated tree is partial evidence, never proof that
+  something is absent.
+- `session` is a public lifecycle label, never authority. The sign-in check
+  passes the request id (`[\w:-]{1,180}`); 0.34.0 accepted labels up to 256
+  characters in a local probe, and RealBud stops the daemon after the check.
+
+**Never used: `install_extension`, `parse_visual_regions`, `install_ffmpeg`,
+`set_config`, `check_for_update`, `replay_trajectory` and `start_recording`.**
+`install_ffmpeg`, `set_config` and `check_for_update` download, reconfigure or
+update the driver; RealBud pins and ships the driver itself. `replay_trajectory`
+re-runs recorded clicks inside the driver, past the per-action fence, and
+`start_recording` writes screen captures to disk.
+`install_extension` installs the optional perception extension, which bundles
+OmniParser (AGPL-3.0); `parse_visual_regions` is its only consumer. Both are in
+`CUA_NEVER_TOOLS` (`server/cua-bounded.ts`) and refused in every turn, fenced
+or not: `server/drivers/acp/core.ts` cancels the permission request before any
+card or auto-approval and stops a turn that starts either tool unasked, and
+the portal fence (`server/portal-fence.ts`) never allows them. The daemon also
+cannot install it: it requires `CUA_DRIVER_PERCEPTION_CATALOG` at launch,
+which the macOS grant launcher unsets and the Windows host allowlist omits.
+`CUA_DRIVER_CAPABILITY_MANIFEST_FILE`/`_APPROVED` (narrow-only, set by an
+administrator) pass through like the older session-policy names.
+
+AX element paths are preferred over pixel coordinates and work on
+backgrounded/hidden windows.
 
 ### Policy: CUA is the only computer-use path
 

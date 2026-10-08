@@ -79,7 +79,7 @@
     "package:mac:qa": "pnpm package:prepare && pnpm build:speech && pnpm build:cua && pnpm build:postgres && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --arm64 --publish never && codesign --force --deep --sign - release/mac-arm64/RealBud.app && node scripts/seal-mac-browser.mjs release/mac-arm64/RealBud.app && codesign --verify --deep --strict release/mac-arm64/RealBud.app && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --arm64 --prepackaged release/mac-arm64/RealBud.app --publish never"
   },
   "dependencies": {
-    "@trycua/cua-driver": "0.19.3",
+    "@trycua/cua-driver": "0.34.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.539.0",
     "pg": "8.23.1",

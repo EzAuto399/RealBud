@@ -40,7 +40,7 @@ for (const name of ["postgres.exe", "initdb.exe", "pg_ctl.exe"]) {
 }
 assert.ok(existsSync(join(postgres, "share", "postgres.bki")));
 checks.push("Installed PostgreSQL tools retain their hashes and load their Windows dependencies");
-assert.match(execFileSync(join(resources, "cua-driver.exe"), ["--version"], { encoding: "utf8", timeout: 10000 }), /0\.19\.3/);
+assert.match(execFileSync(join(resources, "cua-driver.exe"), ["--version"], { encoding: "utf8", timeout: 10000 }), /0\.34\.0/);
 checks.push("Installed Windows Cua executable runs and reports the pinned version");
 checks.push(...await smokeInstalledWorker(resources, process.execPath));
 

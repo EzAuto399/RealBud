@@ -38,6 +38,9 @@ export function existingProfileGrantLauncher(binary, {
     "#!/bin/bash", "set -euo pipefail", `REAL=${shellLiteral(binary)}`,
     // The SDK starts the daemon with a fixed env allowlist, so set these here.
     ...Object.entries(CUA_QUIET_ENV).map(([name, value]) => `export ${name}=${value}`),
+    // Without a reviewed catalog the daemon cannot install the perception
+    // extension (bundles OmniParser, AGPL-3.0). Never inherit one.
+    "unset CUA_DRIVER_PERCEPTION_CATALOG",
     'if [[ "${1:-}" == "serve" ]]; then', "  shift",
     '  exec "$REAL" serve --grant existing-profile "$@"', "fi",
     'exec "$REAL" "$@"', "",

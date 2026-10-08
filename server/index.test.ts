@@ -789,6 +789,34 @@ describe("harness HTTP API", () => {
     expect(source.match(/personTurn\(req\)/g)).toHaveLength(6);
   });
 
+  it("queues a second message that arrives while Jev routes the first, instead of answering it 409", () => {
+    // Source contract (routing needs a live Jev grant): the bot counts as busy from before the
+    // pre-route's await until it settles, and every Ask route queues for it exactly as for a busy bot.
+    const source = readFileSync(join(SERVER_DIR, "index.ts"), "utf8");
+    const start = source.indexOf("    routingBots.add(bot.id);");
+    expect(start).toBeGreaterThan(0);
+    expect(source.slice(start, source.indexOf("\n", source.indexOf("finally {", start)))).toBe([
+      "    routingBots.add(bot.id);",
+      "    try { routed = await askJevRoute(text, { person: personAskTurn(opts), ready: jevReady, decide: jevDecide }); }",
+      "    finally { routingBots.delete(bot.id); }",
+    ].join("\n"));
+    expect(source).toContain('if (bot.busy || routingBots.has(bot.id)) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });');
+    const route = (pattern: string) => source.slice(source.indexOf(pattern), source.indexOf("\n    m = path.match(", source.indexOf(pattern) + pattern.length));
+    const messages = route("m = path.match(/^\\/api\\/bots\\/([\\w-]+)\\/messages$/);");
+    expect(messages.indexOf("if (routingBots.has(m[1])) {")).toBeLessThan(messages.indexOf("await startTurn("));
+    expect(messages).toContain("const queued = store.setQueuedMessage(m[1], text);");
+    expect(messages.indexOf("containsCredential(text)")).toBeLessThan(messages.indexOf("store.setQueuedMessage("));
+    const queuedRoute = route("m = path.match(/^\\/api\\/bots\\/([\\w-]+)\\/queued-message$/);");
+    expect(queuedRoute).toContain("if (!bot.busy && !routingBots.has(bot.id)) {\n        await startTurn(");
+    const steer = route("m = path.match(/^\\/api\\/bots\\/([\\w-]+)\\/steer$/);");
+    expect(steer.indexOf("if (routingBots.has(bot.id)) {")).toBeLessThan(steer.indexOf("await startTurn("));
+    expect(steer.slice(steer.indexOf("if (routingBots.has(bot.id)) {"), steer.indexOf("if (!bot.busy) {"))).toContain("store.setQueuedMessage(bot.id, text, bot.threadId)");
+    // A follow-up queued during routing still runs when the route answered without a turn.
+    const turn = source.slice(source.indexOf("async function startTurn("), source.indexOf("async function startSeatTurn("));
+    expect(turn).toContain("if (bot && !bot.busy && !routingBots.has(bot.id) && bot.queuedMessage && !privateRestoreLocked && !shuttingDown) {");
+    expect(turn).toContain("if (queued) void dispatchQueuedMessage(bot.id, queued);");
+  });
+
   it("keeps a website's Ask every time once-only, so neither a site rule nor a generic rule answers it", () => {
     // Source contract (needs a live ACP permission request): the fence's settings ask keeps provider-once,
     // and the generic rule evaluation skips that request.

@@ -1,5 +1,6 @@
-import { previewBillSource, type SourceBillRegister } from './source-bills.ts';
-import type { BillMailSource, SourceBillsWorkspace } from '../shared/source-bills.ts';
+import { previewBillSource, rankDuplicateCandidates, type SourceBillRegister } from './source-bills.ts';
+import type { BillDuplicateCandidate, BillDuplicateCheck, BillMailSource, SourceBillsWorkspace } from '../shared/source-bills.ts';
+import { decide, jevReady } from './jev-client.ts';
 import type { SourceBillOccurrenceResult, SourceBillSeriesResult, SourceBillCurrentSourceResult } from '../shared/source-bills-api.ts';
 import { addBillDays } from '../shared/bill-dates.ts';
 import { billPageQuery, billQuery, billQueryText } from './bill-api-query.ts';
@@ -15,12 +16,52 @@ export interface BillApiHost {
   recovery: () => boolean;
   collect: () => Promise<unknown>;
   now?: () => number;
+  /** Tests inject this; the app uses the office's Jev grant. */
+  jev?: { ready: () => boolean; decide: typeof decide };
 }
+const RANKINGS_KEPT = 50, RANK_BUDGET_MS = 3_000;
 /** Called only behind desktop session/origin checks. Source bodies and actor
  * identities always come from the private host, never the submitted form. */
 export function createSourceBillsApi(host: BillApiHost) {
   function property(value: unknown) {
     if (!record(value) || typeof value.propertyId !== 'string' || !host.propertyIds().includes(value.propertyId)) fail('Choose a current property from this private workspace.', 409);
+  }
+  // Ranked order per review digest (it covers the reviewed facts and every candidate
+  // revision), so the editor's repeated checks bill Jev once. Only a success or a
+  // hard refusal is kept; a timeout or outage may try once more on a later check.
+  type Kept = Pick<BillDuplicateCandidate, 'billId' | 'likely'>[];
+  const rankings = new Map<string, { order?: Kept; pending?: Promise<void>; tries: number }>();
+  const jev = host.jev ?? { ready: jevReady, decide };
+  const apply = (check: BillDuplicateCheck, kept: Kept | undefined): BillDuplicateCheck => {
+    if (!kept || kept.length !== check.candidates.length) return check;
+    const byId = new Map(check.candidates.map(candidate => [candidate.billId, candidate]));
+    const candidates = kept.map(({ billId, likely }) => byId.get(billId) && { ...byId.get(billId)!, ...(likely ? { likely } : {}) });
+    return candidates.every(Boolean) ? { ...check, candidates: candidates as BillDuplicateCandidate[] } : check;
+  };
+  /** Person-present only: `rank` comes from the open review, never the pre-save
+   * check, which reads a kept order or gets today's. Jev orders, never holds. */
+  async function ranked(check: BillDuplicateCheck, facts: BillDuplicateCandidate['facts'], rank: boolean): Promise<BillDuplicateCheck> {
+    const digest = check.reviewDigest;
+    if (!digest || !check.candidates.length) return check;
+    let entry = rankings.get(digest);
+    if (!rank || entry?.order) return apply(check, entry?.order);
+    if (!entry?.pending) {
+      if (!jev.ready() || (entry?.tries ?? 0) >= 2) return check;
+      const current = entry = { tries: (entry?.tries ?? 0) + 1 } as NonNullable<typeof entry>;
+      rankings.delete(digest); rankings.set(digest, current);
+      if (rankings.size > RANKINGS_KEPT) rankings.delete(rankings.keys().next().value!);
+      let transient = false;
+      const watched: typeof decide = async (request, options) => {
+        const result = await jev.decide(request, options).catch(() => ({ ok: false, reason: 'http' }) as const);
+        if (!result.ok && !['refused', 'budget', 'invalid'].includes(result.reason)) transient = true;
+        return result;
+      };
+      current.pending = rankDuplicateCandidates(check, facts, watched, { signal: AbortSignal.timeout(RANK_BUDGET_MS) }).then(result => {
+        if (!transient) current.order = result.candidates.map(({ billId, likely }) => ({ billId, ...(likely ? { likely } : {}) }));
+      }, () => undefined).finally(() => { current.pending = undefined; });
+    }
+    await entry.pending;
+    return apply(check, entry.order);
   }
   return async (url: URL, method: string, body?: unknown) => {
     const path = url.pathname;
@@ -62,11 +103,12 @@ export function createSourceBillsApi(host: BillApiHost) {
     const bySource = path.match(/^\/api\/bill-occurrences\/by-source\/([a-f0-9]{64})$/);
     if (path === '/api/bill-occurrences/duplicate-candidates' && method === 'POST') {
       if (!record(body) || typeof body.itemId !== 'string' || !/^[a-f0-9]{64}$/.test(body.itemId) || typeof body.messageId !== 'string' || !/^[a-fA-F0-9]{1,128}$/.test(body.messageId)) return fail('Choose the saved mail message being reviewed.');
-      const { itemId, messageId, ...review } = body;
+      if (body.rank !== undefined && body.rank !== true) return fail('Use the current matching-bill check.');
+      const { itemId, messageId, rank, ...review } = body;
       const source = await host.source(itemId, messageId);
       if (host.recovery()) fail('The private book needs recovery.', 503);
       property(review.facts);
-      return { status: 200, body: host.register().duplicateCandidates(review, source) };
+      return { status: 200, body: await ranked(host.register().duplicateCandidates(review, source), review.facts as BillDuplicateCandidate['facts'], rank === true) };
     }
     if (bySource && method === 'GET') {
       billQuery(url.searchParams, []);

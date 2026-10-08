@@ -5,6 +5,7 @@ import { addBillDays, billDateInZone } from '../shared/bill-dates.ts';
 import { WorkflowDatabase } from './workflow-database.ts';
 import { DATA_DIR } from './config.ts';
 import { listExpectedBills, type ExpectedBill } from './expected-bills.ts';
+import type { JevAnswer, JevQuestion, JevRequest, JevResult } from './jev-client.ts';
 import { SourceBillStorage } from './source-bill-storage.ts';
 import { fail, hash, object, text, date, positive, state, dateSpan, facts, reviewed, versionOf, seriesVersion, sameBillKind, pattern, cadenceDate, previewBillSource, projectBillCalendar, projectBillEntries, projectSeriesCalendar, billEvidenceMatch, financialObservation, observationOf } from './source-bill-rules.ts';
 export { previewBillSource, projectBillCalendar, validateSourceBillRegister } from './source-bill-rules.ts';
@@ -304,4 +305,52 @@ export class SourceBillRegister {
       this.storage.saveSeries(series); return series;
     });
   }
+}
+
+const RANK_PAIRS_PER_CALL = 8, RANK_CALLS_IN_FLIGHT = 2;
+/** Supplier, amount, dates, references and property code only: no note, work
+ * description, subject, sender or message text, so no bank or tenant details. */
+const rankState = (f: BillFacts) => ({ propertyId: f.propertyId, kind: f.kind, supplier: f.vendor, amountCents: f.amountCents, currency: f.currency,
+  invoiceDate: f.invoiceDate, dueDate: f.dueDate, invoiceNumber: f.invoiceNumber ?? null, invoiceVersion: f.invoiceVersion ?? null, supplierReference: f.supplierReference ?? null });
+/**
+ * Orders duplicate candidates for the person reviewing them, most likely the
+ * same bill first. Presentation only: the check's candidates, `complete` and
+ * `reviewDigest` (sorted by bill id) are unchanged, so the
+ * `bill_duplicate_review_required` hold stays exactly as deterministic.
+ * Jev never raises, clears or skips a hold and never marks a duplicate.
+ * Person-present only: call it when someone opens the review, never from an
+ * unattended loop. One noul question per pair, up to 8 per call and 2 calls at
+ * a time; any failure returns today's order with no labels.
+ */
+export async function rankDuplicateCandidates(check: BillDuplicateCheck, billFacts: BillFacts,
+  decide: (request: JevRequest, options?: { signal?: AbortSignal }) => Promise<JevResult>, options: { signal?: AbortSignal } = {}): Promise<BillDuplicateCheck> {
+  if (!check.candidates.length) return check;
+  const groups: BillDuplicateCandidate[][] = [];
+  for (let i = 0; i < check.candidates.length; i += RANK_PAIRS_PER_CALL) groups.push(check.candidates.slice(i, i + RANK_PAIRS_PER_CALL));
+  const scores = new Map<string, number>();
+  let next = 0, failed = false;
+  const worker = async () => {
+    while (next < groups.length && !failed) {
+      const group = groups[next++]!;
+      const questions = Object.fromEntries(group.map((_, n): [string, JevQuestion] => [`c${n}`, { type: 'noul',
+        instructions: `Is candidate c${n} the same bill as "bill" in the state: the same invoice from the same supplier for the same charge, received or saved again? A repeat charge for another period with the same amount, or a matching invoice number from a different supplier, is a different bill.`,
+        criteria: { true: 'The same bill.', false: 'A different bill, or not sure.' } }]));
+      const state = { bill: rankState(billFacts), ...Object.fromEntries(group.map((candidate, n) => [`c${n}`, rankState(candidate.facts)])) };
+      let answers: (JevAnswer | undefined)[] = [];
+      try {
+        const result = await decide({ state, questions }, { signal: options.signal });
+        if (result.ok) answers = group.map((_, n) => result.answers[`c${n}`]);
+      } catch { /* today's order */ }
+      if (answers.length !== group.length || answers.some(answer => answer?.type !== 'noul')) { failed = true; return; }
+      group.forEach((candidate, n) => scores.set(candidate.billId, (answers[n] as { noul: number }).noul));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(RANK_CALLS_IN_FLIGHT, groups.length) }, worker));
+  if (failed || options.signal?.aborted || scores.size !== check.candidates.length) return check;
+  const score = (candidate: BillDuplicateCandidate) => scores.get(candidate.billId)!;
+  const likely = (p: number) => p >= 0.9 ? 'same' as const : p <= 0.1 ? 'different' as const : undefined;
+  return { ...check, candidates: check.candidates.slice().sort((a, b) => score(b) - score(a)).map(candidate => {
+    const label = likely(score(candidate));
+    return label ? { ...candidate, likely: label } : candidate;
+  }) };
 }

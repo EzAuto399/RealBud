@@ -45,7 +45,10 @@ describe("jev decide", () => {
   it("posts {model, state, questions} to /decisions with the office key and a fresh idempotency key per decision", async () => {
     const result = await decide(request);
     expect(result).toMatchObject({ ok: true, model: "jev-1.13", answers: { tenant: { choice: "t1", confidence: 0.95 } } });
-    expect(JSON.stringify(result)).not.toMatch(/usage|tokens|cost/);
+    // Token usage goes back to the caller for run cost; never cost, never into a log line.
+    expect(result).toMatchObject({ usage: { input_tokens: 10, output_tokens: 2 } });
+    expect(JSON.stringify(result)).not.toMatch(/cost/);
+    expect(logs.join("\n")).not.toMatch(/usage|tokens|input_tokens/);
     const [url, init] = fetchStub.mock.calls[0];
     expect(url).toBe(`${BASE}/decisions`);
     expect(init.headers.authorization).toBe(`Bearer ${KEY}`);
@@ -214,10 +217,19 @@ describe("jev decide", () => {
     }
   });
 
+  it("returns usage only when it is well formed, and never fails the answer over it", async () => {
+    for (const usage of [undefined, { input_tokens: -1, output_tokens: 2 }, { input_tokens: 1.5, output_tokens: 2 }, { input_tokens: "10" }, null]) {
+      fetchStub.mockResolvedValueOnce(json({ ...answer(), usage }));
+      const result = await decide(request);
+      expect(result).toMatchObject({ ok: true });
+      expect(result).not.toHaveProperty("usage");
+    }
+  });
+
   it("accepts a dated reply model and ignores extra reply fields", async () => {
     fetchStub.mockResolvedValueOnce(json({ ...answer(), model: "typesafe/jev-1.13-20260917", created: 1, provider: "fictional", extra: { a: 1 } }));
     expect(await decide(request)).toEqual({ ok: true, model: "typesafe/jev-1.13-20260917", ms: expect.any(Number),
-      answers: { tenant: { type: "choice", choice: "t1", confidence: 0.95, probabilities: { t1: 0.95, none: 0.05 } } } });
+      answers: { tenant: { type: "choice", choice: "t1", confidence: 0.95, probabilities: { t1: 0.95, none: 0.05 } } }, usage: { input_tokens: 10, output_tokens: 2 } });
   });
 
   it("aborts on the caller's signal and when the office key changes mid-call", async () => {
