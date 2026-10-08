@@ -217,7 +217,7 @@ import { ASK_ATTACH_MAX_BYTES, saveAskAttachment } from "./ask-attach.ts";
 import { answerAskFromDesk, polishProductAskReply, productAskFailure, productBudSystemPrompt, productWorkerDump } from "./ask-book.ts";
 import { scheduleJobsTurnContext } from "./schedule-turn.ts";
 import { buildHandoffPayload, deliverToPairedPhone } from "./channel-handoff.ts";
-import { readHandsLast, readHandsPing, writeHandsPing } from "./hands-last.ts";
+import { budReadyOnce, readHandsLast, readHandsPing, writeHandsPing } from "./hands-last.ts";
 import { readArtifact } from "./audit-artifacts.ts";
 import { readCsvMapping } from "./csv-ledger.ts";
 import { inspectLedgerColumns } from "./import-inspect.ts";
@@ -5022,6 +5022,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         serviceGrant: serviceGrantRenewal.status(),
         lastTest: readHandsLast(DATA_DIR),
         lastPing: readHandsPing(DATA_DIR),
+        readyOnce: budReadyOnce(DATA_DIR),
         model: {
           attached: Boolean(current.managed && current.choice),
           provider: current.provider,

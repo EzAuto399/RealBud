@@ -94,7 +94,7 @@ Evidence tier: installed device (Windows 11 Arm VM, x64 emulated) with live real
 3. Open the file → "Windows protected your PC" → **More info** → **Run anyway**. (The download page has the same steps under "Windows says the file isn't commonly downloaded?".)
 4. Installer runs (upgrade: "RealBud is running. Click OK to close it" → OK; about 80 s on the emulated VM).
 5. RealBud opens. Step 1 name → step 2 **Paste the link code your office owner sent you** → **Connect with this code** (or the owner approves in their browser; code shown on both screens must match).
-6. "This computer is connected" → **Continue to Bud setup**. Bud sets itself up unattended (Download Bud / Turn on approvals / Connect your office's AI / Test Bud → all Ready).
+6. "This computer is connected" → **Continue to Bud setup**. Bud sets itself up unattended behind a full-window "Setting up Bud" screen (Download Bud / Turn on approvals / Connect your office's AI / Test Bud → all Ready); the rest of RealBud opens when Bud is ready.
 7. Desk **Get started**: 1 linked ✓, 2 Bud set up ✓, 3 Import your office's pack (needs the signed packs uploaded), 4 Gmail (needs shared office Gmail set up by the owner), 5 review and switch on workflows.
 
 **Timings (emulated VM; a real x64 PC should be faster):** silent install 61–87 s; first window and first health 33–41 s; owner approval links in under a minute; Bud answers a first question in about 60 s; health latency p95 under 100 ms.

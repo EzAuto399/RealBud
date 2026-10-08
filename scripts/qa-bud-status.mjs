@@ -20,7 +20,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const baseline = process.argv.includes('--baseline');
 const baselinePaths = ['src/components/ChatView.tsx', 'src/components/AskReadiness.tsx', 'src/components/BudSetupCard.tsx', 'src/components/ManagedBudStatus.tsx', 'src/components/WorkspaceSetup.tsx', 'src/components/AskWorkspaceSheet.tsx', 'src/lib/bud-setup.ts'];
 const sourceRevision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-const testedPaths = [...baselinePaths, 'src/App.tsx', 'src/lib/bud-status-monitor.ts', 'src/state/store.tsx', 'src/lib/boot-heal.ts', 'src/components/ConnectOffice.tsx', 'src/components/you/browser-link.ts'];
+const testedPaths = [...baselinePaths, 'src/App.tsx', 'src/components/BudSetupScreen.tsx', 'src/lib/bud-status-monitor.ts', 'src/state/store.tsx', 'src/lib/boot-heal.ts', 'src/components/ConnectOffice.tsx', 'src/components/you/browser-link.ts'];
 const sourceHashes = () => Object.fromEntries(testedPaths.filter(p => existsSync(join(root, p))).map(p => [p, createHash('sha256').update(readFileSync(join(root, p))).digest('hex')]));
 const startHashes = sourceHashes();
 const baselineSources = new Map(baseline ? baselinePaths.map(path => [join(root, path), execFileSync('git', ['show', `HEAD:${path}`], { cwd: root, encoding: 'utf8' })]) : []);
@@ -36,7 +36,7 @@ const ready = {
   homeDir: '/synthetic/home', profileDir: '/synthetic/home/profiles/property', installCommand: null, signInCommand: 'fictional-sign-in',
   ready: true, detail: 'Fictional verified readiness.', model: { attached: true, provider: 'openai-api', model: 'fictional-model' },
   modelAccess: { managed: true, withdrawn: false, attached: true, detail: 'Model access is managed by the RealBud service.' },
-  lastPing: { at: Date.now(), ok: true, kind: 'ping', detail: 'Fictional private readiness check passed.' },
+  lastPing: { at: Date.now(), ok: true, kind: 'ping', detail: 'Fictional private readiness check passed.' }, readyOnce: true,
 };
 const safeguards = { ...ready, ready: false, pack: { installed: true, approvalsManual: true, workroomReady: false }, lastPing: null };
 let fixture = structuredClone(safeguards), failRefresh = false, delayRefresh = 0, managed = true;
@@ -57,11 +57,13 @@ const limits = [
     : 'All Hermes API mutations and all non-loopback browser requests are intercepted. No provider, worker, customer account, installed application or hosted integration is exercised.',
   'Screenshots and keyboard checks prove source-rendered behavior only; no packaged, installed-device, live integration or customer acceptance is claimed.',
 ];
-const missingWorker = { ...ready, ready: false, cli: { ...ready.cli, installed: false, probeState: 'missing' },
+const missingWorker = { ...ready, ready: false, readyOnce: false, cli: { ...ready.cli, installed: false, probeState: 'missing' },
   pack: { installed: false, approvalsManual: false, workroomReady: false }, model: { attached: false, provider: null, model: null },
   modelAccess: { managed: false, withdrawn: false, attached: false, detail: '' }, lastPing: null,
   autoSetup: { state: 'idle', step: 0, total: 4, detail: '' } };
 const installing = { ...missingWorker, model: ready.model, modelAccess: ready.modelAccess,
+  // The receipt the service writes when its install starts (server/index.ts installOrRepair).
+  lastPing: { at: Date.now(), ok: false, kind: 'ping', detail: 'Bud setup changed. Its private readiness check is still needed.' },
   autoSetup: { state: 'installing', code: 'installing', step: 1, total: 4, detail: 'Installing Bud' } };
 const held = { ...installing, autoSetup: { state: 'held', code: 'held_failed', step: 1, total: 4, detail: 'Bud’s setup stopped before it finished. Your files are kept. Try again, or contact RealBud support.' } };
 const setupPhases = {
@@ -273,6 +275,27 @@ try {
     assert.equal(await page.getByRole('button', { name: 'Set up workroom', exact: true }).isEnabled(), true);
     await shot('bud-administrator-real-action');
     checks.push('An authorized development-administrator fixture opens the actual existing Set up workroom control; no setup mutation is executed.');
+    const shell = page.locator('.rb-app-shell'), coverHeading = name => page.getByRole('heading', { level: 1, name, exact: true });
+    const leave = page.getByRole('button', { name: 'Use RealBud without Bud for now', exact: true });
+    await setState(installing); await coverHeading('Setting up Bud').waitFor();
+    assert.equal(await shell.count(), 0); assert.equal(await composer.count(), 0); assert.equal(await leave.count(), 0);
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k'); assert.equal(await shell.count(), 0);
+    await shot('bud-setup-cover-installing');
+    await setState({ ...installing, autoSetup: { state: 'waiting_retry', code: 'retry', step: 1, total: 4, nextRetryAt: Date.now() + 15 * 60_000, detail: '' } });
+    await leave.waitFor(); assert.equal(await shell.count(), 0);
+    await setState(installing); await page.waitForFunction(() => !document.body.textContent.includes('Use RealBud without Bud for now'));
+    await setState(installing, { connected: false }); await leave.waitFor(); assert.equal(await shell.count(), 0);
+    await setState({ ...installing, readyOnce: true }); await shell.waitFor();
+    await setState(installing, { recovering: true }); await shell.waitFor();
+    await setState(held); await coverHeading('Bud setup stopped').waitFor();
+    assert.equal(await shell.count(), 0); await page.getByRole('button', { name: 'Try setup again', exact: true }).waitFor();
+    await shot('bud-setup-cover-held');
+    await leave.click(); await shell.waitFor();
+    await setState(installing); await wait(500); assert.equal(await shell.count(), 1);
+    await setState(ready); await shell.waitFor(); assert.equal(await coverHeading('Setting up Bud').count(), 0);
+    await setState({ ...ready, ready: false, lastPing: null, readyOnce: false, autoSetup: { state: 'ready', code: 'ready', step: 4, total: 4, detail: 'Bud is ready.' } }); await wait(500);
+    assert.equal(await shell.count(), 1); assert.equal(await coverHeading('Bud needs a check').count(), 0);
+    checks.push('Bud’s first setup takes the whole window with no exit while it runs; waiting to retry, a held setup or a lost connection offer a way into RealBud; leaving is never undone by a later retry; a Bud already tested here, book recovery, a ready Bud and a needs-a-check Bud keep the shell.');
     observations.finalStaffMutations = counts.hermesMutations.filter(row => row.managed);
 
   }

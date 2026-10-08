@@ -31,6 +31,7 @@ import { SHOW_DESK_EVENT } from "@/lib/notify-desktop";
 import { WORKSPACE_SETUP_EVENT, isWorkspaceSetupTarget, type WorkspaceSetupTarget } from "@/lib/workspace-setup";
 import { ActionNotice } from "@/components/ActionNotice";
 import { DESIGN_PREVIEW_REASON } from "@/lib/design-preview";
+import { budFirstSetupCover } from "@/lib/bud-setup";
 
 const ChatView = lazy(() => import('@/components/ChatView').then(module => ({ default: module.ChatView })));
 const RoutinesPage = lazy(() => import('@/components/RoutinesPage').then(module => ({ default: module.RoutinesPage })));
@@ -40,6 +41,7 @@ const Onboarding = lazy(() => import('@/components/Onboarding').then(module => (
 const WorkspaceTabsManager = lazy(() => import('@/components/WorkspaceTabsManager').then(module => ({ default: module.WorkspaceTabsManager })));
 const WorkspaceSavedView = lazy(() => import('@/components/WorkspaceSavedView').then(module => ({ default: module.WorkspaceSavedView })));
 const WorkspaceSetup = lazy(() => import('@/components/WorkspaceSetup').then(module => ({ default: module.WorkspaceSetup })));
+const BudSetupScreen = lazy(() => import('@/components/BudSetupScreen').then(module => ({ default: module.BudSetupScreen })));
 
 function macDoorKeys(): boolean {
   const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
@@ -103,6 +105,10 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
     previousView.current = state.activeView;
   }, [state.activeView]);
   const bud = state.bots.find((b) => b.id === "bud" || b.name === "Bud") ?? state.bots[0];
+  // Once someone leaves a stopped setup, a later retry never pulls them back.
+  const [leftSetup, setLeftSetup] = useState(false);
+  const setupCover = budFirstSetupCover(state.hermes, { connected: state.connected, statusError: Boolean(budStatusRead.error), recovering: Boolean(state.desk?.recovery?.active) });
+  const settingUp = Boolean(setupCover) && !leftSetup;
 
   useEffect(() => {
     const openSettings = () => {
@@ -216,6 +222,7 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
           <ActionNotice message={state.error} onDismiss={() => dispatch({ type: "error", message: null })} />
         </div>
       )}
+      {settingUp ? <WorkspaceScreen key="bud-setup" label="Bud setup"><BudSetupScreen running={setupCover === "running"} onLeave={() => setLeftSetup(true)} /></WorkspaceScreen> : <>
       <DesktopShell inert={Boolean(setup)}>
         {/* Keyed on the view: each place rises in once on arrival. Pages already
             remount on switch (the ternary above), so no state contract changes. */}
@@ -242,6 +249,7 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
       </DesktopShell>
       {!setup && <ShellPalette />}
       {setup && <WorkspaceScreen key="setup" label="setup" onClose={() => setSetup(null)}><WorkspaceSetup target={setup} error={state.error} onDismissError={() => dispatch({ type: "error", message: null })} origin={state.activeView === "desk" ? "Desk" : state.activeView === "schedule" ? "Schedule" : state.activeView === "you" ? "Workspace" : "Work"} onTarget={setSetup} onClose={() => setSetup(null)} onAsk={() => { setSetup(null); dispatch({ type: "showAsk" }); }} onSchedule={() => { setSetup(null); dispatch({ type: "showRoutines" }); }} /></WorkspaceScreen>}
+      </>}
     </div>
   );
 }

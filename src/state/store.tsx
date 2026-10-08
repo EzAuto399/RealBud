@@ -288,6 +288,8 @@ export interface HermesStatus {
   modelAccess?: { managed: boolean; withdrawn: boolean; attached: boolean; detail: string };
   /** Automatic setup after an approved office link (server-authorized). */
   autoSetup?: BudAutoSetup;
+  /** Bud passed its readiness check on this computer at least once. */
+  readyOnce?: boolean;
 }
 
 export interface BudAutoSetup {

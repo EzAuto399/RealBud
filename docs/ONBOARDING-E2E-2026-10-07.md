@@ -13,7 +13,7 @@ The goal is that a new office goes from invite to staff doing real work with as 
 | 3 | RealBud | Sets the office's billing plan. If AI is billed to the office, the owner confirms the first month under AI usage & billing. The gateway then switches the office's AI pricing on by itself (`afterTermsAccepted` → `syncOfficeResalePolicy`). |
 | 4 | RealBud | Uploads the office's signed role packs on /admin/offices → Workflow packs. |
 | 5 | Owner | Installs RealBud, chooses "I'm the office owner: approve in my browser" and approves. For staff computers: Computers → Pair a new computer → **Copy message for staff** (download link, steps, code, expiry). |
-| 6 | Staff | Installs, pastes the link code. The window appears straight away ("Getting your office ready"). Bud sets itself up. They land on **Desk**, where Get started names the next step and offers their role pack. |
+| 6 | Staff | Installs, pastes the link code. The window appears straight away ("Getting your office ready"). Bud sets itself up behind a full-window "Setting up Bud" screen (usually about 10 minutes; if setup stops, it offers Try setup again or "Use RealBud without Bud for now"). Then they land on **Desk**, where Get started names the next step and offers their role pack. |
 | 7 | Staff | When every step is done, Get started shows one dismissible line: "You're set up." |
 
 ## What changed
