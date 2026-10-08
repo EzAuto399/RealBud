@@ -12,6 +12,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DATA_DIR } from './config.ts';
 import { createPrivateVault } from './private-vault.ts';
+import { workerStateHoldsLearning } from './worker-state.ts';
 
 export const MEMORY_SIGNING_NAME = 'memory-signing';
 const SLOT = /^([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\/(property(?:-[a-z0-9-]+)?)$/, SLOTS = 64;
@@ -30,7 +31,9 @@ export function parseMemorySigning(value: unknown, workspaceId?: string): Record
 }
 
 const tails = new Map<string, Promise<unknown>>();
-export function memorySigningKey(installationKey: Buffer, workspaceId: string, profileId: string, dataDir = DATA_DIR): Promise<Buffer> {
+/** `save: false` for a read that signs nothing: an unsaved slot is derived but not
+ * written, so a fresh install stays fresh; the first signing command saves it. */
+export function memorySigningKey(installationKey: Buffer, workspaceId: string, profileId: string, dataDir = DATA_DIR, { save = true } = {}): Promise<Buffer> {
   const slot = `${workspaceId}/${profileId}`;
   if (!SLOT.test(slot) || !Buffer.isBuffer(installationKey) || installationKey.length !== 32) return Promise.reject(unavailable());
   const vault = createPrivateVault(dataDir, installationKey);
@@ -40,6 +43,7 @@ export function memorySigningKey(installationKey: Buffer, workspaceId: string, p
     if (keys[slot]) return Buffer.from(keys[slot], 'base64');
     if (Object.keys(keys).length >= SLOTS) throw unavailable();
     const derived = createHmac('sha256', installationKey).update(`realbud-memory-review-v1\0${workspaceId}\0${profileId}`).digest();
+    if (!save) return derived;
     await vault.write(MEMORY_SIGNING_NAME, { version: 1, keys: { ...keys, [slot]: derived.toString('base64') } });
     return derived;
   });
@@ -59,8 +63,9 @@ export async function ensureWorkspaceMemorySigning(installationKey: Buffer, work
   for (const entry of await list(join(dataDir, 'worker-state', workspaceId))) {
     if (!entry.isDirectory() || !/^[a-f0-9]{32}$/.test(entry.name)) continue;
     try {
-      const profileId = (JSON.parse(await readFile(join(dataDir, 'worker-state', workspaceId, entry.name, 'state.json'), 'utf8')) as { profileId?: unknown }).profileId;
-      if (typeof profileId === 'string' && SLOT.test(`${workspaceId}/${profileId}`)) profiles.add(profileId);
+      const state = JSON.parse(await readFile(join(dataDir, 'worker-state', workspaceId, entry.name, 'state.json'), 'utf8')) as { profileId?: unknown };
+      // The shipped-file record a fresh install imports is not learning; it signs nothing.
+      if (typeof state.profileId === 'string' && SLOT.test(`${workspaceId}/${state.profileId}`) && workerStateHoldsLearning(state)) profiles.add(state.profileId);
     } catch { /* unreadable scopes are held by their own owner */ }
   }
   for (const profileId of [...profiles].sort().slice(0, SLOTS)) (await memorySigningKey(installationKey, workspaceId, profileId, dataDir)).fill(0);

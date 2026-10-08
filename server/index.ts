@@ -211,7 +211,7 @@ import type { WorkflowRecord } from "./workflow-database.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN, type BrowserTaskGrant } from "../shared/browser-task.ts";
 import { browserApprovalCardFrom, stopBrowserApprovalCards } from "./browser-approval-card.ts";
 import { applyPropertyPack, ensurePropertyPack, MANAGED_MODEL_KEY_ENV, propertyProfileDir, shippedProfileDigests } from "./hermes-pack.ts";
-import { importLegacyProfileFacts, keepAsideForRepair, MEMORY_HELD_MESSAGE, memoryHeldForLaunch, projectProfileFacts, retireRepairedArtifacts, workerScope } from "./worker-state.ts";
+import { importLegacyProfileFacts, keepAsideForRepair, MEMORY_HELD_MESSAGE, memoryHeldForLaunch, projectProfileFacts, retireRepairedArtifacts, workerFactsHeld, workerScope } from "./worker-state.ts";
 import { legacyProposalContextIdentity } from "./hermes-memory-review.ts";
 import { ensureWorkspaceMemorySigning } from "./hermes-memory-signing.ts";
 import { applyHandsReadiness, hermesStatus } from "./hermes-status.ts";
@@ -6498,6 +6498,8 @@ function privateRestoreReadiness() {
     if (readdirSync(companyDirectory).some(name=>!['workspace.json','private'].includes(name)) ||
         existsSync(join(companyDirectory,'private')) && readdirSync(join(companyDirectory,'private')).length)
       throw new Error('This installation has company membership or private evidence. Restore on a fresh installation.');
+    // A restore replaces Bud's learning; only the pack's shipped-file record is fresh.
+    if (workerFactsHeld()) throw new Error('This workspace has Bud’s saved learning. Restore on a fresh installation.');
     for (const directory of ['properties','owners','decisions','workflow-inputs','workflow-support']) {
       const path=join(DATA_DIR,'vault',directory);
       if (existsSync(path) && readdirSync(path).length) throw new Error('This workspace has private notes or workflow instructions. Restore on a fresh installation.');
