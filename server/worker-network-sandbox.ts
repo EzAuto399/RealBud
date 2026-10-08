@@ -438,12 +438,13 @@ export function sandboxedLaunch(command: string, args: readonly string[], env: R
   } catch (error) { release(); throw error; }
 }
 
-/** Loopback ports held for one worker driver. A turn mounts at most ten
- * brokers and eight sessions stay warm, so this covers the usual worst case;
- * past it a turn fails rather than use an unlisted port. */
-export const BROKER_PORT_POOL_SIZE = 96;
+/** Loopback ports held for one worker driver. A turn mounts up to fourteen
+ * brokers (thirteen stay mounted while a session is warm) and eight sessions
+ * stay warm: 8 × 13 + 2 active × 14 = 132, plus headroom. Past it a turn fails
+ * rather than use an unlisted port. */
+export const BROKER_PORT_POOL_SIZE = 144;
 
-export const BROKER_PORTS_EXHAUSTED = "Bud has too many conversations open right now. Wait a minute, then try again.";
+export const BROKER_PORTS_EXHAUSTED = "Bud has too many conversations open right now. Wait about ten minutes, then try again.";
 
 export interface BrokerPortPool {
   ports: number[];
