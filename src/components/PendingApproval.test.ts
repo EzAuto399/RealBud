@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bot, Message } from '@/state/store';
 import { HERMES_MEMORY_APPROVAL, type MemoryApprovalReview } from '@shared/approval-policy';
-import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals, spokenApproval, waitingLine, type Pending } from './PendingApproval';
+import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals, scriptNetworkNote, spokenApproval, waitingLine, type Pending } from './PendingApproval';
 import { BROWSER_ACCOUNT_CONFIRM_TOOL } from '@shared/browser-task';
 
 const fixture = vi.hoisted(() => ({ dispatch: vi.fn() }));
@@ -197,5 +197,23 @@ describe('approval settings on the card', () => {
     expect(waitingLine(value, now)).toBe('Gmail · Fetch emails · 2 min left');
     expect(waitingLine(value, Date.parse('2026-10-08T05:01:00Z'))).toBe('Gmail · Fetch emails · under 1 min left');
     expect(waitingLine(pending({ tool: 'shell', detail: 'git status', approvalPolicy: undefined, memoryReview: undefined }), now)).not.toContain('left');
+  });
+});
+
+describe('a script card on Windows', () => {
+  it('says scripts can reach the internet on Windows only, and only for commands and scripts', () => {
+    for (const tool of ['shell', 'Bash', 'terminal', 'execute_code']) expect(scriptNetworkNote(tool, 'win32')).toBe('On Windows, scripts Bud runs can reach the internet.');
+    expect(scriptNetworkNote('shell', 'darwin')).toBeNull();
+    expect(scriptNetworkNote('shell', undefined)).toBeNull();
+    expect(scriptNetworkNote('read_page', 'win32')).toBeNull();
+    expect(scriptNetworkNote(HERMES_MEMORY_APPROVAL, 'win32')).toBeNull();
+  });
+  it('renders the line on a Windows command card', () => {
+    vi.stubGlobal('window', { ogb: { platform: 'win32' } });
+    try {
+      const html = renderPanel(pending({ tool: 'shell', detail: 'python3 totals.py', approvalPolicy: undefined, memoryReview: undefined }));
+      expect(html).toContain('On Windows, scripts Bud runs can reach the internet.');
+    } finally { vi.unstubAllGlobals(); }
+    expect(renderPanel(pending({ tool: 'shell', detail: 'python3 totals.py', approvalPolicy: undefined, memoryReview: undefined }))).not.toContain('reach the internet');
   });
 });
