@@ -12,7 +12,7 @@ const SECTIONS: readonly { key: ScheduleSection; label: string }[] = [
   { key: "running", label: "In progress" },
   { key: "attention", label: "Needs you" },
   { key: "ready", label: "Other jobs" },
-  { key: "paused", label: "Paused" },
+  { key: "paused", label: "Paused or off" },
 ];
 /** A result review names what went wrong; a plain waiting result keeps "Review result". */
 const REVIEW_LABELS: Partial<Record<AttentionWord, string>> = {

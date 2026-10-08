@@ -37,7 +37,7 @@ type Flagged = { kind: "loop" | "job"; id: string; word: string };
 type Drawer = { mode: "job"; key: string; flagged?: Flagged; reviewResult?: boolean } | { mode: "create" } | { mode: "archive" } | { mode: "packs"; agency?: boolean } | { mode: "learn" };
 const SCHEDULE_FILTERS: readonly { key: ScheduleFilter; label: string }[] = [
   { key: "all", label: "All jobs" }, { key: "attention", label: "Needs you" },
-  { key: "scheduled", label: "Scheduled" }, { key: "paused", label: "Paused" },
+  { key: "scheduled", label: "Scheduled" }, { key: "paused", label: "Paused or off" },
 ];
 
 export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onShowAsk?: () => void } = {}) {
