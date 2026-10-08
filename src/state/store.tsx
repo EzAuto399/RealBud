@@ -339,6 +339,8 @@ interface AppState {
   /** bots whose cloud computer is being provisioned */
   provisioning: Record<string, boolean>;
   connected: boolean;
+  /** Not connected, but the health check answered `busy: true`: slow, not down. */
+  serviceBusy: boolean;
   error: string | null;
   mascotMotion: {
     botId: string;
@@ -425,7 +427,7 @@ type Action =
   | { type: "provisioning"; botId: string; on: boolean }
   | { type: "setModel"; botId: string; selection: ModelSelection }
   | { type: "interrupt"; botId: string }
-  | { type: "connected"; value: boolean }
+  | { type: "connected"; value: boolean; busy?: boolean }
   | { type: "error"; message: string | null }
   | { type: "toggleSettings"; open?: boolean }
   | { type: "togglePlugins"; open?: boolean }
@@ -749,7 +751,7 @@ function reducer(state: AppState, action: Action): AppState {
     case "setModel":
       return updateBot(state, action.botId, (b) => ({ ...b, modelSelection: action.selection }));
     case "connected":
-      return { ...state, connected: action.value };
+      return { ...state, connected: action.value, serviceBusy: !action.value && action.busy === true };
     case "error":
       return {
         ...(action.message && state.selectedId
@@ -902,6 +904,7 @@ const initialState: AppState = {
   screens: {},
   provisioning: {},
   connected: false,
+  serviceBusy: false,
   error: null,
   mascotMotion: null,
 };
@@ -918,12 +921,25 @@ const memberSessionHeaders = async (): Promise<Record<string, string>> => {
   try { return (await import("@/lib/company-api")).companyApi.memberSessionHeaders(); } catch { return {}; }
 };
 
+/** A request failed or ran out of time: ask the public health check whether the
+ * service still answers and says it is busy. No answer, or any other answer, reads as down. */
+async function serviceAnswersBusy(): Promise<boolean> {
+  try {
+    const response = await fetch("/api/health", { signal: AbortSignal.timeout(2_000) });
+    const body = response.ok ? await response.json() : null;
+    return body?.app === "realbud" && body.busy === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function api(path: string, init?: RequestInit, opts?: { timeoutMs?: number }): Promise<any> {
   let administratorRequestToken: string | null = null;
   let sentSession = "";
-  const unavailable = (cause?: unknown): never => {
-    if (typeof window !== "undefined") window.dispatchEvent(new Event(SERVICE_UNAVAILABLE_EVENT));
-    throw localServiceError(cause);
+  const unavailable = async (cause?: unknown): Promise<never> => {
+    const busy = await serviceAnswersBusy();
+    if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(SERVICE_UNAVAILABLE_EVENT, { detail: { busy } }));
+    throw localServiceError(cause, busy);
   };
   const call = async () => {
     const token = await ensureSession().catch(() => "");
@@ -965,7 +981,7 @@ export async function api(path: string, init?: RequestInit, opts?: { timeoutMs?:
     if (res.status === 401 && body.error === "session required") rejectLocalSession(sentSession);
   }
   if (body.code === "service_admin_required") clearServiceAdminSession(administratorRequestToken);
-  if (isLocalServiceProxyFailure(res.status, body.error)) unavailable();
+  if (isLocalServiceProxyFailure(res.status, body.error)) await unavailable();
   if (!res.ok) throw Object.assign(new Error(body.error ?? `${res.status} ${res.statusText}`), {
     status: res.status,
     ...(typeof body.code === "string" && /^[a-z_]{1,64}$/.test(body.code) ? { code: body.code } : {}),
@@ -1658,8 +1674,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       };
       source.onmessage = event => { if (es === source) onFrame(event); };
     };
-    const onServiceUnavailable = () => {
-      rawDispatch({ type: "connected", value: false });
+    const onServiceUnavailable = (event: Event) => {
+      rawDispatch({ type: "connected", value: false, busy: (event as CustomEvent<{ busy?: boolean } | null>).detail?.busy === true });
       const stale = es;
       es = null;
       stale?.close();

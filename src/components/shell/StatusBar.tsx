@@ -34,7 +34,9 @@ export function StatusBar({ browser, stopping, stopError, onStop, budget }: { br
   }, [state.connected]);
   // "Connected" means this computer is joined to its office. The local service
   // being down is its own fact and wins over any link wording.
-  const connection = !state.connected ? { tone: dot.hold, label: "Offline — reconnecting" }
+  // Busy means the service still answered its health check: slow, not down.
+  const connection = !state.connected && state.serviceBusy ? { tone: dot.hold, label: "Busy — still working, your work is safe" }
+    : !state.connected ? { tone: dot.hold, label: "Offline — reconnecting" }
     : link === "linked" && officeInactive ? { tone: dot.hold, label: "Office account inactive" }
     : link === "linked" ? { tone: dot.agency, label: "Connected" }
     : link === "not-linked" ? { tone: dot.hold, label: "Not connected to your office" }
