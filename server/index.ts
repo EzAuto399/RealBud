@@ -6143,7 +6143,7 @@ desk.setMemberKey(workspaceIdentity.workerMemberKey ?? '');
 /** Every path that resets SOUL.md to the pack (Repair, Install, apply-pack,
  * automatic repair) goes through here first: an office edit RealBud could not
  * keep is renamed aside, so it is never overwritten. */
-const prepareProfileRepair = async () => keepAsideForRepair(workerFactsScope(), (await projectWorkerFacts()).unkept);
+const prepareProfileRepair = async () => await keepAsideForRepair(workerFactsScope(), (await projectWorkerFacts()).unkept);
 const workerFactsScope = () => workerScope(workspaceIdentity.id, currentWorkerProfile().profile, propertyProfileDir());
 const projectWorkerFacts = () => withWorkerProfile(desk.memberKeyForWorker(), () => projectProfileFacts(workerFactsScope(), { shipped: shippedProfileDigests() }));
 // Each seat imports inside its own profile, so helper-era proposal identities and

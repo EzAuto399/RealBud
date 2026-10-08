@@ -12,11 +12,11 @@
  * credential-shaped or over-cap bytes are never stored, only a digest, size and
  * reason; every scope shares one byte and entry cap. */
 import { createHash, randomBytes } from 'node:crypto';
-import { lstatSync, renameSync } from 'node:fs';
-import { lstat, readdir } from 'node:fs/promises';
+import { lstatSync } from 'node:fs';
+import { lstat, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { DATA_DIR } from './config.ts';
-import { readPrivateJsonWithFallback, writePrivateJson } from './private-json.ts';
+import { privateDirectory, readPrivateJsonWithFallback, writePrivateJson } from './private-json.ts';
 import { ensureProfileDirectories, readProfileFiles, writeProfileFiles, type ProfileFileWrite } from './hermes-profile-storage.ts';
 import { containsCredential } from './redact.ts';
 import { workerEditRecord } from './hermes-memory-store.ts';
@@ -483,22 +483,22 @@ export async function retireRepairedArtifacts(scope: WorkerScope, keys: readonly
 }
 
 /** Repair forces only SOUL.md back to the pack. An office edit RealBud could not
- * keep is renamed aside in the profile first (never deleted, links never
- * followed), so Repair is never blocked and never loses those bytes. */
-export function keepAsideForRepair(scope: WorkerScope, unkept: readonly string[], now = Date.now): string[] {
-  const kept: string[] = [];
-  if (!unkept.includes('SOUL.md')) return kept;
-  // Only inside Bud's own folders: the profile, profiles/ and the worker home must
-  // be real folders, never links, or the rename could act outside RealBud's tree.
-  const home = dirname(dirname(scope.profileDirectory));
-  try { for (const folder of [scope.profileDirectory, dirname(scope.profileDirectory), home]) { const stat = lstatSync(folder); if (!stat.isDirectory() || stat.isSymbolicLink()) return kept; } }
-  catch { return kept; }
-  const from = join(scope.profileDirectory, 'SOUL.md');
-  try { lstatSync(from); } catch { return kept; }
-  const to = `${from}.kept-${new Date(now()).toISOString().replace(/[:.]/g, '-')}-${randomBytes(3).toString('hex')}`;
-  renameSync(from, to);
-  kept.push(to);
-  return kept;
+ * keep is first copied into RealBud's own private storage (created exclusively,
+ * owner-only), read with the same link-refusing reader as every worker fact.
+ * Nothing in the worker's folder is renamed or changed here, so no swapped link
+ * can redirect it, and Repair is never blocked. */
+const KEPT_SOUL_BYTES = 16 * 1024 * 1024;
+export async function keepAsideForRepair(scope: WorkerScope, unkept: readonly string[], options: { dataDir?: string; now?: () => number } = {}): Promise<string[]> {
+  if (!unkept.includes('SOUL.md')) return [];
+  const read = (await readWorkerFiles(scope.profileDirectory, [{ key: 'SOUL.md', max: KEPT_SOUL_BYTES }])).get('SOUL.md');
+  // ponytail: a link or an unreadable SOUL is left to the pack writer, which refuses it; past 16 MB it is not an office edit.
+  if (!Buffer.isBuffer(read)) return [];
+  const folder = join(dirname(workerStateFile(scope, options.dataDir ?? DATA_DIR)), 'kept');
+  await privateDirectory(folder);
+  const stamp = new Date((options.now ?? Date.now)()).toISOString().replace(/[:.]/g, '-');
+  const path = join(folder, `SOUL-${stamp}-${randomBytes(4).toString('hex')}.md`);
+  await writeFile(path, read, { flag: 'wx', mode: 0o600 });
+  return [path];
 }
 
 export const MEMORY_HELD_MESSAGE = 'Bud’s memory file was changed outside RealBud and needs a review before Bud can work. Existing files were kept.';
