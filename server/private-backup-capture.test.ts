@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, symlink, link, copyFile, rename, readdir, chmod } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,7 +12,8 @@ import { emptyV3 } from '../shared/desk-v3.ts';
 import { WorkflowDatabase } from './workflow-database.ts';
 import { legacyMailBackupFixture } from './testing/mail-backup-fixture.ts';
 import { plantPrivateFile, plantPrivateFiles, privateDir, privateTempRoot, removeFixture } from './testing/private-fixture.ts';
-import { putArtifact, updateWorkerState, workerScope } from './worker-state.ts';
+import { importLegacyProfileFacts, projectProfileFacts, putArtifact, readWorkerState, updateWorkerState, workerScope, workerStateFile } from './worker-state.ts';
+import { OWNED_MEMORY_RUNTIME, runOwnedMemoryReview } from './hermes-memory-owned.ts';
 import { createLearningStore, defaultLearningDirectory } from './learning-auto-keep.ts';
 
 const roots: string[] = [], catalogs: PrivateBackupCatalog[] = [];
@@ -232,6 +233,38 @@ describe('bounded immutable live-source capture', () => {
     await updateWorkerState(foreign, null, draft => { putArtifact(draft, 'memories/MEMORY.md', Buffer.from('Another office.'), 'realbud', 1); }, other.directory);
     await expect(capturePrivateWorkspace(other.options)).rejects.toThrow(/another workspace/);
     expect(other.catalog.summary().sealed).toBe(false);
+  });
+  it('still captures and validates when a worker plants credential-shaped text, which never reaches the archive', async () => {
+    const f = await fixture(), profile = join(f.directory, 'hermes/profiles/property'), secret = 'sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCD';
+    const planted = `Use api_key = "${secret}"`;
+    await save(f.directory, 'hermes/profiles/property/config.yaml', Buffer.from('memory:\n  write_approval: true\n'));
+    await save(f.directory, 'hermes/profiles/property/memories/MEMORY.md', Buffer.from('Fictional kept preference.'));
+    await save(f.directory, 'hermes/profiles/property/.realbud-memory-reviews/aaaa0001.json', Buffer.from(planted));
+    await save(f.directory, 'hermes/profiles/property/skills/planted/SKILL.md', Buffer.from(planted));
+    const scope = workerScope(f.workspaceId, 'property', profile);
+    await importLegacyProfileFacts([scope], { dataDir: f.directory });
+    await save(f.directory, 'hermes/profiles/property/memories/MEMORY.md', Buffer.from(`Fictional kept preference.\n§\n${planted}`));
+    await save(f.directory, 'hermes/profiles/property/pending/memory/0000beef.json', Buffer.from(JSON.stringify({ id: '0000beef', subsystem: 'memory', action: 'add', summary: 'x', origin: 'background_review', created_at: 1, payload: { action: 'add', target: 'memory', content: planted } })));
+    await save(f.directory, 'hermes/profiles/property/SOUL.md', Buffer.from(planted));
+    expect(await runOwnedMemoryReview({ command: 'list', key: randomBytes(32).toString('base64'), workspaceId: f.workspaceId, profileId: 'property', runtimeId: OWNED_MEMORY_RUNTIME, profileDirectory: profile }, { dataDir: f.directory })).toMatchObject({ ok: true });
+    await projectProfileFacts(scope, { dataDir: f.directory });
+    const state = await readWorkerState(scope, f.directory);
+    expect(state.held.filter(row => row.reason === 'credential').map(row => row.key).sort()).toEqual(['.realbud-memory-reviews/aaaa0001.json', 'SOUL.md', 'memories/MEMORY.md', 'pending/memory/0000beef.json', 'skills/planted/SKILL.md']);
+    const receipt = await capturePrivateWorkspace(f.options); await verifyPrivateWorkspaceCapture(f.options, receipt);
+    expect(f.catalog.seal()).toMatchObject({ sealed: true });
+    expect(f.catalog.getFile(`worker-state/${f.workspaceId}/${scope.scopeId}/state.json`)).toBeDefined();
+    const bytes = await readFile(join(f.catalog.directory, 'catalog.sqlite'));
+    expect(bytes.includes(Buffer.from(secret))).toBe(false); expect(bytes.includes(Buffer.from(Buffer.from(planted).toString('base64').slice(0, 24)))).toBe(false);
+  });
+  it('withholds an older worker-fact file that carries credential-shaped text instead of refusing the backup', async () => {
+    const f = await fixture(), scope = workerScope(f.workspaceId, 'property', '/synthetic/profile'), secret = 'sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCD';
+    await updateWorkerState(scope, null, draft => { putArtifact(draft, 'memories/MEMORY.md', Buffer.from('Fictional preference.'), 'realbud', 1); }, f.directory);
+    const file = workerStateFile(scope, f.directory), older = JSON.parse(await readFile(file, 'utf8'));
+    older.artifacts['skills/old/SKILL.md'] = { digest: createHash('sha256').update(`token = "${secret}"`).digest('hex'), base64: Buffer.from(`token = "${secret}"`).toString('base64'), source: 'office', at: 1 };
+    await save(f.directory, `worker-state/${f.workspaceId}/${scope.scopeId}/state.json`, older);
+    const receipt = await capturePrivateWorkspace(f.options); await verifyPrivateWorkspaceCapture(f.options, receipt);
+    expect(f.catalog.getFile(`worker-state/${f.workspaceId}/${scope.scopeId}/state.json`)).toBeUndefined();
+    expect((await readFile(join(f.catalog.directory, 'catalog.sqlite'))).includes(Buffer.from(Buffer.from(`token = "${secret}"`).toString('base64')))).toBe(false);
   });
   it('supports cold target names and authority-only guards without a source key or catalog', async () => {
     const f = await fixture(); seedDatabase(f.directory, f.key);

@@ -13,9 +13,8 @@ import { linkSync, lstatSync, readFileSync, readdirSync, renameSync, unlinkSync 
 import { join } from 'node:path';
 import { PACK_DIR, policyDocument } from './hermes-pack.ts';
 import { readProfileFiles } from './hermes-profile-storage.ts';
-import { containsCredential } from './redact.ts';
 import { DATA_DIR } from './config.ts';
-import { MEMORY_KEYS, artifactBytes, importLegacyProfileFacts, preserveCopy, projectProfileFacts, putArtifact, readWorkerState, updateWorkerState,
+import { MEMORY_KEYS, artifactBytes, holdCopy, importLegacyProfileFacts, preserveCopy, projectProfileFacts, putArtifact, readWorkerState, recordWorkerMemoryEdit, updateWorkerState,
   workerScope, type WorkerScope, type WorkerState } from './worker-state.ts';
 import { ENTRY_DELIMITER, StoreRefusal, applyPending, normalizePayload, pinEntries, targetEnabled, targetLimit,
   type MemoryPayload, type MemorySettings, type MemoryTarget } from './hermes-memory-store.ts';
@@ -24,7 +23,7 @@ import type { MemoryReviewErrorCode } from '../shared/hermes-memory-review.ts';
 
 /** Runtime identity bound into owned receipts, journals and preview digests. */
 export const OWNED_MEMORY_RUNTIME = 'realbud-owned-memory-v1';
-const PAGE = 20, MAX_DIR = 2000, MAX_BYTES = 128 * 1024, MAX_INPUT = 64 * 1024;
+const WORKER_PENDING_LIMIT = 500, PAGE = 20, MAX_DIR = 2000, MAX_BYTES = 128 * 1024, MAX_INPUT = 64 * 1024;
 const HEX8 = /^[a-f0-9]{8}$/, HEX64 = /^[a-f0-9]{64}$/, RUNTIME_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const RECEIPT_KEYS = ['version', 'id', 'workspaceId', 'profileId', 'runtimeId', 'decision', 'state', 'phase', 'pendingDigest', 'configDigest', 'beforeDigest',
   'afterDigest', 'reviewDigest', 'target', 'action', 'origin', 'createdAt', 'at', 'operationCount', 'charLimit', 'mac'];
@@ -87,9 +86,15 @@ interface Ctx {
   settings?: MemorySettings; configDigest?: string; held: Map<MemoryTarget, MemoryReviewErrorCode>;
   /** Worker-staged proposal copies to remove from the profile after commit. */
   cleanup: Map<string, string>;
+  /** A worker-side memory edit was captured: project the approved memory back. */
+  project?: boolean;
 }
 const get = (ctx: Ctx, key: string) => artifactBytes(ctx.state, key);
-const put = (ctx: Ctx, key: string, bytes: Buffer | string) => putArtifact(ctx.state, key, Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes, 'utf8'), 'realbud', ctx.at);
+/** RealBud's own writes either store exactly or refuse the command; never a silent hold. */
+const put = (ctx: Ctx, key: string, bytes: Buffer | string) => {
+  const refused = putArtifact(ctx.state, key, Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes, 'utf8'), 'realbud', ctx.at);
+  if (refused) fail(refused === 'credential' ? 'blocked-content' : 'capacity');
+};
 const remove = (ctx: Ctx, key: string) => { delete ctx.state.artifacts[key]; };
 
 // ── signed records (helper formats; MAC over the stored canonical bytes) ───
@@ -350,20 +355,20 @@ function workerCopies(profile: string): WorkerCopies {
   return out;
 }
 
-/** Take in what the worker changed since RealBud last projected; hold what conflicts. */
+/** Take in what the worker staged or changed since RealBud last projected. A direct
+ * edit of a memory file never changes canonical memory: it becomes a proposal. */
 function adopt(ctx: Ctx, copies: WorkerCopies) {
   const draft = ctx.state;
   for (const [target, bytes] of copies.memory) {
     const key = MEMORY_KEYS[target];
     if (bytes === 'unsafe') { ctx.held.set(target, 'unsafe-storage'); continue; }
-    const digest = sha(bytes), current = draft.artifacts[key], projected = draft.projected[key];
+    const digest = sha(bytes), current = draft.artifacts[key];
     if (current?.digest === digest) { draft.projected[key] = digest; continue; }
-    if (digest === projected) continue; // the worker has not caught up with RealBud yet
-    try { new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { ctx.held.set(target, 'unavailable'); continue; }
-    if (!current || current.digest === projected) {
-      if (containsCredential(bytes.toString('utf8'))) { ctx.held.set(target, 'blocked-content'); continue; }
-      putArtifact(draft, key, bytes, 'worker', ctx.at); draft.projected[key] = digest;
-    } else { preserveCopy(draft, key, bytes, 'worker-changed', ctx.at); ctx.held.set(target, 'conflict'); }
+    if (digest === draft.projected[key]) continue; // the worker has not caught up with RealBud yet
+    const recorded = recordWorkerMemoryEdit(draft, target, bytes, ctx.at);
+    if (recorded === 'credential') ctx.held.set(target, 'blocked-content');
+    else if (recorded === 'unsafe') ctx.held.set(target, 'unavailable');
+    else ctx.project = true; // returns the worker copy to the approved memory
   }
   for (const [id, bytes] of copies.pending) {
     const key = paths.pending(id), digest = sha(bytes), receipt = readReceipt(ctx, id), current = draft.artifacts[key];
@@ -372,7 +377,9 @@ function adopt(ctx: Ctx, copies: WorkerCopies) {
       else if (receipt === 'bad' || receipt.pendingDigest !== digest) preserveCopy(draft, key, bytes, 'worker-changed', ctx.at);
       continue;
     }
-    if (current?.digest === digest || containsCredential(bytes.toString('utf8'))) continue;
+    if (current?.digest === digest) continue;
+    // Worker staging is bounded: past the cap a staged file is held as a digest only.
+    if (!current && Object.entries(draft.artifacts).filter(([name, row]) => name.startsWith('pending/memory/') && row.source === 'worker').length >= WORKER_PENDING_LIMIT) { holdCopy(draft, key, bytes, 'capacity', ctx.at); continue; }
     // The worker re-staged its own undecided proposal; a RealBud-owned one is never replaced.
     if (!current || current.source !== 'realbud') putArtifact(draft, key, bytes, 'worker', ctx.at);
     else preserveCopy(draft, key, bytes, 'worker-changed', ctx.at);
@@ -401,10 +408,11 @@ export async function runOwnedMemoryReview(request: OwnedRequest, options: { sig
     const copies = workerCopies(request.profileDirectory);
     if (options.signal?.aborted) fail('unavailable');
     const cleanup = new Map<string, string>();
+    let project = false;
     const { result } = await updateWorkerState(scope, null, draft => {
       const ctx: Ctx = { state: draft, key, workspaceId: request.workspaceId, profileId: request.profileId, runtimeId: request.runtimeId, at: now(),
         settings: config?.settings, configDigest: config?.digest, held: new Map(), cleanup };
-      adopt(ctx, copies);
+      adopt(ctx, copies); project = ctx.project === true;
       const adopted = structuredClone(draft);
       try {
         const value = dispatch(ctx, request);
@@ -419,7 +427,7 @@ export async function runOwnedMemoryReview(request: OwnedRequest, options: { sig
       }
     }, dataDir);
     // Committed; now bring the worker copy along. A failure here only delays it to the next projection.
-    if (result.ok && (request.command === 'decide' || cleanup.size)) {
+    if (project || result.ok && (request.command === 'decide' || cleanup.size)) {
       try { await projectProfileFacts(scope, { dataDir, now, keys: [MEMORY_KEYS.memory, MEMORY_KEYS.user] }); } catch { /* retried before the next launch */ }
       for (const [id, digest] of cleanup) { try { removeWorkerCopy(request.profileDirectory, id, digest); } catch { /* left for the next pass */ } }
     }

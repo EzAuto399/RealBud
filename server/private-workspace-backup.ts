@@ -68,11 +68,25 @@ export function privateBackupHistoryDirectory(parent: string, name: string): boo
 export const PRIVATE_WORKER_FACT_ROOTS = ['worker-state', 'memory-learning'] as const;
 const UUID_PART = '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
 const WORKER_FACT_PATH = new RegExp(`^worker-state/(${UUID_PART})/([a-f0-9]{32})/state\\.json$`), LEARNING_PATH = new RegExp(`^memory-learning/(${UUID_PART})/(property(?:-[a-z0-9-]+)?)/auto-keep\\.json$`);
+/** Decoded stored text of a worker-fact or learning file, for the credential guard. */
+function workerFactText(path: string, value: unknown): string {
+  if (!WORKER_FACT_PATH.test(path)) return JSON.stringify(value);
+  const state = value as { artifacts?: Record<string, { base64?: unknown }>; preserved?: { base64?: unknown }[] };
+  return [...Object.values(state?.artifacts ?? {}), ...(state?.preserved ?? [])].map(row => typeof row?.base64 === 'string' ? Buffer.from(row.base64, 'base64').toString('utf8') : '').join('\n');
+}
+/** A worker-fact or learning file holding credential-shaped text is withheld from
+ * the backup (it stays on this computer) instead of refusing the whole backup.
+ * RealBud never stores such text there; this guards files from older builds. */
+export function privateBackupWithheld(path: string, data: Buffer): boolean {
+  if (privateWorkerFactWorkspace(path) === null) return false;
+  let value: unknown; try { value = JSON.parse(data.toString('utf8')); } catch { return false; }
+  return containsCredential(workerFactText(path, value));
+}
 /** The workspace a worker-fact path belongs to, or null for any other path. */
 export function privateWorkerFactWorkspace(path: string): string | null { return WORKER_FACT_PATH.exec(path)?.[1] ?? LEARNING_PATH.exec(path)?.[1] ?? null; }
 export function privateBackupSourcePaths() { return { staticPaths: [...STATIC], guardedPaths: [...GUARDED] }; }
 const INCLUDED = ['Private Desk book and property notes', 'Saved mail work and collected source evidence', 'Bank originals, reviewed copies, bills, review drafts and preparation receipts', 'Portfolio batch sources, saved results and retry history', 'Department preparation history and its reviewed case snapshot', 'Agency settings, saved views, plans and instruction revision history', 'What Bud learned, pending learning and review decisions, and office edits to Bud’s instructions'];
-const EXCLUDED = ['Provider keys, connected-account credentials and sign-in sessions', 'Shared office database and company membership', 'Worker installation, authentication and conversations', 'Files outside the listed business folders and external attachments'];
+const EXCLUDED = ['Provider keys, connected-account credentials and sign-in sessions', 'Anything in Bud’s learning that looks like a credential (it stays on this computer)', 'Shared office database and company membership', 'Worker installation, authentication and conversations', 'Files outside the listed business folders and external attachments'];
 const CHANGES = ['Use this installation’s protected encryption key', 'Clear connected-account selection and setup approvals', 'Pause all schedules and require plan review', 'Retain job history; interrupt unfinished work and close sign-in handoffs', 'Repair the installed instruction pack before running its plans'];
 export function privateBackupDescriptions() { return { included: [...INCLUDED], excluded: [...EXCLUDED], restoreChanges: [...CHANGES] }; }
 function fail(message: string, status = 409): never { throw Object.assign(new Error(message), { status }); }
@@ -152,12 +166,9 @@ function validHistory(runs: unknown, jobs: boolean) {
 }
 function validateBusinessFile(path: string, value: unknown) {
   const worker = WORKER_FACT_PATH.exec(path), learning = LEARNING_PATH.exec(path);
-  if (worker) {
-    let text = '';
-    try { const state = validateWorkerState(value, { workspaceId: worker[1], scopeId: worker[2] }); text = [...Object.values(state.artifacts), ...state.preserved].map(row => Buffer.from(row.base64, 'base64').toString('utf8')).join('\n'); }
-    catch { fail('Bud’s saved learning needs recovery; no partial backup was created.', 400); }
-    if (containsCredential(text)) fail('Bud’s saved learning contains credential-shaped text and needs service review; no partial backup was created.', 400);
-  }
+  if (worker) { try { validateWorkerState(value, { workspaceId: worker[1], scopeId: worker[2] }); } catch { fail('Bud’s saved learning needs recovery; no partial backup was created.', 400); } }
+  // Capture withholds such files; an archive that still carries one is never restored.
+  if ((worker || learning) && containsCredential(workerFactText(path, value))) fail('Saved learning in this backup carries credential-shaped text; it was not restored.', 400);
   if (learning) { try { parseLearningStore(value, { workspaceId: learning[1], profileId: learning[2] }); } catch { fail('Bud’s learning settings need recovery; no partial backup was created.', 400); } }
   if (isSkillArchivePath(path)) validateCustomerSkillArchiveFile(path, value);
   if (isPackArchivePath(path)) {
@@ -248,7 +259,7 @@ async function filesAt(directory: string): Promise<SavedFile[]> {
   for (const root of PRIVATE_WORKER_FACT_ROOTS) await walk(root, 2);
   if (paths.size > MAX_FILES) fail('This business snapshot exceeds the supported file count. Use assisted backup; no partial export was issued.');
   const result: SavedFile[] = []; let total = 0;
-  for (const path of [...paths].sort()) { const content = await bytes(join(directory, path)); if (!content) fail('Business files changed during backup.'); total += content.length; if (total > MAX_PLAIN) fail('This business snapshot exceeds 48 MB. Use assisted backup; no partial export was issued.'); result.push(file(path, content)); }
+  for (const path of [...paths].sort()) { const content = await bytes(join(directory, path)); if (!content) fail('Business files changed during backup.'); if (privateBackupWithheld(path, content)) continue; total += content.length; if (total > MAX_PLAIN) fail('This business snapshot exceeds 48 MB. Use assisted backup; no partial export was issued.'); result.push(file(path, content)); }
   return result;
 }
 async function recordsAt(directory: string, key: Buffer): Promise<{ present: boolean; records: SavedRecord[] }> {

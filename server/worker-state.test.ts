@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { capturePendingSkill, importLegacyProfileFacts, projectProfileFacts, readPendingSkill, readWorkerState, retireRepairedArtifacts,
-  updateWorkerState, workerScope, workerScopeId, workerStateFile } from './worker-state.ts';
+  updateWorkerState, workerScope, workerScopeId, workerStateFile, WORKER_SCOPE_BYTES, WORKER_STATE_MAX_BYTES } from './worker-state.ts';
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(p => rm(p, { recursive: true, force: true }))); });
@@ -80,21 +80,20 @@ describe('projection', () => {
     expect(await f.read('skills/office-notes/SKILL.md')).toBe('# Notes\n');
   });
 
-  it('captures an office edit made after the last projection, and preserves a worker copy that conflicts with a RealBud change', async () => {
+  it('never promotes a worker-created skill or worker-changed SOUL; both are held for review and not re-projected', async () => {
     const f = await fixture(); await importLegacyProfileFacts([f.scope], { dataDir: f.data });
-    await f.write('skills/office-notes/SKILL.md', '# Notes v2\n');
-    expect((await projectProfileFacts(f.scope, { dataDir: f.data })).captured).toEqual(['skills/office-notes/SKILL.md']);
-    expect(await f.canonical('skills/office-notes/SKILL.md')).toBe('# Notes v2\n');
-    // RealBud changes memory canonically; the worker copy also changed meanwhile.
-    await updateWorkerState(f.scope, null, draft => { draft.artifacts['memories/MEMORY.md'] = { digest: sha('RealBud decision.'), base64: Buffer.from('RealBud decision.').toString('base64'), source: 'realbud', at: 2 }; }, f.data);
-    await f.write('memories/MEMORY.md', 'Worker wrote this directly.');
+    await mkdir(join(f.profile, 'skills', 'worker-made'), { recursive: true, mode: 0o700 });
+    await f.write('skills/worker-made/SKILL.md', '# Worker-made\n'); await f.write('SOUL.md', 'Worker rewrote the voice.\n');
     const result = await projectProfileFacts(f.scope, { dataDir: f.data });
-    expect(result.preserved).toEqual(['memories/MEMORY.md']); expect(await f.read('memories/MEMORY.md')).toBe('Worker wrote this directly.');
-    expect((await f.state()).preserved).toEqual([expect.objectContaining({ key: 'memories/MEMORY.md', reason: 'worker-changed', digest: sha('Worker wrote this directly.') })]);
-    // Once the worker copy is back to what RealBud last projected, the RealBud change lands.
-    await f.write('memories/MEMORY.md', 'Prefers concise updates.');
-    expect((await projectProfileFacts(f.scope, { dataDir: f.data })).written).toEqual(['memories/MEMORY.md']);
-    expect(await f.read('memories/MEMORY.md')).toBe('RealBud decision.');
+    expect(result.held.sort()).toEqual(['SOUL.md', 'skills/worker-made/SKILL.md']); expect(result.written).toEqual([]);
+    const state = await f.state();
+    expect(state.artifacts['skills/worker-made/SKILL.md']).toBeUndefined(); expect(await f.canonical('SOUL.md')).toBe('Office voice.\n');
+    expect(state.preserved.map(row => [row.key, row.reason]).sort()).toEqual([['SOUL.md', 'worker-changed'], ['skills/worker-made/SKILL.md', 'worker-changed']]);
+    // Repeating the turn stores nothing new; a regenerated worker folder gets only canonical facts.
+    await projectProfileFacts(f.scope, { dataDir: f.data }); expect((await f.state()).preserved).toHaveLength(2);
+    await rm(join(f.root, 'hermes'), { recursive: true }); await mkdir(f.profile, { recursive: true, mode: 0o700 });
+    await projectProfileFacts(f.scope, { dataDir: f.data });
+    expect(await f.read('SOUL.md')).toBe('Office voice.\n'); await expect(f.read('skills/worker-made/SKILL.md')).rejects.toThrow();
   });
 
   it('keeps an explicit Repair: the replaced office SOUL is preserved and not restored', async () => {
@@ -105,6 +104,48 @@ describe('projection', () => {
     expect(await f.read('SOUL.md')).toBe('Shipped.\n');
     expect((await f.state()).preserved).toEqual([expect.objectContaining({ key: 'SOUL.md', reason: 'repair-replaced', digest: sha('Office voice.\n') })]);
   });
+  it('turns a worker-side memory edit into a proposal and returns the worker copy to the approved memory', async () => {
+    const f = await fixture(); await importLegacyProfileFacts([f.scope], { dataDir: f.data });
+    await f.write('memories/MEMORY.md', 'Prefers concise updates.\n§\nWorker added this itself.');
+    const result = await projectProfileFacts(f.scope, { dataDir: f.data });
+    expect(result).toMatchObject({ held: ['memories/MEMORY.md'], written: ['memories/MEMORY.md'] });
+    expect(await f.canonical('memories/MEMORY.md')).toBe('Prefers concise updates.'); expect(await f.read('memories/MEMORY.md')).toBe('Prefers concise updates.');
+    const staged = Object.entries((await f.state()).artifacts).filter(([key]) => key.startsWith('pending/memory/'));
+    expect(staged).toHaveLength(1);
+    expect(JSON.parse(Buffer.from(staged[0][1].base64, 'base64').toString()).payload).toEqual({ action: 'add', target: 'memory', content: 'Worker added this itself.' });
+  });
+
+  it('does nothing before the trusted import completes, and the import never runs twice', async () => {
+    const f = await fixture();
+    expect(await projectProfileFacts(f.scope, { dataDir: f.data })).toMatchObject({ skipped: 'migration-incomplete' });
+    await importLegacyProfileFacts([f.scope], { dataDir: f.data });
+    await f.write('skills/office-notes/SKILL.md', '# Worker rewrite\n');
+    expect(await importLegacyProfileFacts([f.scope], { dataDir: f.data })).toMatchObject([{ skipped: true }]);
+    expect(await f.canonical('skills/office-notes/SKILL.md')).toBe('# Notes\n');
+  });
+});
+
+describe('shared caps', () => {
+  it('keeps 1,000 planted files and one huge file out of the store as digest-only holds', async () => {
+    const f = await fixture(), filler = 'x'.repeat(20_000);
+    for (let i = 0; i < 1000; i++) {
+      await mkdir(join(f.profile, 'skills', `planted-${i}`), { recursive: true, mode: 0o700 });
+      await f.write(`skills/planted-${i}/SKILL.md`, `${i} ${filler}`);
+    }
+    await f.write('skills/office-notes/SKILL.md', 'y'.repeat(3 * 1024 * 1024));
+    await importLegacyProfileFacts([f.scope], { dataDir: f.data });
+    const state = await f.state(), size = (await readFile(workerStateFile(f.scope, f.data))).length;
+    const content = [...Object.entries(state.artifacts).filter(([key]) => !key.startsWith('memories/')).map(([, row]) => row.base64), ...state.preserved.map(row => row.base64)]
+      .reduce((total, base64) => total + Buffer.from(base64, 'base64').length, 0);
+    expect(content).toBeLessThanOrEqual(WORKER_SCOPE_BYTES); expect(size).toBeLessThan(WORKER_STATE_MAX_BYTES);
+    expect(state.held.find(row => row.key === 'skills/office-notes/SKILL.md')).toMatchObject({ reason: 'capacity', bytes: 3 * 1024 * 1024 });
+    expect(state.held.filter(row => row.reason === 'capacity').length).toBeGreaterThan(100);
+    for (const row of state.held) expect(Object.keys(row).sort()).toEqual(['at', 'bytes', 'digest', 'key', 'reason']);
+    // Every later turn reads a capped list and stores nothing new beyond the cap.
+    for (let i = 0; i < 3; i++) await projectProfileFacts(f.scope, { dataDir: f.data });
+    expect((await readFile(workerStateFile(f.scope, f.data))).length).toBeLessThan(WORKER_STATE_MAX_BYTES);
+    expect((await f.state()).preserved.length).toBeLessThanOrEqual(200);
+  }, 60_000);
 });
 
 describe('pending skills', () => {

@@ -69,14 +69,52 @@ describe('owned memory review', () => {
     expect(await readFile(f.file)).toEqual(before); expect(await f.decide(review.reviewDigest, 'reject')).toEqual(result);
   });
 
-  it.each(['memory', 'proposal'] as const)('holds approval if the worker changed the %s after review', async kind => {
+  it('holds approval if the worker re-staged the proposal after review', async () => {
     const f = await fixture(); await f.stage({ action: 'replace', target: 'memory', old_text: 'concise', content: 'Prefers detailed updates.', matched_entry: 'Prefers concise updates.' });
     const review = (await f.preview())!.body as MemoryReviewPreview;
-    if (kind === 'memory') await writeFile(f.file, 'A newer independent preference.');
-    if (kind === 'proposal') await f.stage({ action: 'add', target: 'memory', content: 'Another proposal.' });
+    await f.stage({ action: 'add', target: 'memory', content: 'Another proposal.' });
     const current = await readFile(f.file);
-    expect(await f.decide(review.reviewDigest)).toMatchObject({ status: 409, body: { code: kind === 'memory' ? 'conflict' : 'stale-review' } });
+    expect(await f.decide(review.reviewDigest)).toMatchObject({ status: 409, body: { code: 'stale-review' } });
     expect(await readFile(f.file)).toEqual(current);
+  });
+
+  it('never adopts a worker-written memory change: it waits as a proposal and approval applies exactly the reviewed bytes', async () => {
+    const f = await fixture(), approved = 'Prefers concise updates.\n§\nUse Australian English.';
+    const written = 'Prefers concise updates.\n§\nUse British English.\n§\nCalls the owner every Friday.';
+    await f.list(); // first boot: the trusted one-time import
+    await writeFile(f.file, written);
+    const listed = await f.list();
+    expect(await f.canonical()).toBe(approved);
+    // The worker copy returns to approved memory; the edit is not projected back.
+    expect(await readFile(f.file, 'utf8')).toBe(approved);
+    expect(listed.items).toEqual([expect.objectContaining({ state: 'pending', origin: 'background_review', action: 'batch', target: 'memory' })]);
+    const id = listed.items[0].id, review = (await f.preview(id))!.body as MemoryReviewPreview;
+    expect(review.before).toBe(approved); expect(review.after).toBe(written);
+    // Re-reading the worker file never stages the same edit twice.
+    await writeFile(f.file, written); expect((await f.list()).total).toBe(1);
+    expect(await f.decide(review.reviewDigest, 'approve', id)).toMatchObject({ status: 200, body: { state: 'applied', changed: true } });
+    expect(await f.canonical()).toBe(written); expect(await readFile(f.file, 'utf8')).toBe(written);
+  });
+
+  it('a rejected worker edit stays rejected and out of memory', async () => {
+    const f = await fixture(), approved = await readFile(f.file, 'utf8');
+    await f.list(); // first boot: the trusted one-time import
+    await writeFile(f.file, `${approved}\n§\nUnreviewed fact.`);
+    const id = (await f.list()).items[0].id, review = (await f.preview(id))!.body as MemoryReviewPreview;
+    expect(await f.decide(review.reviewDigest, 'reject', id)).toMatchObject({ status: 200, body: { state: 'rejected' } });
+    await writeFile(f.file, `${approved}\n§\nUnreviewed fact.`);
+    expect((await f.list()).items.map(item => item.state)).toEqual(['rejected']);
+    expect(await f.canonical()).toBe(approved); expect(await readFile(f.file, 'utf8')).toBe(approved);
+  });
+
+  it('holds credential-shaped worker edits as a digest only', async () => {
+    const f = await fixture(), approved = await readFile(f.file, 'utf8');
+    await f.list(); // first boot: the trusted one-time import
+    await writeFile(f.file, `${approved}\n§\nUse api_key = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCD"`);
+    await f.list();
+    const state = await readWorkerState(f.scope);
+    expect(JSON.stringify(state)).not.toContain('sk-proj'); expect(state.held).toEqual([expect.objectContaining({ key: 'memories/MEMORY.md', reason: 'credential' })]);
+    expect(await f.canonical()).toBe(approved);
   });
 
   it('reuses native batch semantics with a final-state budget and code-point counting', async () => {
