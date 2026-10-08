@@ -116,23 +116,13 @@ describe("job drawer", () => {
     const held = detail({ recovery: true, disabled: true });
     expect(held).toContain("Paused for recovery. Saved results are still available.");
     expect(buttonTag(held, "Run now")).toContain('disabled=""');
-    expect(buttonTag(held, "Switch on")).toContain('disabled=""');
-  });
-
-  it("names Switch on for a job that has never run on its clock, and Resume once it has", () => {
-    expect(buttonTag(detail(), "Switch on")).toContain('title="Switch on this job"');
-    // A manual run while off is not the job being switched on.
-    expect(buttonTag(detail({ runs: [run()] }), "Switch on")).toBeDefined();
-    expect(buttonTag(detail({ runs: [run({ manual: false })] }), "Resume")).toContain('title="Resume this job"');
-    // A retimed job (an imported pack sets its time zone) has still never been on.
-    expect(buttonTag(detail({ loop: loop({ revision: 4 }) }), "Switch on")).toBeDefined();
-    expect(buttonTag(detail({ loop: loop({ enabled: true }) }), "Pause")).toContain('title="Pause this job"');
+    expect(buttonTag(held, "Resume")).toContain('disabled=""');
   });
 
   it("holds switching on with the host's reason and its fix, instead of a switch the host would refuse", () => {
     const blocker = { status: "Before Weekly bills review can switch on, finish Agency workflow setup and approve it there.", actionLabel: "Open Agency workflow setup" };
     const html = detail({ blocker });
-    const tag = buttonTag(html, "Switch on");
+    const tag = buttonTag(html, "Resume");
     expect(tag).toContain('disabled=""');
     const described = /aria-describedby="([^"]+)"/.exec(tag)?.[1];
     expect(described).toBeTruthy();
@@ -149,11 +139,11 @@ describe("job drawer", () => {
   it("keeps Pause/Resume focusable while its change is saving, so keyboard focus is not dropped", () => {
     // A focused button that becomes disabled loses focus to <body>; Escape then cannot close the drawer.
     for (const enabled of [false, true]) {
-      const tag = buttonTag(detail({ loop: loop({ enabled }), busy: true, disabled: true }), enabled ? "Pause" : "Switch on");
+      const tag = buttonTag(detail({ loop: loop({ enabled }), busy: true, disabled: true }), enabled ? "Pause" : "Resume");
       expect(tag).not.toContain('disabled=""');
       expect(tag).toContain('aria-disabled="true"');
     }
-    expect(buttonTag(detail(), "Switch on")).not.toContain('aria-disabled="');
+    expect(buttonTag(detail(), "Resume")).not.toContain('aria-disabled="');
   });
 
   it("routes Morning priorities timing to agency setup instead of the generic timing editor", () => {
@@ -211,7 +201,6 @@ describe("job drawer", () => {
     expect(html).not.toContain("Run now");
     expect(html).not.toContain("Timing · ");
     expect(html).not.toContain("Resume");
-    expect(html).not.toContain("Switch on");
   });
 });
 

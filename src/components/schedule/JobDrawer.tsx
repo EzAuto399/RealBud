@@ -400,9 +400,7 @@ export function LoopDetail({
   const spec = evaluatorForLoop(loop.id);
   const agencyTimed = spec?.agencyTimed === true;
   const held = !loop.enabled && blocker ? blocker : null;
-  // A clock run on record means it was on before. The revision is no such fact:
-  // importing a pack retimes its jobs while leaving them off.
-  const switchLabel = loop.enabled ? "Pause" : runs.some((run) => !run.manual) ? "Resume" : "Switch on";
+  const switchLabel = loop.enabled ? "Pause" : "Resume";
   const heldId = useId();
 
   return (
