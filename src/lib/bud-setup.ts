@@ -195,6 +195,13 @@ export function budFirstSetupCover(status: HermesStatus | null, context: { conne
   return context.connected && !context.statusError && (state === "installing" || state === "verifying") ? "running" : "stopped";
 }
 
+/** First run's "Continue to Bud setup" opens Bud status over Desk. Once every
+ * check is Ready that sheet has done its job, so it closes and Desk shows Get
+ * started. A sheet the person opened themselves stays until they close it. */
+export function budSetupSheetDone(status: HermesStatus | null, context: { connected: boolean; recovering: boolean; openedBySetup: boolean }): boolean {
+  return context.openedBySetup && budAvailability(status, context.connected, context.recovering).ready;
+}
+
 /** One dependency-ordered description for Ask and Schedule. A workroom alone
  * never proves an installed worker, model connection or permission to run. */
 function budAvailabilityFacts(status: HermesStatus | null, connected: boolean, recovering = false) {

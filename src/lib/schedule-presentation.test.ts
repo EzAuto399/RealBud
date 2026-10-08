@@ -45,6 +45,19 @@ describe("schedule presentation", () => {
     expect(scheduleRowGuidance(pending)).toBe("Confirm the earlier request before starting another run.");
   });
 
+  it("says a never-run off job is switched on, and a scheduled job runs by itself", () => {
+    const off = only({ loops: [loop({ enabled: false, nextRunAt: null })] });
+    expect([off.next, off.actionLabel, scheduleRowGuidance(off)]).toEqual(["Off", "Switch on", "Switch this on when you want it to run."]);
+    expect(scheduleRowGuidance(only({ loops: [loop({ enabled: false })], loopRuns: [run()] }))).toBe("Resume this job when you want it to run again.");
+    const scheduled = only({ loops: [loop({ schedule: { type: "daily", time: "07:30", weekdays: [1, 2, 3, 4, 5] } })] });
+    expect(scheduled.actionLabel).toBe("Run now");
+    expect(scheduleRowGuidance(scheduled)).toBe("Runs automatically: Weekdays 7:30 am. Run now if you need it sooner.");
+    // Without a confirmed zone it never claims a time.
+    expect(scheduleRowGuidance(only({ loops: [loop()], timeZone: undefined }))).toBe("Check the job's timing before relying on a scheduled run.");
+    // A job with no clock (on demand) still says to open it.
+    expect(scheduleRowGuidance(only({ recipes: [recipe()] }))).toBe("Open this job when you are ready to run it.");
+  });
+
   it("keeps a paused failure in Attention and discoverable in the Paused filter", () => {
     const failed = only({ loops: [loop({ enabled: false })], loopRuns: [run({ status: "failed" })] });
     const paused = only({ recipes: [recipe({ status: "paused" })] });

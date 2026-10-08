@@ -5,6 +5,7 @@ import { parseAustinPackView } from "@shared/austin-pack";
 import { budAutoSetupView } from "@/lib/bud-setup";
 import {
   SETUP_STEP_COUNT,
+  gmailReadyHere,
   officeAppsToConnect,
   readAgencySetupFacts,
   readWebsiteLinkState,
@@ -172,6 +173,7 @@ export function GoLiveCard({
     schedule,
     appsToConnect: officeAppsToConnect(officeSnapshot, state?.config?.composio?.managed === true),
     sharedGmailBlocked: sharedGmailNotAllowed(officeSnapshot, state?.config?.composio?.managed === true),
+    gmailReady: gmailReadyHere(officeSnapshot, state?.config?.composio?.managed === true),
     skipped: local.skipped as SetupStep["id"][],
   });
   const firstDay = local.guideDismissed ? [] : firstDayItems(austinPack ?? packRead);

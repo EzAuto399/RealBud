@@ -16,7 +16,7 @@ import { hasUnfinishedJobDraft } from "@/lib/work-continuation";
 import { buildWorkActivity, type WorkActivity } from "@/lib/work-activity";
 import { resolveProductBud } from "@/lib/product-bud";
 import { pendingManualJobRequest } from "@/lib/manual-job-request";
-import { buildScheduleRows, listedScheduleRows, RECOVERY_NOTICE, scheduleRowForJob, stableOrder, type ScheduleRow } from "@/lib/schedule-rows";
+import { buildScheduleRows, listedScheduleRows, neverClockRun, RECOVERY_NOTICE, scheduleRowForJob, stableOrder, switchOnLabel, type ScheduleRow } from "@/lib/schedule-rows";
 import { filterScheduleRows, scheduleRowSection, type ScheduleFilter } from "@/lib/schedule-presentation";
 import { acknowledgeActivity, JobWorkspace } from "./schedule/JobWorkspace";
 import { WorkflowPacksCard } from "./schedule/WorkflowPacksCard";
@@ -186,6 +186,9 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
 
   const toggle = async (loop: Loop) => {
     if (actionFlight.current || !state.connected || state.desk?.recovery?.active || state.scheduleRecovery.active) return;
+    // The notice names the switch the job shows once off: a job the clock never ran is switched on, not resumed.
+    const offNotice = switchOnLabel(loop.id, state.loopRuns) === "Resume" ? `${loop.name} paused until you Resume` : `${loop.name} is off until you Switch on`;
+    const onNotice = neverClockRun(loop.id, state.loopRuns) ? `${loop.name} is on` : `${loop.name} is on again`;
     actionFlight.current = true;
     setBusy(loop.id);
     setError("");
@@ -198,7 +201,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
         dispatch({ type: "loopsHydrated", loops: body.loops ?? [], runs: body.runs ?? [], recovery: body.recovery });
         const confirmed = (body.loops as Loop[] | undefined)?.find((item) => item.id === loop.id);
         if (confirmed?.enabled !== enabled) throw new Error("The schedule change could not be confirmed. Refresh before retrying.");
-        setPauseNotice(enabled ? `${loop.name} is on, using the reviewed agency time and weekdays` : `${loop.name} paused until you Resume`);
+        setPauseNotice(enabled ? `${loop.name} is on, using the reviewed agency time and weekdays` : offNotice);
         return;
       }
       const { loop: patched } = await api(`/api/loops/${loop.id}`, {
@@ -206,7 +209,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
         body: JSON.stringify({ enabled: !loop.enabled }),
       });
       dispatch({ type: "loopPatched", loop: patched });
-      setPauseNotice(loop.enabled ? `${loop.name} paused until you Resume` : `${loop.name} is on again`);
+      setPauseNotice(loop.enabled ? offNotice : onNotice);
       await refreshSchedule();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));

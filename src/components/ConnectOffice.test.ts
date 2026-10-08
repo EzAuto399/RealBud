@@ -110,13 +110,18 @@ describe("connect this computer to your office", () => {
   it("says when the approval page expired while waiting and starts a new request in place", () => {
     const html = view({ state: "pending", browser: request }, { kind: "waiting", request }, { now: Date.parse(request.expiresAt) });
     expect(html).toContain('role="alert" class="text-danger">The approval page expired before this computer was approved. Nothing was linked.');
+    expect(html.split("Nothing was linked.")).toHaveLength(2);
+    expect(live(html)).toBe("");
     expect(html).toContain(">Start a new request</button>");
     expect(html).not.toContain("Waiting for your approval");
     expect(html).not.toContain("Open the page again");
     // Declined or expired on the website: the reason, then the same way forward.
     for (const kind of ["declined", "expired"] as const) {
       const ended = view({ state: "unlinked" }, { kind });
-      expect(ended).toContain("Nothing was linked.");
+      // Said once, as an alert: the live region doesn't repeat it (live Kevin run, F8).
+      expect(ended.split("Nothing was linked.")).toHaveLength(2);
+      expect(ended).toMatch(/<p role="alert">[^<]*Nothing was linked\.<\/p>/);
+      expect(live(ended)).toBe("");
       expect(ended).toMatch(/<button type="button" class="pm-control[^"]*"[^>]*>.*Start a new request<\/button>/);
       expect(ended).not.toContain("approve in my browser</button>");
     }

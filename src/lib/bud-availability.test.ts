@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HermesStatus } from "@/state/store";
-import { budAvailability, parseBudStatus } from "./bud-setup";
+import { budAvailability, budSetupSheetDone, parseBudStatus } from "./bud-setup";
 import { canUseTaskStarter } from "./pm-task-starters";
 import { toolLabel } from "./tool-label";
 
@@ -12,6 +12,21 @@ const ready: HermesStatus = {
   model: { attached: true, provider: "test", model: "test-model" },
   ready: true,
 };
+
+describe("Bud status opened by first-run setup", () => {
+  const live = { connected: true, recovering: false, openedBySetup: true };
+  it("closes once every check is Ready, so Desk shows Get started", () => {
+    expect(budSetupSheetDone(ready, live)).toBe(true);
+  });
+  it("stays open while setup still needs something, and never closes one the person opened", () => {
+    expect(budSetupSheetDone({ ...ready, ready: false }, live)).toBe(false);
+    expect(budSetupSheetDone({ ...ready, modelAccess: { managed: true, withdrawn: true, attached: false, detail: "Fictional withdrawn" } }, live)).toBe(false);
+    expect(budSetupSheetDone(ready, { ...live, connected: false })).toBe(false);
+    expect(budSetupSheetDone(ready, { ...live, recovering: true })).toBe(false);
+    expect(budSetupSheetDone(null, live)).toBe(false);
+    expect(budSetupSheetDone(ready, { ...live, openedBySetup: false })).toBe(false);
+  });
+});
 
 describe("Bud availability across Ask and Schedule", () => {
   it("does not confuse a configured workroom with an installed worker", () => {

@@ -280,21 +280,31 @@ try {
       observations.push({ step: 3, note: `Try setup again did not run the readiness check with the fixture runtime; the harness ran POST /api/hermes/test (status ${ping.status}, ok=${ping.body?.ok}) and then pressed Check again.` });
     }
     const checkAgain = dialog.getByRole('button', { name: /^(Check again|Checking…)$/ });
-    await checkAgain.focus();
-    await page.keyboard.press('Enter');
-    await until(allReady, 'Bud status rows all Ready', 30_000);
-    await dialog.getByRole('button', { name: 'Check again', exact: true }).waitFor();
-    assert.equal(await checkAgain.evaluate(el => el === document.activeElement), true, `Focus after Check again: ${await page.evaluate(() => document.activeElement?.tagName)}`);
-    check(c, 'Keyboard: focus stays on Check again while it checks and after it finishes');
+    // The status poll may already have seen Bud ready and closed the sheet.
+    if (await dialog.isVisible()) { await checkAgain.focus(); await page.keyboard.press('Enter'); }
+    // Opened by setup: once every check is Ready it closes by itself and lands on Desk.
+    await dialog.waitFor({ state: 'hidden', timeout: 30_000 });
     assert.equal((await api('/api/hermes')).body.ready, true);
+    assert.ok(['', '#/desk'].includes(new URL(page.url()).hash), `Bud ready lands on Desk, not ${new URL(page.url()).hash}`);
+    await page.getByRole('region', { name: 'Get started', exact: true }).first().waitFor();
+    await shot('bud-ready-desk');
+    check(c, 'Bud ready: the Bud status sheet setup opened closed by itself and Desk shows Get started with the next setup step');
+    // Opened by the person: it stays open when ready, and the keyboard path still works.
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('realbud:workspace-setup', { detail: 'bud' })));
+    await dialog.waitFor();
+    await until(allReady, 'Bud status rows all Ready', 30_000);
+    const again = dialog.getByRole('button', { name: /^(Check again|Checking…)$/ });
+    await again.focus();
+    await page.keyboard.press('Enter');
+    await dialog.getByRole('button', { name: 'Check again', exact: true }).waitFor();
+    assert.equal(await again.evaluate(el => el === document.activeElement), true, `Focus after Check again: ${await page.evaluate(() => document.activeElement?.tagName)}`);
+    check(c, 'Keyboard: focus stays on Check again while it checks and after it finishes; a sheet the person opened stays open');
     check(c, 'Bud status: Download Bud, Turn on approvals, Connect your office’s AI and Test Bud all Ready');
     await widths('bud-status-ready');
     assert.equal(await dialog.evaluate(el => el.contains(document.activeElement)), true, 'focus is inside Bud status before Escape');
     await page.keyboard.press('Escape');
     await dialog.waitFor({ state: 'hidden' });
     check(c, 'Keyboard: Escape closes Bud status back to Desk');
-    await page.getByRole('region', { name: 'Get started', exact: true }).first().waitFor();
-    check(c, 'Desk shows Get started with the next setup step');
   });
 
   await step(4, 'Desk: add a property, edit it, customize the desk', async c => {
@@ -386,7 +396,8 @@ try {
     check(c, 'Empty state: Needs you filter with no jobs');
     await page.getByRole('button', { name: /^All jobs/ }).click();
     // Error state: a workflow that needs agency setup refuses to resume and says why.
-    await page.getByRole('button', { name: 'Resume: Morning priorities', exact: true }).click();
+    // Never switched on: "Switch on" (a job the clock has run reads "Resume").
+    await page.getByRole('button', { name: /^(Resume|Switch on): Morning priorities$/ }).click();
     await page.getByRole('alert').filter({ hasText: 'needs current source checks and reviewed settings' }).waitFor();
     check(c, 'Error state: Morning priorities cannot resume before agency workflow setup; the reason is shown');
     await widths('schedule');
@@ -394,9 +405,10 @@ try {
     const dialog = page.getByRole('dialog', { name: 'Morning money check' });
     await dialog.getByRole('button', { name: 'Pause', exact: true }).focus();
     await page.keyboard.press('Enter');
-    await dialog.getByText('Morning money check paused until you Resume').waitFor();
+    // The notice names the switch the job now shows.
+    await dialog.getByText(/^Morning money check (paused until you Resume|is off until you Switch on)$/).waitFor();
     assert.equal((await api('/api/loops')).body.loops.find(l => l.id === 'morning-arrears').enabled, false);
-    const resume = dialog.getByRole('button', { name: 'Resume', exact: true });
+    const resume = dialog.getByRole('button', { name: /^(Resume|Switch on)$/ });
     assert.equal(await resume.evaluate(el => el === document.activeElement), true, `Focus after Pause: ${await page.evaluate(() => document.activeElement?.tagName)}`);
     await shot('loop-paused');
     check(c, 'Disable (keyboard): Morning money check paused');
