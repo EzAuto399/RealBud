@@ -61,6 +61,9 @@ describe.runIf(SEATBELT)("worker sandbox profile", () => {
       `(allow file-write* ${w(workroom)}${w(join(dir, "sessions"))}(subpath "${join(dir, "tmp")}")(regex #"^${dir}/state\\.db[^/]*$"))`,
       '(allow file-write* (literal "/dev/null") (literal "/dev/zero") (literal "/dev/tty") (literal "/dev/dtracehelper"))',
     ]);
+    // A folder node named for `access(W_OK)` gets file-write-data on that exact node only.
+    expect(profile).not.toContain("file-write-data");
+    expect(rule(workerSandboxProfile("/bin/sh", join(dir, "tmp"), { loopbackPorts: [], writable: [], writableFolderNodes: [dir] }), "file-write-data")).toEqual([`(allow file-write-data (literal "${dir}"))`]);
     // A root whose parent is missing is not created on the way; the launch is refused.
     expect(() => workerSandboxProfile("/bin/sh", join(dir, "tmp"), { loopbackPorts: [], writable: [join(dir, "later", "sessions")] })).toThrow(NETWORK_ISOLATION_UNAVAILABLE);
     expect(() => workerSandboxProfile("/bin/sh", "", { loopbackPorts: [], writable: [] })).toThrow(NETWORK_ISOLATION_UNAVAILABLE);
@@ -350,6 +353,8 @@ describe.runIf(SEATBELT)("Hermes worker sandbox", () => {
     expect(writes).not.toContain("skills_prompt_snapshot");
     expect(sbpl).toContain("(deny file-link)(deny file-clone)");
     expect(writes).toContain(`(regex #"^${profile.replace(/\./g, "\\.")}/\\.?\\.?(state\\.db|`);
+    // Hermes 0.21.5 opens state.db only once the profile folder answers access(W_OK); its node, nothing under it.
+    expect(rule(sbpl, "file-write-data")).toEqual([`(allow file-write-data (literal "${profile}"))`]);
     for (const name of ["hooks", "cron", "bin", "config.yaml", "SOUL.md", ".env", "auth.json"]) expect(writes).not.toContain(`/${name}"`);
     expect(writes).not.toContain(w(join(profile, "skills")));
     expect(writes).not.toContain(`(subpath "${root}")`);
@@ -407,6 +412,7 @@ describe.runIf(SEATBELT)("Hermes worker sandbox", () => {
     const launch = hermesWorkerSandbox("diagnostic", cli, ["--version"], env, [], deps);
     cleanup.push(() => launch.release());
     expect(rule(launch.args[1], "network-outbound")).toEqual([]);
+    expect(launch.args[1]).not.toContain("file-write-data");
     expect(writesOf(launch.args[1])).toBe(`(allow file-write* (subpath "${trustedPath(env.TMPDIR!)}"))`);
     expect(existsSync(join(root, "profiles", "property", "cron"))).toBe(false);
   });
@@ -519,6 +525,19 @@ describe.runIf(process.env.REALBUD_TEST_SANDBOX === "1" && process.platform === 
     const env = { PATH: process.env.PATH, HOME: process.env.HOME };
     const result = await run(sandboxedLaunch(process.execPath, ["-e", probe], env, { loopbackPorts: [], writable: [], reads: [["deny", data], ["allow", profile]] }), env);
     expect(result).toEqual({ ancestor: true, list: "failed:EPERM", sibling: "failed:EPERM", profile: "fictional visible" });
+  });
+
+  it("lets a named folder answer access(W_OK) for its state files while nothing else in it can be made, moved or re-moded", async () => {
+    const dir = scratch("rb-folder-node-");
+    const probe = `const fs=require('node:fs'),p=require('node:path'),d=${JSON.stringify(dir)};const attempt=fn=>{try{fn();return 'ok'}catch(e){return 'failed:'+e.code}};console.log(JSON.stringify({access:attempt(()=>fs.accessSync(d,fs.constants.R_OK|fs.constants.W_OK)),state:attempt(()=>fs.writeFileSync(p.join(d,'state.db-wal'),'fictional')),other:attempt(()=>fs.writeFileSync(p.join(d,'config.yaml'),'planted')),folder:attempt(()=>fs.mkdirSync(p.join(d,'backups'))),chmod:attempt(()=>fs.chmodSync(d,0o777)),rename:attempt(()=>fs.renameSync(d,d+'-moved')),overwrite:attempt(()=>fs.writeFileSync(p.join(d,'SOUL.md'),'planted')),unlink:attempt(()=>fs.unlinkSync(p.join(d,'SOUL.md'))),over:attempt(()=>fs.renameSync(p.join(d,'state.db-wal'),p.join(d,'SOUL.md'))),link:attempt(()=>fs.symlinkSync('/etc/hosts',p.join(d,'linked'))),rmdir:attempt(()=>fs.rmdirSync(p.join(d,'skills'))),times:attempt(()=>fs.utimesSync(d,1,1))}));`;
+    writeFileSync(join(dir, "SOUL.md"), "fictional identity"); mkdirSync(join(dir, "skills"));
+    const env = { PATH: process.env.PATH, HOME: process.env.HOME };
+    const spec = { loopbackPorts: [], writable: [], writablePatterns: [`^${regexLiteral(dir)}/state\\.db[^/]*$`] };
+    expect(await run(sandboxedLaunch(process.execPath, ["-e", probe], env, spec), env)).toMatchObject({ access: expect.stringMatching(/^failed:/), state: "ok" });
+    expect(await run(sandboxedLaunch(process.execPath, ["-e", probe], env, { ...spec, writableFolderNodes: [dir] }), env))
+      .toEqual({ access: "ok", state: "ok", other: "failed:EPERM", folder: "failed:EPERM", chmod: "failed:EPERM", rename: "failed:EPERM",
+        overwrite: "failed:EPERM", unlink: "failed:EPERM", over: "failed:EPERM", link: "failed:EPERM", rmdir: "failed:EPERM", times: "failed:EPERM" });
+    expect(readFileSync(join(dir, "SOUL.md"), "utf8")).toBe("fictional identity");
   });
 
   it("reaches only the allowed IPv4 loopback port: no public host, other port, IPv6, mapped, mDNS, Unix socket or DNS", async () => {

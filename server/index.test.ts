@@ -597,6 +597,7 @@ describe("harness HTTP API", () => {
     const noRemove = await api("POST", "/api/hermes/uninstall");
     expect(noRemove.status).toBe(415);
     expect((await fetch(BASE + "/api/hermes/uninstall", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+    expect((await fetch(BASE + "/api/hermes/uninstall/cancel", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
 
     const repaired = await api("POST", "/api/hermes/repair", {});
     expect(repaired.status).toBe(200);
@@ -613,12 +614,14 @@ describe("harness HTTP API", () => {
     expect(before.status).toBe(200);
     expect(before.body.pack).toMatchObject({ installed: true, approvalsManual: true, workroomReady: true });
 
+    // An operator-managed worker path is never removed by RealBud (the reboot-gated flow is in worker-removal.test.ts).
     const refused = await api("POST", "/api/hermes/uninstall", {});
     expect(refused.status).toBe(409);
-    expect(refused.body).toMatchObject({ code: "worker_cleanup_unproven", error: expect.stringMatching(/setup has been kept.*Use Repair/) });
+    expect(refused.body.error).toMatch(/custom agent path/);
     expect(profileFiles.map(path => readFileSync(path))).toEqual(profileBytes);
     const after = await api("GET", "/api/hermes");
     expect(after.status).toBe(200);
+    expect(after.body.removal).toEqual({ phase: "none" });
     expect(after.body.pack).toEqual(before.body.pack);
     expect(after.body.ready).toBe(before.body.ready);
     expect(after.body.lastPing).toEqual(before.body.lastPing);

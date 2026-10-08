@@ -444,7 +444,7 @@ test('a brand-new office: access → client-funded terms → provision → key �
     assert.deepEqual({ requestCapNanoAud: project.requestCapNanoAud, allowedModels: project.allowedModels, environments: project.environments },
       { requestCapNanoAud: DEFAULT_REQUEST_CAP_NANO_AUD, allowedModels: ['deepseek-v4.1-flash', 'claude-sonnet-5.5'], environments: ['production'] });
     assert.ok(m.posts('/v1/operator/projects').every(call => !Object.hasOwn(call.body!, 'routing')));
-    assert.equal(provisioning.model.spendCapLabel, 'A$200/month, A$4/request, 2 at once');
+    assert.equal(provisioning.model.spendCapLabel, 'A$200/month, A$4/request, 8 at once');
 
     // 3. The menu the key lists: the modes first, then `default`, then the ids.
     // With no `routing` set, every mode is allowed and `default` is `auto`. `auto`

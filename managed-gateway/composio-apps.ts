@@ -136,7 +136,9 @@ export function composioAppAdapter(options: { fetch?: HttpTransport; base?: stri
     },
     async authorize(input, signal) {
       const binding = bindingCopy(input);
-      const value = await rest(binding, '/connected_accounts/link', signal, { body: { auth_config_id: binding.authConfigId, user_id: binding.userId } });
+      // A fixed RealBud completion page; neither callers nor provider data choose the destination.
+      const value = await rest(binding, '/connected_accounts/link', signal, { body: { auth_config_id: binding.authConfigId, user_id: binding.userId,
+        callback_url: 'https://realbud-managed-gateway.fly.dev/connections/complete' } });
       const url = value.redirect_url;
       let ok = typeof url === 'string' && url.length <= 4096 && !/\s/.test(url) && !url.includes(binding.apiKey);
       if (ok) { try { const parsed = new URL(url); ok = parsed.protocol === 'https:' && !parsed.username && !parsed.password && !parsed.port && (parsed.hostname === 'composio.dev' || parsed.hostname.endsWith('.composio.dev')); } catch { ok = false; } }

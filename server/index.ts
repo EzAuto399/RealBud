@@ -210,7 +210,10 @@ import type { HandoffTask, HumanHandoff } from "./human-handoffs.ts";
 import type { WorkflowRecord } from "./workflow-database.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN, type BrowserTaskGrant } from "../shared/browser-task.ts";
 import { browserApprovalCardFrom, stopBrowserApprovalCards } from "./browser-approval-card.ts";
-import { applyPropertyPack, ensurePropertyPack, MANAGED_MODEL_KEY_ENV, propertyProfileDir } from "./hermes-pack.ts";
+import { applyPropertyPack, ensurePropertyPack, MANAGED_MODEL_KEY_ENV, propertyProfileDir, shippedProfileDigests } from "./hermes-pack.ts";
+import { importLegacyProfileFacts, keepAsideForRepair, MEMORY_HELD_MESSAGE, memoryHeldForLaunch, projectProfileFacts, retireRepairedArtifacts, workerScope } from "./worker-state.ts";
+import { legacyProposalContextIdentity } from "./hermes-memory-review.ts";
+import { ensureWorkspaceMemorySigning } from "./hermes-memory-signing.ts";
 import { applyHandsReadiness, hermesStatus } from "./hermes-status.ts";
 import { tryHermesPing } from "./hermes-hands.ts";
 import { ASK_ATTACH_MAX_BYTES, saveAskAttachment } from "./ask-attach.ts";
@@ -226,8 +229,11 @@ import { seedVault, DEFAULT_VAULT_DOCUMENTS } from "./vault.ts";
 import { openTerminalAndRun, setupCommandFor } from "./engine-setup.ts";
 import { installBlocksUpdate, installInFlight, installStatus, modelStatus, reconcileManagedModelProfile, setManagedModelChoice, cancelBootstrapInstall, waitForBootstrapStop } from "./hermes-bridge.ts";
 import { productSelectionApproved, rebindProductBud } from "./product-bud-selection.ts";
-import { uninstallWorker, WorkerCleanupUnprovenError } from "./hermes-lifecycle.ts";
+import { WorkerCleanupUnprovenError } from "./hermes-lifecycle.ts";
 import { checkUpstreamRelease, installOrRepairWorker, recommendedUpdateAwaitingRestart, restorePreviousRuntime, runtimeUpdateStatus, startRuntimeUpdate } from "./hermes-update.ts";
+import { assertRuntimeIntegrity, checkRuntimeIntegrity } from "./hermes-runtime-check.ts";
+import { importRuntimeSelection } from "./hermes-runtime-selection.ts";
+import { cancelWorkerRemoval, completeWorkerRemoval, requestWorkerRemoval, workerRemovalPending, workerRemovalStatus } from "./worker-removal.ts";
 import { createWorkerAutoSetup } from "./worker-auto-setup.ts";
 import { readPrivateJson, writePrivateJson } from "./private-json.ts";
 import { installCrashHandlers, oplog } from "./oplog.ts";
@@ -330,6 +336,16 @@ function csvDigest(csv: string): string {
 
 ensureDirs();
 seedVault();
+// Worker control facts live outside the worker home; a removal waits for a real reboot.
+try { await importRuntimeSelection(); } catch (error) { console.warn(`[worker] runtime selection import held: ${error instanceof Error ? error.message : "unreadable"}`); }
+// ponytail: migrationComplete is always true while removal keeps worker profiles (office memory); bind to the worker-state import once it deletes them.
+try { await completeWorkerRemoval({ migrationComplete: async () => true }); } catch (error) { console.warn(`[worker] removal completion held: ${error instanceof Error ? error.message : "unreadable"}`); }
+void checkRuntimeIntegrity().catch(() => {});
+// Boot profile hook: the pack below is the first worker-profile mutation of a
+// boot, so the worker-state import (importLegacyProfileFacts) belongs right
+// here, before it. Kept before listen: ~0.2 s on a new Mac profile, ~2 ms on
+// an existing one; the "listening" log line records the cost on each device.
+const profilePackStarted = performance.now();
 try {
   // A new desktop gets a new private profile. Importing a legacy profile is
   // a separate migration decision, never an automatic copy of personal keys,
@@ -338,6 +354,7 @@ try {
 } catch {
   /* hermes home missing or not writable — Desk stays on the training book */
 }
+const profilePackMs = Math.round(performance.now() - profilePackStarted);
 const cfg = loadConfig();
 const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
 await registry.load(instanceConfigs(cfg));
@@ -1618,21 +1635,25 @@ bus.subscribe((raw: RuntimeEvent) => {
       }
       break;
     }
-    case "runtime.error":
+    case "runtime.error": {
       if (expectedStoppedThreads.has(event.threadId)) break;
+      // Worker text can carry its install path or raw process output; chat
+      // keeps only the product sentence (plain text: the error row is not Markdown).
+      const detail = productAskFailure(event.message);
       if (bot && isProductBud(bot.id)) {
         publishWorkerIssue({
           source: "runtime",
           summary: "Bud hit a worker error",
-          detail: productAskFailure(event.message),
+          detail,
         });
       }
       pushMessage({
         role: "bot",
         kind: "activity",
-        tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false, setup: event.setup },
+        tool: { name: `error: ${detail.replace(/\*\*/g, "")}`, ok: false, setup: event.setup },
       });
       break;
+    }
     case "turn.completed": {
       // "Allow for this task" read grants end with the task.
       taskReadGrants.clear(event.threadId);
@@ -2089,6 +2110,11 @@ async function startSeatTurn(
     }
   }
   managedService.assertCapability("reasoning");
+  await assertRuntimeIntegrity();
+  // The worker reads memory and skills from this seat's profile: project RealBud's copy first.
+  await projectProfileFacts(workerFactsScope(), { shipped: shippedProfileDigests() });
+  // Memory RealBud has not approved (changed outside it, unsafe or too large) never reaches the worker.
+  if ((await memoryHeldForLaunch(workerFactsScope())).length) throw Object.assign(new Error(MEMORY_HELD_MESSAGE), { status: 409 });
   const model = bot.modelSelection.model;
 
   // an edit hands us its already-branched user message; a plain send appends
@@ -2781,7 +2807,7 @@ async function runGroupMemberTurn(
           role: "bot",
           kind: "activity",
           from: { botId: bot.id, name: bot.name, color: bot.color },
-          tool: { name: `error: ${err instanceof Error ? err.message.slice(0, 140) : "turn failed"}`, ok: false },
+          tool: { name: `error: ${productAskFailure(err instanceof Error ? err.message : String(err)).replace(/\*\*/g, "")}`, ok: false },
         });
         broadcast({ kind: "message", threadId: group.threadId, message: failure });
         finish();
@@ -3215,7 +3241,9 @@ const workerAutoSetup = createWorkerAutoSetup({
   active: officeServiceActive,
   status: async () => applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR)),
   installOrRepair: async () => {
+    await prepareProfileRepair();
     const outcome = await installOrRepairWorker();
+    if (outcome.kind === "repaired") await retireRepairedArtifacts(workerFactsScope(), ["SOUL.md"]);
     // Same receipts as the administrator route: no stale "ready" survives.
     if (outcome.kind === "started") writeHandsPing(DATA_DIR, { at: Date.now(), ok: false, detail: "Bud setup changed. Its private readiness check is still needed.", kind: "ping" });
     if (outcome.kind === "repaired") writeHandsPing(DATA_DIR, { at: Date.now(), ok: false, detail: "Property profile repaired. Run the readiness check again.", kind: "ping" });
@@ -3226,7 +3254,7 @@ const workerAutoSetup = createWorkerAutoSetup({
   reconcileProfile: () => reconcileManagedModelProfile(),
   syncBud: syncProductBud,
   readinessPing: runHandsReadinessPing,
-  customRuntime: () => Boolean(process.env.REALBUD_HERMES_CLI?.trim()),
+  customRuntime: () => Boolean(process.env.REALBUD_HERMES_CLI?.trim()) || workerRemovalPending(),
   runInContext: fn => withWorkerProfile(desk.memberKeyForWorker(), fn),
   log: message => oplog("boot", message),
 });
@@ -5023,6 +5051,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         lastTest: readHandsLast(DATA_DIR),
         lastPing: readHandsPing(DATA_DIR),
         readyOnce: budReadyOnce(DATA_DIR),
+        removal: workerRemovalStatus(),
         model: {
           attached: Boolean(current.managed && current.choice),
           provider: current.provider,
@@ -5043,7 +5072,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     if ((path === "/api/hermes/update" || path === "/api/hermes/update/restore") && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
       await readBody(req);
-      return path.endsWith("/restore") ? json(res, 200, restorePreviousRuntime()) : json(res, 202, { install: startRuntimeUpdate() });
+      return path.endsWith("/restore") ? json(res, 200, await restorePreviousRuntime()) : json(res, 202, { install: startRuntimeUpdate() });
     }
     if (path === "/api/hermes/test" && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
@@ -5083,7 +5112,10 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       }
       await readBody(req);
       try {
+        await prepareProfileRepair();
         applyPropertyPack();
+        // Repair resets SOUL.md to the shipped copy on purpose; the office's edit is retired, not re-projected.
+        await retireRepairedArtifacts(workerFactsScope(), ["SOUL.md"]);
         await reconcileManagedModelProfile();
         syncProductBud();
       } catch (e) {
@@ -5107,7 +5139,9 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       }
       await readBody(req);
       // Same decision automatic setup uses (`installOrRepairWorker`).
+      await prepareProfileRepair();
       const outcome = await installOrRepairWorker();
+      if (outcome.kind === "repaired") await retireRepairedArtifacts(workerFactsScope(), ["SOUL.md"]);
       if (outcome.kind === "running") return json(res, 202, { install: outcome.install });
       if (outcome.kind === "awaiting_restart") {
         return json(res, 200, { install: { state: "done", lines: ["Bud’s update is installed. Restart RealBud to use it."], startedAt: Date.now(), finishedAt: Date.now(), error: null }, restartRequired: true });
@@ -5141,15 +5175,25 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       await readBody(req);
       return json(res, 202, { install: cancelBootstrapInstall() });
     }
+    if (path === "/api/hermes/uninstall/cancel" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      await readBody(req);
+      return json(res, 200, { removal: await cancelWorkerRemoval() });
+    }
     if (path === "/api/hermes/uninstall" && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });
       }
       await readBody(req);
       try {
-        const status = await uninstallWorker({ dataDir: DATA_DIR });
-        return json(res, 200, {
-          ...applyHandsReadiness(status, readHandsPing(DATA_DIR)),
+        // Removal waits for a verified reboot; launches and setup stay off until then.
+        const removal = await requestWorkerRemoval();
+        workerAutoSetup.halt();
+        return json(res, 202, {
+          removal,
+          ...applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR)),
           lastTest: readHandsLast(DATA_DIR),
           lastPing: readHandsPing(DATA_DIR),
         });
@@ -6094,6 +6138,26 @@ bindSlackBridge({
 const workspaceIdentity = await companyHost.workspaceIdentity();
 const onboarding = createOnboardingHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, memberKey: () => desk.memberKeyForWorker() });
 desk.setMemberKey(workspaceIdentity.workerMemberKey ?? '');
+// Bud's memory, learning and office edits live in RealBud (D/worker-state); the
+// worker profile is a projection, so deleting or replacing the worker loses nothing.
+/** Every path that resets SOUL.md to the pack (Repair, Install, apply-pack,
+ * automatic repair) goes through here first: an office edit RealBud could not
+ * keep is renamed aside, so it is never overwritten. */
+const prepareProfileRepair = async () => await keepAsideForRepair(workerFactsScope(), (await projectWorkerFacts()).unkept);
+const workerFactsScope = () => workerScope(workspaceIdentity.id, currentWorkerProfile().profile, propertyProfileDir());
+const projectWorkerFacts = () => withWorkerProfile(desk.memberKeyForWorker(), () => projectProfileFacts(workerFactsScope(), { shipped: shippedProfileDigests() }));
+// Each seat imports inside its own profile, so helper-era proposal identities and
+// signing keys bind to the right scope before any backup or review runs.
+try {
+  for (const seat of [...new Set([desk.memberKeyForWorker() || null, null])]) {
+    await withWorkerProfile(seat, () => importLegacyProfileFacts([workerFactsScope()], {
+      shipped: shippedProfileDigests(),
+      legacyProposalContext: scope => legacyProposalContextIdentity(scope.workspaceId),
+      afterImport: async () => { await ensureWorkspaceMemorySigning(Buffer.from(desk.recoveryKeyHex(), 'hex'), workspaceIdentity.id); },
+    }));
+  }
+  await projectWorkerFacts();
+} catch { oplog('boot', 'Bud’s saved learning needs service recovery; its profile was left unchanged.'); }
 const memoryReviews = createHermesMemoryReviewService({ context: () => memoryReviewContext(workspaceIdentity.id),
   key: () => Buffer.from(desk.recoveryKeyHex(), 'hex'),
   // The automatic learning pass runs off-request, so it must select the
@@ -6179,7 +6243,7 @@ function stopWorkAfterAgencySetupChange() { mailWorkspace.cancel(); loops!.setEn
 const reminders = createRemindersService({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, memberKey: () => desk.memberKeyForWorker(),
   timeZone: async () => (await agencySetup.getConfiguration()).settings.timeZone || null });
 if (!privateRestoreLocked) reminders.start();
-const customerPacks = createCustomerPackService({ directory: DATA_DIR,
+const customerPacks = createCustomerPackService({ directory: DATA_DIR, workerScope: workerFactsScope,
   // A pack's office/settings.json loops land through the Austin pack's one door: never on, office clocks kept.
   applyLoops: async packLoops => {
     if (desk.recovery.active || privateRestoreLocked || loops!.recovery.active) throw new Error('Schedule recovery is active.');
@@ -6532,7 +6596,8 @@ server.listen(PORT, "127.0.0.1", () => {
   if (!privateRestoreLocked) void mailWorkspace.resumeHistoryIfPending().catch(() => {});
   if (!privateRestoreLocked) void resumeReiSignInWaits().catch(() => {});
   console.log(`realbud server on http://127.0.0.1:${PORT}`);
-  oplog("boot", `listening on 127.0.0.1:${PORT}`);
+  // Startup cost before listen (issue 62): whole process and the profile pack.
+  oplog("boot", `listening on 127.0.0.1:${PORT}`, { startupMs: Math.round(process.uptime() * 1000), profilePackMs });
   // Say in the service's own log when it could not answer at all: on a busy
   // Windows PC synchronous work froze it for ~30 s and only the window noticed.
   let stallTick = Date.now();

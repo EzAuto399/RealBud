@@ -1,27 +1,27 @@
 import { createServer, type Server } from 'node:http';
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, readdirSync, readFileSync, rmSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { askDepartmentWorker as realAskDepartmentWorker, DEPARTMENT_WORKER_RUNTIMES, relayIdempotencyKey, relayRefusalDetail, type DepartmentWorkerOptions } from './department-worker.ts';
+import { askDepartmentWorker as realAskDepartmentWorker, DEPARTMENT_LIMITS, DEPARTMENT_SYSTEM_PROMPT, relayIdempotencyKey, relayRefusalDetail, todoToolReply, type DepartmentWorkerOptions } from './department-worker.ts';
 import { currentWorkerProfile, withWorkerProfile } from './hermes-profile.ts';
-import { resetRuntimeSelectionForTests } from './hermes-runtime-selection.ts';
-import { MANAGED_ACCESS_MISMATCH, MANAGED_ACCESS_UNPAIRED, setWorkerModelAccessSnapshot } from './hermes-runtime-env.ts';
+import { MANAGED_ACCESS_RECOVERY, MANAGED_ACCESS_UNPAIRED, MANAGED_ACCESS_WITHDRAWN, setWorkerModelAccessSnapshot } from './hermes-runtime-env.ts';
 import { setWorkerModelGrant } from './worker-model-access.ts';
+import { controlPath, storedModelChoice } from './worker-control.ts';
 
 const dirs: string[] = [], servers: Server[] = [];
 const askDepartmentWorker = (prompt: string, opts: DepartmentWorkerOptions = {}) => realAskDepartmentWorker(prompt, {
   beforeLaunch: async () => {}, beforeRequest: async () => {}, ...opts,
 });
 afterEach(async () => {
-  vi.unstubAllEnvs(); resetRuntimeSelectionForTests(); setWorkerModelAccessSnapshot({}); setWorkerModelGrant({ state: 'none' });
+  vi.unstubAllEnvs(); setWorkerModelAccessSnapshot({}); setWorkerModelGrant({ state: 'none' });
   for (const server of servers.splice(0)) { server.closeAllConnections(); await new Promise<void>(done => server.close(() => done())); }
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
 describe('relayed inference and the model service', () => {
   const body = Buffer.from(JSON.stringify({ model: 'auto', messages: [{ role: 'user', content: 'FICTIONAL case' }] }));
-  it('sends one Idempotency-Key per logical request: stable for a retry within a run, new for another run or body', () => {
+  it('sends one Idempotency-Key per logical request: stable for a body within a run, new for another run or body', () => {
     const key = relayIdempotencyKey('run-one', body);
     // Modelvia admits keys matching its id() shape.
     expect(key).toMatch(/^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,159}$/);
@@ -41,164 +41,208 @@ describe('relayed inference and the model service', () => {
   });
 });
 
-it('refuses a cancelled run before any authority or process work', async () => {
+describe('the todo_list planning tool', () => {
+  const call = (name: string, args: unknown, id: unknown = 'call-1') => ({ id, type: 'function', function: { name, arguments: typeof args === 'string' ? args : JSON.stringify(args) } });
+  it('answers a valid plan with the plan and nothing else', () => {
+    const todos = [{ id: '1', content: 'Read the case', status: 'in_progress' }];
+    expect(todoToolReply(call('todo_list', { todos }))).toEqual({ role: 'tool', tool_call_id: 'call-1', content: JSON.stringify({ todos }) });
+  });
+  it('answers any other tool or malformed plan with an error the model can correct, and refuses a call it cannot answer', () => {
+    for (const bad of [call('terminal', { command: 'cat /synthetic/secret' }), call('todo_list', '{not json'), call('todo_list', { todos: [{ id: '1', content: 'x', status: 'done' }] }),
+      call('todo_list', { todos: [{ id: '1', content: 'x', status: 'pending', extra: true }] }), call('todo_list', { todos: [], merge: true }),
+      call('todo_list', { todos: Array.from({ length: 51 }, (_, i) => ({ id: String(i), content: 'x', status: 'pending' })) })]) {
+      const reply = todoToolReply(bad);
+      expect(reply?.tool_call_id).toBe('call-1'); expect(JSON.parse(reply!.content)).toHaveProperty('error');
+    }
+    for (const unanswerable of [call('todo_list', { todos: [] }, ''), call('todo_list', { todos: [] }, 7), null, { id: 'x', type: 'other', function: {} }]) expect(todoToolReply(unanswerable)).toBeNull();
+  });
+});
+
+it('refuses a cancelled run before any authority work', async () => {
   const controller = new AbortController(); controller.abort(); const beforeLaunch = vi.fn();
   expect(await askDepartmentWorker('case', { signal: controller.signal, beforeLaunch })).toEqual({ ok: false, detail: 'Preparation cancelled.' });
   expect(beforeLaunch).not.toHaveBeenCalled();
 });
-it('holds unsupported or absent runtime without falling back to private askWorker', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'department-missing-')); dirs.push(root);
-  const beforeLaunch = vi.fn(); expect(await askDepartmentWorker('case', { root, beforeLaunch })).toMatchObject({ ok: false });
-  expect(beforeLaunch).not.toHaveBeenCalled();
-});
 
-it('admits exactly the reviewed 0.21.3 and 0.21.5 commits, each pinned on the same seams', () => {
-  expect(Object.keys(DEPARTMENT_WORKER_RUNTIMES).sort()).toEqual([
-    '345cd2b057a452236de401d3534b8502a7465e8d', // 0.21.3, v2026.9.14
-    'f97608f178d1ffeca59860195ab7da295f7c8e5f', // 0.21.5, v2026.9.24 peeled
-  ]);
-  const [older, newer] = Object.values(DEPARTMENT_WORKER_RUNTIMES);
-  expect(Object.keys(newer!)).toEqual(Object.keys(older!));
-  for (const files of [older!, newer!]) for (const digest of Object.values(files)) expect(digest).toMatch(/^[0-9a-f]{64}$/);
-});
-it('holds a selected runtime outside the admitted commits before any launch', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'department-unadmitted-')); dirs.push(root);
-  writeFileSync(join(root, 'realbud-runtime.json'), JSON.stringify({ version: 1, selected: '29112bef099274229cadff79cdff7bf7b99c4b77', previous: null }));
-  const beforeLaunch = vi.fn(); expect(await askDepartmentWorker('case', { root, beforeLaunch })).toMatchObject({ ok: false });
-  expect(beforeLaunch).not.toHaveBeenCalled();
-});
+type Message = Record<string, unknown>;
+const PROFILE_CONFIG = (port: number, model = 'deepseek-v4.1-flash', effort = 'high') =>
+  `model:\n  default: ${model}\n  provider: custom:realbud\nproviders:\n  realbud:\n    base_url: http://127.0.0.1:${port}/v1\n    key_env: REALBUD_MODEL_API_KEY\n    api_mode: chat_completions\napprovals:\n  mode: manual\nagent:\n  system_prompt: PRIVATE_CONFIG_CANARY\n  reasoning_effort: ${effort}\nskills:\n  auto_load: [private]\n`;
 
-const nativeRuntime = process.env.REALBUD_DEPARTMENT_TEST_RUNTIME;
-// Which admitted commit the native tree is staged as (default 0.21.3).
-const nativeCommit = process.env.REALBUD_DEPARTMENT_TEST_COMMIT ?? '345cd2b057a452236de401d3534b8502a7465e8d';
-describe.skipIf(!nativeRuntime || !existsSync(join(nativeRuntime, 'venv/bin/python')))('admitted Hermes with fictional provider', () => {
-  async function fixture(answer: (request: any, index: number) => unknown | Promise<unknown>) {
-    const captures: any[] = [];
-    const provider = createServer(async (request, response) => {
-      const chunks = []; for await (const chunk of request) chunks.push(chunk);
-      const body = JSON.parse(Buffer.concat(chunks).toString()); captures.push({ body, path: request.url, authorization: request.headers.authorization });
-      const message = await answer(body, captures.length);
-      const base = { id: `fictional-${captures.length}`, object: 'chat.completion.chunk', created: 1, model: 'fictional-case-model' };
-      if (body.stream) {
-        const delta: any = message; if (delta.tool_calls) delta.tool_calls = delta.tool_calls.map((call: any, index: number) => ({ ...call, index }));
-        response.writeHead(200, { 'content-type': 'text/event-stream' });
-        response.end(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: delta.tool_calls ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`);
-      } else {
-        response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify({ ...base, object: 'chat.completion', choices: [{ index: 0, message, finish_reason: 'stop' }] }));
-      }
-    }); servers.push(provider);
-    await new Promise<void>(done => provider.listen(0, '127.0.0.1', done));
-    const address = provider.address(); if (!address || typeof address === 'string') throw new Error();
-    const root = mkdtempSync(join(tmpdir(), 'department-native-')); dirs.push(root);
-    const runtime = join(root, 'runtimes', nativeCommit, 'hermes-agent'); mkdirSync(runtime, { recursive: true });
-    for (const name of readdirSync(nativeRuntime!)) if (name !== '.env' && name !== '.git') symlinkSync(join(nativeRuntime!, name), join(runtime, name));
-    writeFileSync(join(runtime, '.env'), 'HERMES_EPHEMERAL_SYSTEM_PROMPT=RUNTIME_DOTENV_CANARY\n');
-    writeFileSync(join(root, 'realbud-runtime.json'), JSON.stringify({ version: 1, selected: nativeCommit, previous: null }));
-    const profile = join(root, 'profiles', currentWorkerProfile().profile); mkdirSync(join(profile, 'memories'), { recursive: true });
-    for (const name of ['SOUL.md', 'USER.md', 'MEMORY.md', 'AGENTS.md', 'CLAUDE.md']) writeFileSync(join(profile, name), `PRIVATE_${name}_CANARY`);
-    writeFileSync(join(profile, 'memories/MEMORY.md'), 'PROFILE_MEMORY_CANARY'); writeFileSync(join(profile, 'memories/USER.md'), 'PROFILE_USER_CANARY');
-    mkdirSync(join(profile, 'skills/private'), { recursive: true }); writeFileSync(join(profile, 'skills/private/SKILL.md'), 'PRIVATE_SKILL_CANARY');
-    writeFileSync(join(profile, 'prefill.json'), JSON.stringify([{ role: 'user', content: 'PREFILL_CANARY' }]));
-    writeFileSync(join(profile, '.env'), 'HERMES_EPHEMERAL_SYSTEM_PROMPT=PROFILE_ENV_CANARY\n');
-    writeFileSync(join(profile, 'config.yaml'), `model:\n  default: deepseek-v4.1-flash\n  provider: custom:realbud\nproviders:\n  realbud:\n    base_url: http://127.0.0.1:${address.port}/v1\n    key_env: REALBUD_MODEL_API_KEY\n    api_mode: chat_completions\napprovals:\n  mode: manual\nagent:\n  system_prompt: PRIVATE_CONFIG_CANARY\n  reasoning_effort: high\nprefill_messages_file: ${JSON.stringify(join(profile, 'prefill.json'))}\nskills:\n  auto_load: [private]\n`);
-    setWorkerModelAccessSnapshot({ REALBUD_MODEL_API_KEY: 'fictional-selected-profile-key' });
-    setWorkerModelGrant({ state: 'active', baseUrl: `http://127.0.0.1:${address.port}/v1/`, keyId: 'fictional-key-id', spendCapLabel: 'Fictional cap' });
-    // If the base profile is accidentally launched, there is no usable route.
-    if (currentWorkerProfile().profile !== 'property') { mkdirSync(join(root, 'profiles/property'), { recursive: true }); writeFileSync(join(root, 'profiles/property/config.yaml'), 'model:\n  provider: invalid-base-profile\n'); }
-    vi.stubEnv('HERMES_EPHEMERAL_SYSTEM_PROMPT', 'AMBIENT_PROMPT_CANARY'); vi.stubEnv('HERMES_PREFILL_MESSAGES_FILE', join(profile, 'prefill.json')); vi.stubEnv('OPENAI_API_KEY', 'wrong-ambient-key'); vi.stubEnv('REALBUD_MODEL_API_KEY', 'wrong-ambient-key');
-    return { root, captures, profile };
-  }
+/** A fictional Modelvia: records every request and answers with `answer`'s message. */
+async function fixture(answer: (request: any, index: number) => Message | { status: number; body: unknown } | Promise<Message>) {
+  const captures: { body: any; path?: string; authorization?: string; idempotency?: string }[] = [];
+  const provider = createServer(async (request, response) => {
+    const chunks = []; for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString());
+    captures.push({ body: structuredClone(body), path: request.url, authorization: request.headers.authorization, idempotency: request.headers['idempotency-key'] as string });
+    const message: Message = await answer(body, captures.length);
+    if (typeof message.status === 'number') { response.writeHead(message.status, { 'content-type': 'application/json' }); response.end(JSON.stringify(message.body)); return; }
+    response.writeHead(200, { 'content-type': 'application/json', 'x-request-id': `req_fictional_${captures.length}` });
+    response.end(JSON.stringify({ id: `fictional-${captures.length}`, object: 'chat.completion', created: 1, model: body.model,
+      choices: [{ index: 0, message, finish_reason: message.tool_calls ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5 } }));
+  }); servers.push(provider);
+  await new Promise<void>(done => provider.listen(0, '127.0.0.1', done));
+  const address = provider.address(); if (!address || typeof address === 'string') throw new Error();
+  // `root` is the worker folder (the Hermes home): runtime-free, profile only.
+  const root = mkdtempSync(join(tmpdir(), 'department-owned-')); dirs.push(root);
+  const profile = join(root, 'profiles', currentWorkerProfile().profile); mkdirSync(join(profile, 'memories'), { recursive: true });
+  for (const name of ['SOUL.md', 'USER.md', 'MEMORY.md', 'AGENTS.md', 'CLAUDE.md']) writeFileSync(join(profile, name), `PRIVATE_${name}_CANARY`);
+  writeFileSync(join(profile, 'memories/MEMORY.md'), 'PROFILE_MEMORY_CANARY'); writeFileSync(join(profile, 'memories/USER.md'), 'PROFILE_USER_CANARY');
+  mkdirSync(join(profile, 'skills/private'), { recursive: true }); writeFileSync(join(profile, 'skills/private/SKILL.md'), 'PRIVATE_SKILL_CANARY');
+  writeFileSync(join(profile, '.skills_prompt_snapshot.json'), JSON.stringify({ skills: ['POISONED_SNAPSHOT_CANARY'] }));
+  writeFileSync(join(profile, '.env'), 'HERMES_EPHEMERAL_SYSTEM_PROMPT=PROFILE_ENV_CANARY\n');
+  writeFileSync(join(profile, 'config.yaml'), PROFILE_CONFIG(address.port));
+  setWorkerModelAccessSnapshot({ REALBUD_MODEL_API_KEY: 'fictional-selected-profile-key' });
+  setWorkerModelGrant({ state: 'active', baseUrl: `http://127.0.0.1:${address.port}/v1/`, keyId: 'fictional-key-id', spendCapLabel: 'Fictional cap' });
+  vi.stubEnv('HERMES_EPHEMERAL_SYSTEM_PROMPT', 'AMBIENT_PROMPT_CANARY'); vi.stubEnv('OPENAI_API_KEY', 'wrong-ambient-key'); vi.stubEnv('REALBUD_MODEL_API_KEY', 'wrong-ambient-key');
+  return { root, captures, profile, port: address.port };
+}
+const todo = (index: number) => ({ role: 'assistant', content: null, tool_calls: [{ id: `todo-${index}`, type: 'function', function: { name: 'todo_list', arguments: JSON.stringify({ todos: [{ id: String(index), content: `Prepare case step ${index}`, status: 'in_progress' }] }) } }] });
 
-  it('sends only selected case/instructions, exact member provider route, and todo tools', async () => withWorkerProfile('fictional-company-member', async () => {
+/**
+ * What one preparation looked like on the wire when it ran inside the worker
+ * (the admitted Hermes AIAgent with only `todo_list`, captured by the former
+ * native fixture tests): the owned loop must keep this shape and these limits.
+ * The upstream planner's own system prompt is not kept (owner decision, 8 Oct).
+ */
+const WORKER_PREPARATION = {
+  path: '/v1/chat/completions', authorization: 'Bearer fictional-selected-profile-key',
+  body: { model: 'deepseek-v4.1-flash', reasoning_effort: 'high' }, tools: ['todo_list'],
+  absent: ['tool_choice', 'parallel_tool_calls', 'temperature'],
+  limits: { turns: { default: 6, max: 12 }, timeoutMs: { default: 120_000, max: 300_000 } },
+  result: { ok: true, stdout: 'Prepared fictional case.' },
+};
+
+describe('owned preparation loop on a fictional provider', () => {
+  it('keeps the worker preparation shape and limits: case only, the seat\'s model route, the todo tool, no private profile text', async () => withWorkerProfile('fictional-company-member', async () => {
     const { root, captures } = await fixture(() => ({ role: 'assistant', content: 'Prepared fictional case.' }));
     const beforeLaunch = vi.fn(), beforeRequest = vi.fn();
     const result = await askDepartmentWorker('REVIEWED_INSTRUCTIONS: summarize SELECTED_CASE_42 only.', { root, beforeLaunch, beforeRequest, maxTurns: 2 });
-    expect(result).toEqual({ ok: true, stdout: 'Prepared fictional case.' });
+    expect(result).toEqual({ ...WORKER_PREPARATION.result, usage: { requestIds: ['req_fictional_1'], calls: 1, inputTokens: 10, outputTokens: 5 } });
+    expect(DEPARTMENT_LIMITS).toEqual(WORKER_PREPARATION.limits);
     expect(beforeLaunch).toHaveBeenCalledOnce(); expect(beforeRequest).toHaveBeenCalledOnce(); expect(captures).toHaveLength(1);
-    expect(captures[0]).toMatchObject({ path: '/v1/chat/completions', authorization: 'Bearer fictional-selected-profile-key', body: { model: 'deepseek-v4.1-flash', reasoning_effort: 'high' } });
-    for (const field of ['tool_choice', 'parallel_tool_calls', 'temperature']) expect(captures[0].body).not.toHaveProperty(field);
-    const body = JSON.stringify(captures[0].body); expect(body).toContain('SELECTED_CASE_42'); expect(body).not.toContain('CANARY');
-    expect(captures[0].body.tools.map((tool: any) => tool.function.name)).toEqual(['todo_list']);
-  }), 120_000);
+    expect(captures[0]).toMatchObject({ path: WORKER_PREPARATION.path, authorization: WORKER_PREPARATION.authorization, body: WORKER_PREPARATION.body });
+    expect(captures[0]!.idempotency).toMatch(/^realbud-case-[0-9a-f]{48}$/);
+    for (const field of WORKER_PREPARATION.absent) expect(captures[0]!.body).not.toHaveProperty(field);
+    expect(captures[0]!.body.tools.map((tool: any) => tool.function.name)).toEqual(WORKER_PREPARATION.tools);
+    // Isolated messages: RealBud's own instructions, then exactly the case prompt.
+    expect(captures[0]!.body.messages).toEqual([{ role: 'system', content: DEPARTMENT_SYSTEM_PROMPT }, { role: 'user', content: 'REVIEWED_INSTRUCTIONS: summarize SELECTED_CASE_42 only.' }]);
+    expect(JSON.stringify(captures[0]!.body)).not.toContain('CANARY');
+  }));
+
+  it('plans with validated todo turns, guards every request and honours a reviewed allowance above six', async () => {
+    const { root, captures } = await fixture((_request, index) => index < 8 ? todo(index) : { role: 'assistant', content: 'Prepared after seven planning turns.' });
+    const beforeRequest = vi.fn();
+    const result = await askDepartmentWorker('Prepare case.', { root, maxTurns: 12, beforeRequest });
+    expect(result).toMatchObject({ ok: true, stdout: 'Prepared after seven planning turns.', usage: { calls: 8 } });
+    expect(captures).toHaveLength(8); expect(beforeRequest).toHaveBeenCalledTimes(8);
+    // Each todo call is answered with its own id before the next request, and no request key repeats.
+    const second = captures[1]!.body.messages;
+    expect(second.slice(-2)).toEqual([
+      { role: 'assistant', content: null, tool_calls: todo(1).tool_calls },
+      { role: 'tool', tool_call_id: 'todo-1', content: JSON.stringify({ todos: [{ id: '1', content: 'Prepare case step 1', status: 'in_progress' }] }) },
+    ]);
+    expect(new Set(captures.map(capture => capture.idempotency)).size).toBe(8);
+  });
+
+  it('stops at the turn limit with the office sentence, and clamps an oversized allowance to twelve', async () => {
+    const { root, captures } = await fixture((_request, index) => todo(index));
+    expect(await askDepartmentWorker('Prepare case.', { root, maxTurns: 2 })).toMatchObject({ ok: false, detail: expect.stringMatching(/turn or time limit/) });
+    expect(captures).toHaveLength(2);
+    expect(await askDepartmentWorker('Prepare case.', { root, maxTurns: 50 })).toMatchObject({ ok: false });
+    expect(captures).toHaveLength(14);
+  });
+
+  it('stops at the time limit and aborts the request in flight', async () => {
+    let aborted = false;
+    const { root, captures } = await fixture(() => new Promise<Message>(() => {}));
+    servers[0]!.on('request', request => request.on('close', () => { aborted = true; }));
+    expect(await askDepartmentWorker('Prepare case.', { root, timeoutMs: 200 })).toMatchObject({ ok: false, detail: expect.stringMatching(/turn or time limit/) });
+    expect(captures).toHaveLength(1);
+    await vi.waitFor(() => expect(aborted).toBe(true));
+  });
 
   it('denies the second model request after a todo turn without forwarding it', async () => {
-    const { root, captures } = await fixture(() => ({ role: 'assistant', content: null, tool_calls: [{ id: 'todo-call', type: 'function', function: { name: 'todo_list', arguments: JSON.stringify({ todos: [{ id: '1', content: 'Prepare case', status: 'in_progress' }] }) } }] }));
+    const { root, captures } = await fixture(() => todo(1));
     let checks = 0;
     const result = await askDepartmentWorker('Prepare selected case.', { root, maxTurns: 3, beforeRequest: async () => { if (++checks > 1) throw new Error('revoked'); } });
     expect(result.ok).toBe(false); expect(checks).toBe(2); expect(captures).toHaveLength(1);
-  }, 120_000);
+  });
 
   it('does not forward after authority changes during the awaited admission hook', async () => {
     const { root, captures } = await fixture(() => ({ role: 'assistant', content: 'unused' }));
     const controller = new AbortController();
     const result = await askDepartmentWorker('Prepare case.', { root, signal: controller.signal, beforeRequest: async () => { await Promise.resolve(); controller.abort(); } });
     expect(result).toEqual({ ok: false, detail: 'Preparation cancelled.' }); expect(captures).toHaveLength(0);
-  }, 120_000);
+  });
 
-  it('never forwards or starts a private fallback when final launch authority is denied', async () => {
+  it('does not ask for request authority after a Stop during the launch hook', async () => {
+    const { root, captures } = await fixture(() => ({ role: 'assistant', content: 'unused' }));
+    const controller = new AbortController(), beforeRequest = vi.fn();
+    expect(await askDepartmentWorker('Prepare case.', { root, signal: controller.signal, beforeLaunch: async () => { controller.abort(); }, beforeRequest })).toEqual({ ok: false, detail: 'Preparation cancelled.' });
+    expect(beforeRequest).not.toHaveBeenCalled(); expect(captures).toHaveLength(0);
+  });
+
+  it('never forwards when final launch authority is denied, or when the caller omits its checks', async () => {
     const { root, captures } = await fixture(() => ({ role: 'assistant', content: 'unused' }));
     const hook = vi.fn(async () => { throw new Error('stale company claim'); });
     expect(await askDepartmentWorker('Prepare case.', { root, beforeLaunch: hook })).toMatchObject({ ok: false });
-    expect(hook).toHaveBeenCalledOnce(); expect(captures).toHaveLength(0);
-  }, 120_000);
-
-  it('holds unsupported provider routing before any inference', async () => {
-    const { root, captures, profile } = await fixture(() => ({ role: 'assistant', content: 'unused' }));
-    writeFileSync(join(profile, 'config.yaml'), 'model:\n  default: ignored-model\n  provider: copilot\napprovals:\n  mode: manual\n');
-    expect(await askDepartmentWorker('Prepare case.', { root })).toMatchObject({ ok: false }); expect(captures).toHaveLength(0);
-  }, 120_000);
-
-  it('holds Flash with extra-high reasoning, a tampered endpoint, a missing grant or an unmanaged provider before any inference', async () => {
-    const { root, captures, profile } = await fixture(() => ({ role: 'assistant', content: 'unused' }));
-    const config = join(profile, 'config.yaml'), managed = readFileSync(config, 'utf8');
-    writeFileSync(config, managed.replace('reasoning_effort: high', 'reasoning_effort: xhigh'));
-    expect(await askDepartmentWorker('Prepare case.', { root })).toMatchObject({ ok: false });
-    writeFileSync(config, managed.replace('provider: custom:realbud', 'provider: custom'));
-    expect(await askDepartmentWorker('Prepare case.', { root })).toMatchObject({ ok: false });
-    // The worker can write its own profile: a changed endpoint is refused before the relay starts.
-    writeFileSync(config, managed.replace(/base_url: http:\/\/127\.0\.0\.1:\d+\/v1/, 'base_url: https://attacker.invalid/v1'));
-    expect(await askDepartmentWorker('Prepare case.', { root })).toEqual({ ok: false, detail: MANAGED_ACCESS_MISMATCH });
-    writeFileSync(config, managed);
-    // A dotenv key would outrank the launch-env grant: it holds the launch too.
-    const dotenv = join(profile, '.env'), kept = readFileSync(dotenv, 'utf8');
-    writeFileSync(dotenv, `${kept}REALBUD_MODEL_API_KEY=wrong-dotenv-key\n`);
-    expect(await askDepartmentWorker('Prepare case.', { root })).toEqual({ ok: false, detail: MANAGED_ACCESS_MISMATCH });
-    writeFileSync(dotenv, kept); setWorkerModelAccessSnapshot({});
-    expect(await askDepartmentWorker('Prepare case.', { root })).toMatchObject({ ok: false });
-    setWorkerModelGrant({ state: 'none' });
-    expect(await askDepartmentWorker('Prepare case.', { root })).toEqual({ ok: false, detail: MANAGED_ACCESS_UNPAIRED });
-    expect(captures).toHaveLength(0);
-  }, 120_000);
-
-  it('requires explicit caller authority checks on an otherwise admitted runtime', async () => {
-    const { root, captures } = await fixture(() => ({ role: 'assistant', content: 'unused' }));
+    expect(hook).toHaveBeenCalledOnce();
     expect(await realAskDepartmentWorker('Prepare case.', { root })).toMatchObject({ ok: false });
     expect(await realAskDepartmentWorker('Prepare case.', { root, beforeLaunch: async () => {} })).toMatchObject({ ok: false });
     expect(captures).toHaveLength(0);
-  }, 120_000);
+  });
 
-  it('honors a reviewed turn allowance above six while guarding every request', async () => {
-    const { root, captures } = await fixture((_request, index) => index < 8
-      ? { role: 'assistant', content: null, tool_calls: [{ id: `todo-${index}`, type: 'function', function: { name: 'todo_list', arguments: JSON.stringify({ todos: [{ id: String(index), content: `Prepare case step ${index}`, status: 'in_progress' }] }) } }] }
-      : { role: 'assistant', content: 'Prepared after seven planning turns.' });
-    const beforeRequest = vi.fn();
-    expect(await askDepartmentWorker('Prepare case.', { root, maxTurns: 12, timeoutMs: 300_000, beforeRequest })).toEqual({ ok: true, stdout: 'Prepared after seven planning turns.' });
-    expect(captures).toHaveLength(8); expect(beforeRequest).toHaveBeenCalledTimes(8);
-  }, 120_000);
+  it('stops forwarding when the office key changes mid-run', async () => {
+    // Withdrawn while the first answer is on its way: the snapshot change aborts
+    // the exchange and the withdrawn grant names the reason.
+    const { root, captures } = await fixture((_request, index) => { setWorkerModelGrant({ state: 'withdrawn' }); setWorkerModelAccessSnapshot({}); return todo(index); });
+    expect(await askDepartmentWorker('Prepare case.', { root })).toMatchObject({ ok: false, detail: MANAGED_ACCESS_WITHDRAWN });
+    expect(captures).toHaveLength(1);
+  });
 
-  it('does not carry previous case history into a fresh run and removes both scratch homes', async () => {
+  it('refuses before any request without a grant, a key or a readable saved choice', async () => {
+    const { root, captures } = await fixture(() => ({ role: 'assistant', content: 'unused' }));
+    // A damaged saved choice is kept and refuses; no other model or price is guessed.
+    const record = controlPath(root, 'model-choice');
+    mkdirSync(dirname(record), { recursive: true, mode: 0o700 }); writeFileSync(record, '{not json', { mode: 0o600 });
+    expect(await askDepartmentWorker('Prepare case.', { root })).toEqual({ ok: false, detail: expect.stringMatching(/needs recovery/) });
+    expect(readFileSync(record, 'utf8')).toBe('{not json');
+    setWorkerModelAccessSnapshot({});
+    expect(await askDepartmentWorker('Prepare case.', { root })).toEqual({ ok: false, detail: MANAGED_ACCESS_RECOVERY });
+    setWorkerModelGrant({ state: 'withdrawn' });
+    expect(await askDepartmentWorker('Prepare case.', { root })).toEqual({ ok: false, detail: MANAGED_ACCESS_WITHDRAWN });
+    setWorkerModelGrant({ state: 'none' });
+    expect(await askDepartmentWorker('Prepare case.', { root })).toEqual({ ok: false, detail: MANAGED_ACCESS_UNPAIRED });
+    // The key only ever goes to an https or loopback grant, never to a plain-http remote.
+    setWorkerModelAccessSnapshot({ REALBUD_MODEL_API_KEY: 'fictional-selected-profile-key' });
+    setWorkerModelGrant({ state: 'active', baseUrl: 'http://attacker.invalid/v1', keyId: 'fictional-key-id', spendCapLabel: 'Fictional cap' });
+    expect(await askDepartmentWorker('Prepare case.', { root })).toMatchObject({ ok: false });
+    expect(captures).toHaveLength(0);
+  });
+
+  it('sends the key only to the granted endpoint, whatever the worker-writable profile names', async () => {
+    const { root, captures, profile } = await fixture(() => ({ role: 'assistant', content: 'Prepared.' }));
+    const config = join(profile, 'config.yaml');
+    writeFileSync(config, readFileSync(config, 'utf8').replace(/base_url: http:\/\/127\.0\.0\.1:\d+\/v1/, 'base_url: https://attacker.invalid/v1'));
+    writeFileSync(join(profile, '.env'), 'REALBUD_MODEL_API_KEY=wrong-dotenv-key\n');
+    expect(await askDepartmentWorker('Prepare case.', { root })).toMatchObject({ ok: true, stdout: 'Prepared.' });
+    expect(captures[0]).toMatchObject({ path: '/v1/chat/completions', authorization: 'Bearer fictional-selected-profile-key' });
+  });
+
+  it('shows a known model-service refusal as its sentence and counts the request', async () => {
+    const { root } = await fixture(() => ({ status: 402, body: { error: { message: 'cap', type: 'invalid_request_error', code: 'project_request_cap_exceeded', param: null } } }));
+    expect(await askDepartmentWorker('Prepare case.', { root })).toMatchObject({ ok: false, detail: expect.stringMatching(/more reserved capacity/), usage: { calls: 1 } });
+  });
+
+  it('does not carry a previous case into a fresh run', async () => {
     const { root, captures } = await fixture(() => ({ role: 'assistant', content: 'Prepared.' }));
-    const initial = new Set(readdirSync(tmpdir()).filter(name => name.startsWith('realbud-department-')));
-    const scratch: string[] = [];
-    const beforeLaunch = async () => { scratch.push(...readdirSync(tmpdir()).filter(name => name.startsWith('realbud-department-') && !initial.has(name))); };
-    expect((await askDepartmentWorker('PREVIOUS_CASE_UNIQUE_17', { root, beforeLaunch })).ok).toBe(true);
-    expect((await askDepartmentWorker('CURRENT_CASE_UNIQUE_28', { root, beforeLaunch })).ok).toBe(true);
-    expect(captures).toHaveLength(2); expect(JSON.stringify(captures[1].body)).not.toContain('PREVIOUS_CASE_UNIQUE_17');
-    expect(scratch).toHaveLength(2); expect(new Set(scratch).size).toBe(2);
-    for (const name of scratch) expect(existsSync(join(tmpdir(), name))).toBe(false);
-  }, 120_000);
+    expect((await askDepartmentWorker('PREVIOUS_CASE_UNIQUE_17', { root })).ok).toBe(true);
+    expect((await askDepartmentWorker('CURRENT_CASE_UNIQUE_28', { root })).ok).toBe(true);
+    expect(captures).toHaveLength(2); expect(JSON.stringify(captures[1]!.body)).not.toContain('PREVIOUS_CASE_UNIQUE_17');
+  });
 
-  it('aborts a forwarded provider request and reaps its worker on cancellation', async () => {
+  it('aborts a forwarded provider request on cancellation', async () => {
     let entered!: () => void, release!: () => void;
     const pendingRequest = new Promise<void>(done => { entered = done; });
     const held = new Promise<void>(done => { release = done; });
@@ -207,7 +251,18 @@ describe.skipIf(!nativeRuntime || !existsSync(join(nativeRuntime, 'venv/bin/pyth
     const pending = askDepartmentWorker('Prepare case.', { root, signal: controller.signal });
     try {
       await pendingRequest; controller.abort();
-      expect(await pending).toEqual({ ok: false, detail: 'Preparation cancelled.' }); expect(captures).toHaveLength(1);
+      expect(await pending).toMatchObject({ ok: false, detail: 'Preparation cancelled.' }); expect(captures).toHaveLength(1);
     } finally { controller.abort(); release(); await pending; }
-  }, 120_000);
+  });
+
+  it('keeps the office\'s saved model and effort after the worker folder is deleted', async () => {
+    const { root, captures } = await fixture(() => ({ role: 'assistant', content: 'Prepared without a worker.' }));
+    expect(await askDepartmentWorker('Prepare case.', { root })).toMatchObject({ ok: true });
+    rmSync(root, { recursive: true, force: true }); expect(existsSync(root)).toBe(false);
+    expect(await askDepartmentWorker('Prepare case.', { root })).toMatchObject({ ok: true, stdout: 'Prepared without a worker.' });
+    // The first run saved the profile's Flash · High in RealBud's own record; the default (Sonnet · Medium) is never substituted.
+    expect(storedModelChoice(root, currentWorkerProfile().profile)).toBe('flash-high');
+    expect(captures.map(capture => [capture.body.model, capture.body.reasoning_effort])).toEqual([['deepseek-v4.1-flash', 'high'], ['deepseek-v4.1-flash', 'high']]);
+    expect(existsSync(root)).toBe(false);
+  });
 });

@@ -170,7 +170,11 @@ export function composioOrgClient(options: { orgKey: () => string | undefined; f
       const projectName = typeof name === 'string' ? name.trim() : '';
       requireThat(projectName && projectName.length <= PROJECT_NAME_MAX && !/[\x00-\x1f\x7f]/.test(projectName), 'composio_project_name_invalid', 400);
       // Ask for the key up front: Composio returns it only from create and regenerate.
-      const created = readProject(await call('POST', '/org/owner/project/new', { name: projectName, should_create_api_key: true }), true);
+      // The office name remains its identity; the connection screen presents RealBud.
+      const created = readProject(await call('POST', '/org/owner/project/new', {
+        name: projectName, should_create_api_key: true,
+        config: { display_name: 'RealBud', logo_url: 'https://assets.composio.dev/project-files/pr_WlL-cuUFVGLK/xQiBOAlskQozlBcFpoztri47XI9k.png' },
+      }), true);
       return { id: created.id, name: created.name, apiKey: created.apiKey! };
     },
     async deleteProject(id) {

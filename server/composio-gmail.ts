@@ -245,7 +245,9 @@ export function isGmailReadOnlyAuthorizationUrl(value: unknown, apiKey: string):
 export async function authorizeGmailReadOnly(input: GmailReadOnlyBinding): Promise<{ url: string; accountId: string; expiresAt: string }> {
   const binding = bindingCopy(input), signal = AbortSignal.timeout(30_000);
   await verifyConfig(binding, signal);
-  const value = await rest(binding, "/connected_accounts/link", signal, { auth_config_id: binding.authConfigId, user_id: binding.userId });
+  // Keep the return destination fixed for personal and shared office Gmail alike.
+  const value = await rest(binding, "/connected_accounts/link", signal, { auth_config_id: binding.authConfigId, user_id: binding.userId,
+    callback_url: "https://realbud-managed-gateway.fly.dev/connections/complete" });
   if (!isGmailReadOnlyAuthorizationUrl(value.redirect_url, binding.apiKey) || !identifier(value.connected_account_id) || value.connected_account_id.includes(binding.apiKey) ||
     typeof value.expires_at !== "string" || !Number.isFinite(Date.parse(value.expires_at)) || Date.parse(value.expires_at) <= Date.now() || Date.parse(value.expires_at) > Date.now() + 86_400_000) fail("the provider did not return a valid, bounded sign-in link.", 502);
   return { url: value.redirect_url, accountId: value.connected_account_id, expiresAt: value.expires_at };

@@ -36,7 +36,10 @@ test('list, create and delete use the org key header and the documented paths', 
   assert.deepEqual(t.seen.map(call => `${call.method} ${call.url.replace('https://composio.invalid', '')}`), [
     'GET /org/owner/project/list', 'POST /org/owner/project/new', 'DELETE /org/owner/project/pr_two?revoke_on_delete=true']);
   assert.ok(t.seen.every(call => call.orgKey === ORG_KEY));
-  assert.deepEqual(JSON.parse(t.seen[1]!.body!), { name: 'realbud-company-b', should_create_api_key: true });
+  assert.deepEqual(JSON.parse(t.seen[1]!.body!), {
+    name: 'realbud-company-b', should_create_api_key: true,
+    config: { display_name: 'RealBud', logo_url: 'https://assets.composio.dev/project-files/pr_WlL-cuUFVGLK/xQiBOAlskQozlBcFpoztri47XI9k.png' },
+  });
 });
 
 test('list follows only returned opaque cursors and verifies all v3.1 pages before returning projects', async () => {

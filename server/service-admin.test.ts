@@ -183,6 +183,7 @@ describe("service mutation route contract", () => {
     ["POST", "/api/hermes/model", { choice: "sonnet-xhigh" }],
     ["POST", "/api/hermes/update/restore", {}],
     ["POST", "/api/hermes/uninstall", {}],
+    ["POST", "/api/hermes/uninstall/cancel", {}],
     ["POST", "/api/hermes/repair", {}],
     ["POST", "/api/hermes/auto-setup", {}],
     ["POST", "/api/hermes/auto-setup/retry/extra", {}],

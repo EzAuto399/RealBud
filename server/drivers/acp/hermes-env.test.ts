@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { homedir, tmpdir } from "node:os";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
-import { hardenHermesChildEnv } from "./hermes.ts";
+import { hardenHermesChildEnv, hermesWorkerSandbox, REVIEWED_PROFILE_CACHE_RELEASES, reviewedCacheLayout, UNREVIEWED_WORKER_RELEASE } from "./hermes.ts";
+import { runtimeCli } from "../../hermes-paths.ts";
+import { HERMES_RELEASES } from "../../hermes-releases.ts";
+import { NETWORK_ISOLATION_UNAVAILABLE } from "../../worker-network-sandbox.ts";
 
 describe("Hermes child stream watchdog", () => {
   it("binds separate desktop workers to their own data roots", () => {
@@ -87,6 +90,8 @@ describe("Hermes child stream watchdog", () => {
       HERMES_ACP_SKIP_CONFIGURED_MCP: "0",
       HERMES_SAFE_MODE: "0",
       HERMES_EXEC_ASK: "0",
+      // An ambient switch never turns on upstream's unpinned tirith download.
+      TIRITH_ENABLED: "1",
     };
     hardenHermesChildEnv(env);
     expect(env).toEqual({
@@ -94,6 +99,7 @@ describe("Hermes child stream watchdog", () => {
       HERMES_ACP_SKIP_CONFIGURED_MCP: "1",
       HERMES_SAFE_MODE: "1",
       HERMES_EXEC_ASK: "1",
+      TIRITH_ENABLED: "0",
       COPILOT_GH_HOST: "realbud.invalid",
       HERMES_CODEX_EVENT_STALE_TIMEOUT_SECONDS: "60",
     });
@@ -110,5 +116,76 @@ describe("Hermes child GitHub isolation", () => {
     for (const key of ["GH_TOKEN", "GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GH_HOST"]) expect(env[key]).toBeUndefined();
     expect(env.COPILOT_GH_HOST).toBe("realbud.invalid");
     expect(env.PATH).toBe("/usr/bin");
+  });
+});
+
+describe("release-gated profile cache guard", () => {
+  const reviewed = "f97608f178d1ffeca59860195ab7da295f7c8e5f";
+  const unreviewed = "0123456789abcdef0123456789abcdef01234567";
+  /** A worker folder with one owned release, two seat profiles each holding a
+   * poisoned skills prompt cache, and the release's CLI as a harmless script. */
+  function workerFolder(commit: string) {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "rb-cache-guard-")));
+    const cli = runtimeCli(join(home, "runtimes", commit));
+    mkdirSync(dirname(cli), { recursive: true }); writeFileSync(cli, "#!/bin/sh\necho ok\n"); chmodSync(cli, 0o755);
+    const seats = ["property", "property-other-seat"].map(name => join(home, "profiles", name));
+    for (const seat of seats) { mkdirSync(seat, { recursive: true }); writeFileSync(join(seat, ".skills_prompt_snapshot.json"), JSON.stringify({ skills: ["POISONED"] })); }
+    return { home, cli, seat: seats[0]!, other: seats[1]!, done: () => rmSync(home, { recursive: true, force: true }) };
+  }
+  const launch = (home: string, cli: string, deps: { platform: NodeJS.Platform; probe?: () => boolean } = { platform: "linux" }) =>
+    hermesWorkerSandbox("ask", cli, ["-p", "property", "acp"], { HERMES_HOME: home, PATH: "/usr/bin" }, [4000], deps);
+
+  it("covers exactly the catalog releases, so a new release must be reviewed before it can launch", () => {
+    expect([...REVIEWED_PROFILE_CACHE_RELEASES].sort()).toEqual(HERMES_RELEASES.map(release => release.commit).sort());
+  });
+
+  it("admits a reviewed release's own CLI, legacy and development CLIs, and nothing else under runtimes", () => {
+    const home = "/synthetic/realbud/hermes";
+    expect(reviewedCacheLayout(home, runtimeCli(join(home, "runtimes", reviewed)))).toBe(true);
+    expect(reviewedCacheLayout(home, runtimeCli(join(home, "runtimes", `${reviewed}-0123456789ab`)))).toBe(true);
+    expect(reviewedCacheLayout(home, runtimeCli(home))).toBe(true);
+    expect(reviewedCacheLayout(home, "/synthetic/dev/hermes")).toBe(true);
+    for (const command of [runtimeCli(join(home, "runtimes", unreviewed)), join(home, "runtimes", reviewed, "hermes-agent", "other"), join(home, "runtimes", "not-a-commit", "hermes")])
+      expect(reviewedCacheLayout(home, command)).toBe(false);
+  });
+
+  it("regenerates the seat's profile without its poisoned cache and leaves every other seat alone", () => {
+    const { home, cli, seat, other, done } = workerFolder(reviewed);
+    try {
+      launch(home, cli).release();
+      expect(existsSync(join(seat, ".skills_prompt_snapshot.json"))).toBe(false);
+      for (const name of ["skills", "memories", "sessions", "bin"]) expect(lstatSync(join(seat, name)).isDirectory()).toBe(true);
+      expect(existsSync(join(other, ".skills_prompt_snapshot.json"))).toBe(true);
+      expect(existsSync(join(other, "skills"))).toBe(false);
+    } finally { done(); }
+  });
+
+  it("refuses an unreviewed release and a cache that is not the reviewed plain file, deleting nothing", () => {
+    const unknown = workerFolder(unreviewed);
+    try {
+      expect(() => launch(unknown.home, unknown.cli)).toThrow(UNREVIEWED_WORKER_RELEASE);
+      expect(existsSync(join(unknown.seat, ".skills_prompt_snapshot.json"))).toBe(true);
+    } finally { unknown.done(); }
+    const { home, cli, seat, done } = workerFolder(reviewed);
+    try {
+      for (const plant of [() => symlinkSync(join(home, "elsewhere.json"), join(seat, ".skills_prompt_snapshot.json")), () => mkdirSync(join(seat, ".skills_prompt_snapshot.json"))]) {
+        rmSync(join(seat, ".skills_prompt_snapshot.json"), { recursive: true, force: true }); plant();
+        expect(() => launch(home, cli)).toThrow(NETWORK_ISOLATION_UNAVAILABLE);
+        expect(lstatSync(join(seat, ".skills_prompt_snapshot.json"))).toBeTruthy();
+      }
+    } finally { done(); }
+  });
+
+  it.runIf(process.platform === "darwin")("lets the regenerated seat read only its own profile", () => {
+    const { home, cli, seat, other, done } = workerFolder(reviewed);
+    try {
+      const sandboxed = launch(home, cli, { platform: "darwin", probe: () => true });
+      try {
+        const profile = sandboxed.args[1]!;
+        expect(profile).toContain(`(deny file-read* (subpath "${join(home, "profiles")}"))`);
+        expect(profile).toContain(`(allow file-read* (subpath "${seat}"))`);
+        expect(profile).not.toContain(`(subpath "${other}")`);
+      } finally { sandboxed.release(); }
+    } finally { done(); }
   });
 });

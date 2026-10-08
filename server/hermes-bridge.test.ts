@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,7 +7,9 @@ import { parseDocument } from "yaml";
 import { HERMES_PIN } from "./hermes-pin.ts";
 import { modelStatus, reconcileManagedModelProfile, setManagedModelChoice } from "./hermes-bridge.ts";
 import { MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelProfile } from "./hermes-pack.ts";
-import { setWorkerModelGrant } from "./worker-model-access.ts";
+import { canonicalModelChoice, setWorkerModelGrant } from "./worker-model-access.ts";
+import { storedModelChoice, workerControlDir } from "./worker-control.ts";
+import { writePrivateJson } from "./private-json.ts";
 
 import { privateFixtureDirectory, privateFixtureRoot, writePrivateFixtureFile as writeFileSync, WINDOWS_PROFILE_TEST_OPTIONS } from "./testing/private-profile-fixture.ts";
 
@@ -25,7 +27,7 @@ const active = () => setWorkerModelGrant({ state: "active", baseUrl: GATEWAY, ke
 
 afterEach(() => {
   setWorkerModelGrant({ state: "none" });
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0)) { rmSync(dir, { recursive: true, force: true }); rmSync(workerControlDir(dir), { recursive: true, force: true }); }
 });
 
 describe("managed model choice", WINDOWS_PROFILE_TEST_OPTIONS, () => {
@@ -103,5 +105,53 @@ describe("managed model choice", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     expect(await reconcileManagedModelProfile(dir)).toBe(true);
     expect(managedModelProfile(dir)).toMatchObject({ choice: "flash-high", visionReady: true });
     expect(await reconcileManagedModelProfile(dir)).toBe(false);
+  });
+
+  it("keeps the office's choice when the worker is deleted and restores it into a recreated profile", async () => {
+    const { dir, profile } = tempHome();
+    writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
+    active();
+    await setManagedModelChoice({ choice: "sonnet-xhigh" }, { root: dir });
+    // Everything in the worker folder is deleted: RealBud's own record still answers.
+    for (const entry of readdirSync(dir)) rmSync(join(dir, entry), { recursive: true, force: true });
+    expect(readdirSync(dir)).toEqual([]);
+    expect(modelStatus(dir)).toMatchObject({ provider: MANAGED_MODEL_PROVIDER, model: "claude-sonnet-5.5", choice: "sonnet-xhigh", managed: true });
+    // A recreated profile (fresh pack, no model) gets the same choice back.
+    privateFixtureDirectory(profile);
+    writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
+    expect(await reconcileManagedModelProfile(dir)).toBe(true);
+    expect(managedModelProfile(dir)).toMatchObject({ choice: "sonnet-xhigh", baseUrl: GATEWAY });
+  });
+
+  it("commits a new choice before projecting it, so a failed profile write still keeps it", async () => {
+    const { dir, profile } = tempHome();
+    writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
+    active();
+    await setManagedModelChoice({ choice: "flash-high" }, { root: dir });
+    writeFileSync(join(profile, "config.yaml"), "agent: not-a-map\n");
+    await expect(setManagedModelChoice({ choice: "sonnet-xhigh" }, { root: dir })).rejects.toThrow();
+    expect(storedModelChoice(dir, HERMES_PIN.profile)).toBe("sonnet-xhigh");
+    expect(modelStatus(dir).choice).toBe("sonnet-xhigh");
+  });
+
+  it("seeds the saved choice from a valid profile, then the provisioning receipt, then the default", async () => {
+    const fromProfile = tempHome();
+    writeFileSync(join(fromProfile.profile, "config.yaml"), "model:\n  default: claude-sonnet-5.5\n  provider: realbud\nagent:\n  reasoning_effort: xhigh\n");
+    expect(await canonicalModelChoice({ root: fromProfile.dir, dataDir: fromProfile.dir })).toBe("sonnet-xhigh");
+    // Seeded once: a later profile edit does not change the office's choice.
+    writeFileSync(join(fromProfile.profile, "config.yaml"), "model:\n  default: auto\n");
+    expect(await canonicalModelChoice({ root: fromProfile.dir, dataDir: fromProfile.dir })).toBe("sonnet-xhigh");
+
+    const fromReceipt = tempHome();
+    await writePrivateJson(join(fromReceipt.dir, "service-provisioning.json"), {
+      version: 1, state: "active", installationId: "fictional-installation", companyId: "fictional-company", hostInstallationId: "fictional-host",
+      provider: "modelvia", projectId: "fictional-project", keyId: "fictional-key-id", baseUrl: GATEWAY, spendCapLabel: "Fictional cap",
+      apps: ["gmail"], provisionedAt: "2026-10-08T00:00:00.000Z",
+      modelProfile: { provider: MANAGED_MODEL_PROVIDER, apiMode: "chat_completions", baseUrl: GATEWAY, model: "deepseek-v4.1-flash", envKeyRemoved: false, appliedAt: "2026-10-08T00:00:00.000Z", choice: "flash-high" },
+    });
+    expect(await canonicalModelChoice({ root: fromReceipt.dir, dataDir: fromReceipt.dir })).toBe("flash-high");
+
+    const fresh = tempHome();
+    expect(await canonicalModelChoice({ root: fresh.dir, dataDir: fresh.dir })).toBe("sonnet-medium");
   });
 });

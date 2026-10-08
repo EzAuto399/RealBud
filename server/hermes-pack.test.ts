@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { applyManagedModelProfile, applyPropertyPack, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelConfig, managedModelProfile, mergePropertyPolicy, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS, propertyProfileDir, RETIRED_PACK_SKILLS, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, WORKER_ACP_TOOLSETS, WORKER_BROWSER_POLICY, WORKER_DEFERRED_TOOLS, WORKER_DIRECT_TOOLS, WORKER_DISABLED_TOOLSETS, WORKER_DISABLED_VAULTS, WORKER_DENIED_COMMANDS, MEMORY_SCHEMA_READY_COMMITS, yamlBlock } from "./hermes-pack.ts";
+import { applyManagedModelProfile, applyPropertyPack, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelConfig, managedModelProfile, mergePropertyPolicy, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS, propertyProfileDir, RETIRED_PACK_SKILLS, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, WORKER_ACP_TOOLSETS, WORKER_BROWSER_POLICY, WORKER_DEFERRED_TOOLS, WORKER_DIRECT_TOOLS, WORKER_DISABLED_TOOLSETS, WORKER_DISABLED_VAULTS, WORKER_DENIED_COMMANDS, MEMORY_SCHEMA_READY_COMMITS, shippedProfileDigests, yamlBlock } from "./hermes-pack.ts";
 import { MANAGED_MODEL_CHOICES } from "../shared/managed-model-choices.ts";
 import { HERMES_RECOMMENDED } from "./hermes-releases.ts";
 import { releaseHome, resetRuntimeSelectionForTests, saveRuntimeSelection, selectedHermesCli } from "./hermes-runtime-selection.ts";
@@ -611,6 +611,16 @@ describe("migratePropertyProfileFromLegacyHermes", () => {
   });
 });
 
+describe("shippedProfileDigests", () => {
+  it("names the current pack SOUL/skills and earlier shipped revisions, never an office edit", () => {
+    const shipped = shippedProfileDigests(), digest = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
+    expect(shipped.has("SOUL.md", digest(join(PACK_DIR, "SOUL.md")))).toBe(true);
+    expect(shipped.has("skills/morning-arrears/SKILL.md", digest(join(PACK_DIR, "skills", "morning-arrears", "SKILL.md")))).toBe(true);
+    expect(shipped.has("SOUL.md", "e7991443b5d1bc198277b04845090ca13dccf0d617df4758fce79e8d024faa04")).toBe(true);
+    expect(shipped.has("SOUL.md", createHash("sha256").update("Fictional office edit.\n").digest("hex"))).toBe(false);
+  });
+});
+
 describe("hermesAgentDir", () => {
   it("is the official checkout inside the worker home and never the home itself", () => {
     const home = mkdtempSync(join(tmpdir(), "realbud-hermes-agent-"));
@@ -890,6 +900,25 @@ describe("managed model profile", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     const flashXhigh = chosen.replace("default: claude-sonnet-5.5", "default: deepseek-v4.1-flash");
     expect(parse(mergePropertyPolicy(flashXhigh, pack)).agent.reasoning_effort).toBeUndefined();
     expect(parse(mergePropertyPolicy(chosen.replace("reasoning_effort: xhigh", "reasoning_effort: max"), pack)).agent.reasoning_effort).toBeUndefined();
+  });
+
+  it("moves an office saved on Sonnet · High to Medium once; a later step back up to High is kept", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-managed-profile-")); dirs.push(home);
+    applyPropertyPack(home);
+    const profile = propertyProfileDir(home);
+    // An office set up while High was the default: its profile already says High, with no marker.
+    applyManagedModelProfile(GATEWAY, { root: home, choice: "sonnet-high" });
+    rmSync(join(profile, ".realbud-medium-default-2026-10-08"));
+    expect(applyManagedModelProfile(GATEWAY, { root: home })).toMatchObject({ choice: "sonnet-medium", reasoningEffort: "medium" });
+    applyManagedModelProfile(GATEWAY, { root: home, choice: "sonnet-high" });
+    applyPropertyPack(home);
+    expect(applyManagedModelProfile(GATEWAY, { root: home })).toMatchObject({ choice: "sonnet-high" });
+    // Other choices are never moved.
+    const other = mkdtempSync(join(tmpdir(), "realbud-managed-profile-")); dirs.push(other);
+    applyPropertyPack(other);
+    applyManagedModelProfile(GATEWAY, { root: other, choice: "flash-high" });
+    rmSync(join(propertyProfileDir(other), ".realbud-medium-default-2026-10-08"));
+    expect(applyManagedModelProfile(GATEWAY, { root: other })).toMatchObject({ choice: "flash-high" });
   });
 
   it("survives a pack reinstall, and a fresh apply migrates auto to the default (Sonnet · Medium) while dropping shadowing keys", () => {

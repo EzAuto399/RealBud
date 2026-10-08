@@ -3,7 +3,7 @@
 import { existsSync, lstatSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 
 import { hermesCli, hermesInstallCommand } from "../../hermes-pin.ts";
 import { baseWorkerProfile, currentWorkerProfile } from "../../hermes-profile.ts";
@@ -11,7 +11,8 @@ import { BUD_WORK_FOLDER, seedVault, vaultDir } from "../../vault.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import { BUD_IDENTITY } from "../../../shared/bud-identity.ts";
 import { isolateGithubLogin, stripServiceSecrets } from "../../service-child-env.ts";
-import { hermesHome } from "../../hermes-paths.ts";
+import { hermesHome, runtimeCli } from "../../hermes-paths.ts";
+import { releaseHome, runtimeCommit } from "../../hermes-runtime-selection.ts";
 import { selectedWindowsRuntimeHome, windowsHermesRuntimeEnv } from "../../hermes-runtime-env.ts";
 import { applyAskModelRelayEnv, ASK_MODEL_RELAY_OVERLAY_ENV, askModelRelayPort } from "../../ask-model-relay.ts";
 import { DATA_DIR } from "../../config.ts";
@@ -85,6 +86,13 @@ export function hardenHermesChildEnv(env: Record<string, string | undefined>): v
   // can otherwise spawn arbitrary local Python without asking ACP. Upstream ask-mode routes whole-script approval through ACP's
   // existing callback; a missing callback keeps the script blocked.
   env.HERMES_EXEC_ASK = "1";
+  // No tirith scanner: with none on PATH, upstream downloads tirith's unpinned
+  // "latest" GitHub release at run time (0.21.5 tools/tirith_security.py
+  // `_install_tirith`), which no reviewed runtime pins. The macOS sandbox
+  // refuses that download and Windows has no build, so command checks were
+  // already Hermes' pattern guards plus RealBud's approvals; this stops the
+  // attempt. The env switch outranks config and any ambient TIRITH_BIN.
+  env.TIRITH_ENABLED = "0";
   // Hermes defaults small Codex requests to a 12-second SSE idle cutoff.
   // Allow a slower response within RealBud's existing overall run deadline;
   // retain an explicitly configured watchdog (including 0 to disable it).
@@ -117,6 +125,35 @@ const PROFILE_STATE_FILES = ["state\\.db", "auth\\.lock", "update_check", "provi
  * changes reach MEMORY.md/USER.md only through RealBud's review. */
 const SKILLS_PROMPT_SNAPSHOT = ".skills_prompt_snapshot.json";
 
+/** Release commits whose private-cache layout was reviewed: each keeps the
+ * skills prompt cache at exactly `<profile>/.skills_prompt_snapshot.json`
+ * (agent/prompt_builder.py `_skills_prompt_snapshot_path`, read in each tag's
+ * tree on 2026-10-08) and no other instruction-bearing cache in the profile.
+ * Upstream has no supported switch to turn that cache off, so RealBud removes
+ * it before every launch. An owned release missing here has an unreviewed
+ * layout: its launch is refused rather than cleaned blindly. Adding a release
+ * to hermes-releases.ts fails hermes-env.test.ts until it is reviewed here. */
+export const REVIEWED_PROFILE_CACHE_RELEASES: ReadonlySet<string> = new Set([
+  "7339f5f160db5c96657a3bab60151227cc61f66c", // 0.20.3
+  "29112bef099274229cadff79cdff7bf7b99c4b77", // 0.21.0
+  "939e45c91d751fadd94dcd1b873ac3cb44846213", // 0.21.2
+  "345cd2b057a452236de401d3534b8502a7465e8d", // 0.21.3
+  "f97608f178d1ffeca59860195ab7da295f7c8e5f", // 0.21.5
+]);
+export const UNREVIEWED_WORKER_RELEASE = "This version of Bud's engine hasn't been reviewed for RealBud, so Bud was not started. Update RealBud, or contact RealBud support.";
+
+/** False only for an owned release (`<home>/runtimes/<id>`) that is not the
+ * release's own CLI or whose cache layout was not reviewed. A legacy owned
+ * runtime or a development CLI records no release in its path and keeps the
+ * reviewed snapshot removal. */
+export function reviewedCacheLayout(home: string, command: string): boolean {
+  const inside = relative(join(home, "runtimes"), command);
+  if (!inside || inside.startsWith("..") || isAbsolute(inside)) return true;
+  const id = inside.split(sep)[0]!;
+  try { return command === runtimeCli(releaseHome(home, id)) && REVIEWED_PROFILE_CACHE_RELEASES.has(runtimeCommit(id)!); }
+  catch { return false; }
+}
+
 /** The folders Hermes refuses to start without (hermes_cli/config.py
  * `_HERMES_HOME_SUBDIRS`). RealBud makes them before a launch so the worker
  * never needs to create `cron`, `hooks` or `skills`, which stay read-only. */
@@ -138,8 +175,10 @@ export function ensureProfileSkeleton(profile: string): void {
   // The profile root itself: ours and owner-only, like every root under it.
   ensurePrivateRoot(trusted);
   for (const name of PROFILE_SKELETON) ensurePrivateRoot(join(trusted, name));
+  // Only the plain file the reviewed releases write is removed; a link, folder
+  // or anything else there is not that cache, so the launch is refused instead.
   const snapshot = join(trusted, SKILLS_PROMPT_SNAPSHOT);
-  try { if (!lstatSync(snapshot).isSymbolicLink()) unlinkSync(snapshot); else throw new Error(NETWORK_ISOLATION_UNAVAILABLE); }
+  try { if (lstatSync(snapshot).isFile()) unlinkSync(snapshot); else throw new Error(NETWORK_ISOLATION_UNAVAILABLE); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error(NETWORK_ISOLATION_UNAVAILABLE); }
 }
 
@@ -166,6 +205,7 @@ function launchProfile(args: readonly string[]): string {
 export function hermesWorkerSandbox(job: HermesWorkerJob, command: string, args: readonly string[], env: Record<string, string | undefined>, loopbackPorts: readonly number[], deps?: SandboxDeps): SandboxedLaunch {
   const home = hermesHome(undefined, env);
   const profile = join(home, "profiles", launchProfile(args));
+  if (job !== "diagnostic" && !reviewedCacheLayout(home, command)) throw new Error(UNREVIEWED_WORKER_RELEASE);
   // The workroom exists before any worker starts (seeding is idempotent).
   const workroom = job === "diagnostic" ? vaultDir() : seedVault();
   // Profile state is granted only when the profile exists as a real folder
@@ -177,6 +217,11 @@ export function hermesWorkerSandbox(job: HermesWorkerJob, command: string, args:
   // nothing RealBud later reads there can be planted or replaced.
   const writable = job === "diagnostic" ? [] : [join(workroom, BUD_WORK_FOLDER), ...(hasProfile ? PROFILE_STATE_DIRS.map(name => join(profile, name)) : [])];
   const writablePatterns = job === "diagnostic" || !hasProfile ? [] : [`^${trustedPath(profile).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/\\.?\\.?(${PROFILE_STATE_FILES.join("|")})[^/]*$`];
+  // Hermes 0.21.5 refuses to open state.db (so session_search has no index)
+  // unless `access(profile, W_OK)` passes (hermes_state_repair.py
+  // `preflight_db_writability`). The profile folder's own node answers
+  // writable; only the state files above can still be made in it.
+  const writableFolderNodes = job === "diagnostic" || !hasProfile ? [] : [profile];
   // Test-only roots come from the explicit hook alone (server/testing/setup.ts
   // fills it); production never sets it and grants nothing beyond the above.
   if (job !== "diagnostic") writable.push(...SANDBOX_TEST_WRITABLE);
@@ -190,7 +235,7 @@ export function hermesWorkerSandbox(job: HermesWorkerJob, command: string, args:
   const relay = overlay ? askModelRelayPort() : null;
   return sandboxedLaunch(command, args, env, {
     loopbackPorts: relay ? [...loopbackPorts, relay] : [...loopbackPorts],
-    writable, writablePatterns, executable: [join(profile, "bin")], reads,
+    writable, writablePatterns, writableFolderNodes, executable: [join(profile, "bin")], reads,
   }, deps);
 }
 

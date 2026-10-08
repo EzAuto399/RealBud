@@ -8,13 +8,15 @@ import { classifyWorkroomCommand, PINNED_SCRIPTS } from "./workroom-command-poli
 
 const root = mkdtempSync(join(tmpdir(), "realbud-workroom-policy-"));
 const workroom = join(root, "data", "vault");
-const runtimeHome = join(root, "runtime");
+// A catalog release with no real pins (0.21.0), so the fictional pins below never replace reviewed ones.
+const commit = "29112bef099274229cadff79cdff7bf7b99c4b77";
+const runtimeHome = join(root, "runtimes", commit);
 const venvBin = join(runtimeHome, "hermes-agent", "venv", "bin");
 const scripts = join(runtimeHome, "hermes-agent", "skills", "productivity");
 const python = join(venvBin, "python3");
-const commit = "fictional-runtime-commit";
 mkdirSync(workroom, { recursive: true });
 mkdirSync(venvBin, { recursive: true });
+writeFileSync(join(venvBin, "..", "pyvenv.cfg"), "home = /synthetic/python\n");
 writeFileSync(python, "");
 writeFileSync(join(venvBin, "python"), "");
 for (const skill of ["xlsx", "docx", "pdf", "powerpoint"]) mkdirSync(join(scripts, skill, "scripts"), { recursive: true });
@@ -78,6 +80,20 @@ describe("classifyWorkroomCommand", () => {
     expect(classify(`${run} ${create} ${spec} ${out}`, "0000000000000000000000000000000000000000")).toBe("ask");
     expect(classify(`${run} ${create} ${spec} ${out}`, null)).toBe("ask");
     expect(classifyWorkroomCommand({ command: `${run} ${create} ${spec} ${out}`, workroom, runtimeHome, platform: "darwin" })).toBe("ask");
+  });
+  it("asks unless the interpreter is the named release's own intact runtime", () => {
+    const command = `${run} ${create} ${spec} ${out}`;
+    expect(classify(command, "345cd2b057a452236de401d3534b8502a7465e8d")).toBe("ask");
+    const cfg = join(venvBin, "..", "pyvenv.cfg");
+    rmSync(cfg);
+    expect(classify(command)).toBe("ask");
+    writeFileSync(cfg, "home = /synthetic/python\n");
+    expect(classify(command)).toBe(auto);
+    // The same tree outside a runtimes/<release> folder (a legacy or unknown runtime) asks.
+    const legacy = join(root, "legacy");
+    mkdirSync(legacy);
+    symlinkSync(join(runtimeHome, "hermes-agent"), join(legacy, "hermes-agent"));
+    expect(classifyWorkroomCommand({ command: command.replaceAll(runtimeHome, legacy), workroom, runtimeHome: legacy, runtimeCommit: commit, platform: "darwin" })).toBe("ask");
   });
   it("asks when the script, a sibling helper or the directory listing changed", () => {
     const common = join(scripts, "docx", "scripts", "docx_common.py");

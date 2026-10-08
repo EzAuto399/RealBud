@@ -151,7 +151,8 @@ describe("Gmail read-only configuration and connection identity", () => {
     const result = await authorizeGmailReadOnly(binding);
     expect(result).toMatchObject({ url: "https://connect.composio.dev/link/fixture", accountId: "ca_new" });
     expect(Object.keys(result)).toEqual(["url", "accountId", "expiresAt"]);
-    expect(calls.find(call => call.options.method === "POST")!.body).toEqual({ auth_config_id: "ac_readonly", user_id: "review-user" });
+    expect(calls.find(call => call.options.method === "POST")!.body).toEqual({ auth_config_id: "ac_readonly", user_id: "review-user",
+      callback_url: "https://realbud-managed-gateway.fly.dev/connections/complete" });
   });
   it.each(["http://connect.composio.dev/link", "https://evil.example/link", "https://connect.composio.dev.evil.example/link", "https://name:password@connect.composio.dev/link", "https://connect.composio.dev:444/link"])('rejects unsafe authorization link %s', async redirect_url => {
     fixture({ override: call => call.url.pathname.endsWith("/link") ? response({ redirect_url, connected_account_id: "ca_new", expires_at: new Date(Date.now() + 60_000).toISOString() }) : undefined });
