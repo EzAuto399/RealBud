@@ -27,7 +27,7 @@ describe("bounded Cua contract", () => {
     for (const tool of FORBIDDEN_TOOLS) expect(toolAllowed(manifest, tool)).toBe(false);
     for (const tool of ["install_extension", "parse_visual_regions"]) expect(FORBIDDEN_TOOLS).toContain(tool);
     // 0.34.0 tools that install, persist config or reach out for an update.
-    for (const tool of ["install_ffmpeg", "set_config", "check_for_update"]) {
+    for (const tool of ["install_ffmpeg", "set_config", "check_for_update", "replay_trajectory", "start_recording"]) {
       expect(CUA_NEVER_TOOLS).toContain(tool);
       expect(FORBIDDEN_TOOLS).toContain(tool);
       expect(toolAllowed(manifest, tool)).toBe(false);

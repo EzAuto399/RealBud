@@ -139,8 +139,11 @@ tools.
   characters in a local probe, and RealBud stops the daemon after the check.
 
 **Never used: `install_extension`, `parse_visual_regions`, `install_ffmpeg`,
-`set_config` and `check_for_update`.** The last three download, reconfigure or
-update the driver; RealBud pins and ships the driver itself.
+`set_config`, `check_for_update`, `replay_trajectory` and `start_recording`.**
+`install_ffmpeg`, `set_config` and `check_for_update` download, reconfigure or
+update the driver; RealBud pins and ships the driver itself. `replay_trajectory`
+re-runs recorded clicks inside the driver, past the per-action fence, and
+`start_recording` writes screen captures to disk.
 `install_extension` installs the optional perception extension, which bundles
 OmniParser (AGPL-3.0); `parse_visual_regions` is its only consumer. Both are in
 `CUA_NEVER_TOOLS` (`server/cua-bounded.ts`) and refused in every turn, fenced

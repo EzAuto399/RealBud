@@ -893,10 +893,10 @@ process.stdin.on("data", chunk => {
       expect(cuaNeverTool(title), title).toMatch(/^(install_extension|parse_visual_regions)$/);
     }
     expect(cuaNeverTool(undefined, "install_extension")).toBe("install_extension");
-    for (const [title, tool] of [["mcp__computer__install_ffmpeg", "install_ffmpeg"], ["mcp_computer_set_config: {}", "set_config"], ["computer.check_for_update", "check_for_update"]]) {
+    for (const [title, tool] of [["mcp__computer__install_ffmpeg", "install_ffmpeg"], ["mcp_computer_set_config: {}", "set_config"], ["computer.check_for_update", "check_for_update"], ["Tool: computer/install_extension", "install_extension"], ["Tool: mcp__computer__replay_trajectory", "replay_trajectory"], ["  computer.start_recording", "start_recording"], ["install_extension.call", "install_extension"], [`mcp__${"s".repeat(300)}__set_config(x)`, "set_config"], ["re_install_extension", "install_extension"]]) {
       expect(cuaNeverTool(title), title).toBe(tool);
     }
-    for (const other of ["reinstall_extension", "install_extensions", "mcp__computer__get_window_state", "echo install_extension", "get_config", "check_for_updates", undefined]) {
+    for (const other of ["reinstall_extension", "install_extensions", "mcp__computer__get_window_state", "echo install_extension", "Tool: computer/get_window_state", "get_config", "check_for_updates", undefined]) {
       expect(cuaNeverTool(other), String(other)).toBeNull();
     }
   });

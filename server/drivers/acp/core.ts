@@ -216,13 +216,23 @@ export function hermesNativeBrowserTool(...values: unknown[]): string | null {
 
 /** A Cua tool Bud never runs (`CUA_NEVER_TOOLS`), named by the leading tool
  * name in a title or an explicit name field, bare or behind an MCP server
- * prefix (`mcp_computer_…`, `mcp__computer__…`, `computer.…`). Checked for
+ * prefix (`mcp_computer_…`, `mcp__computer__…`, `computer.…`), also after a
+ * spaced label (`Tool: computer/install_extension`). Checked for
  * every engine and every turn, fenced or not, before any auto-approval. */
-const CUA_NEVER_RE = new RegExp(`^\\s*(?:[a-z0-9-]*[_./:])*?(${CUA_NEVER_TOOLS.join("|")})(?![a-z0-9_-])`, "i");
+// Linear on purpose: a title is model-influenced text, so no nested repeats.
+// A name counts at the start of the leading tool token or right after one of
+// `_./:`, and must not run on into `[a-z0-9_-]`.
 export function cuaNeverTool(...values: unknown[]): string | null {
   for (const value of values) {
-    const match = typeof value === "string" ? CUA_NEVER_RE.exec(value) : null;
-    if (match) return match[1].toLowerCase();
+    if (typeof value !== "string") continue;
+    const head = value.trimStart().replace(/^[a-z][a-z ]{0,30}:\s+/i, "");
+    const token = (/^[a-z0-9_./:-]+/i.exec(head)?.[0] ?? "").toLowerCase();
+    for (let i = 0; i < token.length; i++) {
+      if (i > 0 && !"_./:".includes(token[i - 1])) continue;
+      for (const name of CUA_NEVER_TOOLS) {
+        if (token.startsWith(name, i) && !/[a-z0-9_-]/.test(token[i + name.length] ?? "")) return name;
+      }
+    }
   }
   return null;
 }

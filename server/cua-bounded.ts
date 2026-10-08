@@ -9,9 +9,12 @@ export const CUA_PIN = "0.34.0";
  * driver's other self-changing tools: `install_ffmpeg` installs a package
  * through the system package manager, `set_config` persists driver
  * configuration, and `check_for_update` calls out for a new driver (RealBud
- * pins the driver and turns that check off). Enforced in
+ * pins the driver and turns that check off). `replay_trajectory` re-runs a
+ * recorded batch of clicks inside the driver, past the per-action fence, and
+ * `start_recording` writes screen captures to disk; RealBud uses neither.
+ * Enforced in
  * server/drivers/acp/core.ts (every turn) and the portal fence. */
-export const CUA_NEVER_TOOLS = ["install_extension", "parse_visual_regions", "install_ffmpeg", "set_config", "check_for_update"] as const;
+export const CUA_NEVER_TOOLS = ["install_extension", "parse_visual_regions", "install_ffmpeg", "set_config", "check_for_update", "replay_trajectory", "start_recording"] as const;
 
 export const FORBIDDEN_TOOLS = [
   "screenshot_desktop",

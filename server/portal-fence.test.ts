@@ -142,7 +142,7 @@ describe("portal fence", () => {
   it("refuses Cua's AGPL extension tools in fenced and unfenced turns", () => {
     const wide: FenceContext = { ...ctx, capabilities: ["portal-read", "portal-prefill", "portal-submit"] };
     for (const tool of ["install_extension", "parse_visual_regions", "mcp__computer__install_extension", "computer.parse_visual_regions", "mcp_computer_install_extension",
-      "install_ffmpeg", "set_config", "check_for_update", "mcp__computer__set_config"]) {
+      "install_ffmpeg", "set_config", "check_for_update", "replay_trajectory", "start_recording", "mcp__computer__set_config", "mcp__computer__replay_trajectory"]) {
       // Unfenced: the host refuses every computer action when no saved job fences it.
       expect(isComputerTool(tool), tool).toBe(true);
       // Fenced: no job grant makes them part of the job.
