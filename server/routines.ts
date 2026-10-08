@@ -23,7 +23,8 @@ import { oplog } from "./oplog.ts";
 import { evaluatorForLoop } from "../shared/workflow-catalog.ts";
 import { reiMoneyStaleReason, reiOwnerLetterStaleReason } from "./source-gate.ts";
 import { ownerLetterWeekStart } from "./owner-letter.ts";
-import { recipeClockRunnable, type DeskSnapshot, type Loop, type LoopId, type LoopRun, type LoopRunStatus, type LoopSchedule, type Recipe } from "../shared/contracts.ts";
+import { cleanRunUsage } from "./run-cost.ts";
+import { recipeClockRunnable, type RunUsage, type DeskSnapshot, type Loop, type LoopId, type LoopRun, type LoopRunStatus, type LoopSchedule, type Recipe } from "../shared/contracts.ts";
 
 export type { Loop, LoopId, LoopRun, LoopRunStatus, LoopSchedule };
 
@@ -38,6 +39,8 @@ export interface LoopExecuteResult {
   uncovered?: number;
   jobRunId?: string;
   quiet?: boolean;
+  /** Modelvia requests the loop made itself, kept on its run for its cost. */
+  usage?: RunUsage;
 }
 
 export interface LoopManagerOptions {
@@ -801,6 +804,8 @@ export class LoopManager {
         run.status = outcome.result ? settleLoopRunStatus(outcome.result) : "failed";
         run.detail = redactSecretsInText(outcome.result?.detail ?? (outcome.error instanceof Error ? outcome.error.message : "The work could not complete.")).slice(0, 500);
         if (outcome.result?.jobRunId) run.jobRunId = outcome.result.jobRunId;
+        const usage = cleanRunUsage(outcome.result?.usage);
+        if (usage?.calls) run.usage = usage;
         run.finishedAt = this.now();
         if (outcome.result?.quiet) run.seenAt = run.finishedAt;
       });

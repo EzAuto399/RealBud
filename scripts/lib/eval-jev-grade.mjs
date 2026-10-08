@@ -5,12 +5,14 @@
 //   mapping: { kind: 'mapping', gold (mapping | null), answered, roles: { [role]: { value, confidence, lead } } }
 //   noul:    { kind: 'noul', gold (boolean), answered, noul }
 //   label:   { kind: 'label', gold (boolean: same), answered, noul } — "same" at noul >= t.same, "different" at noul <= t.different
+//   screen:  { kind: 'screen', gold (boolean: noise), answered, bulk, action } — screened at bulk >= t.bulk and action <= t.action
 // `accept` replays the module's own acceptance rule at given thresholds, so the
 // harness can check it against what the module did and then sweep offline.
 
 export const ROLES = ['identity', 'daysSinceDue', 'rentLanded', 'levyPaid'];
 export const CHOICE_GRID = [0.8, 0.85, 0.9, 0.93, 0.95, 0.97, 0.99].flatMap(conf => [0.1, 0.2, 0.3, 0.4, 0.5].map(margin => ({ conf, margin })));
 export const NOUL_GRID = [0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.93, 0.95, 0.97, 0.98, 0.99].map(noul => ({ noul }));
+export const SCREEN_GRID = [0.8, 0.85, 0.9, 0.93, 0.95, 0.97, 0.98, 0.99].flatMap(bulk => [0.2, 0.1, 0.05, 0.03, 0.02, 0.01].map(action => ({ bulk, action })));
 export const LABEL_GRID = [0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.97, 0.99].flatMap(same => [0.4, 0.3, 0.2, 0.15, 0.1, 0.05, 0.03, 0.01].map(different => ({ same, different })));
 
 /** The chosen option's probability minus the best other option's (0 when there is none); null without probabilities for it.
@@ -27,6 +29,7 @@ const passes = (role, t) => role.value !== null && (role.confidence ?? 0) >= t.c
 export function accept(record, t) {
   if (!record.answered) return null;
   if (record.kind === 'noul') return record.noul >= t.noul ? true : null;
+  if (record.kind === 'screen') return record.bulk >= t.bulk && record.action <= t.action ? true : null;
   if (record.kind === 'label') return record.noul >= t.same ? 'same' : record.noul <= t.different ? 'different' : null;
   if (record.kind === 'choice') return record.allowed !== false && passes(record, t) ? record.value : null;
   const values = ROLES.map(role => record.roles[role]);
@@ -37,6 +40,7 @@ export function accept(record, t) {
 /** The model's own answer, thresholds aside (noul: >= 0.5 reads as noise). */
 export function rawAnswer(record) {
   if (record.kind === 'noul') return record.noul >= 0.5;
+  if (record.kind === 'screen') return record.bulk >= 0.5 && record.action < 0.5;
   if (record.kind === 'label') return record.noul >= 0.5 ? 'same' : 'different';
   if (record.kind === 'choice') return record.value;
   const values = ROLES.map(role => record.roles[role]?.value ?? null);
@@ -51,7 +55,7 @@ export function same(a, b) {
   return keys.length === Object.keys(b).length && keys.every(key => a[key] === b[key]);
 }
 /** Noise gold is a boolean; only `true` can be accepted, so a not-noise case accepted is wrong. */
-const goldValue = record => record.kind === 'noul' ? !!record.gold : record.kind === 'label' ? (record.gold ? 'same' : 'different') : record.gold;
+const goldValue = record => record.kind === 'noul' || record.kind === 'screen' ? !!record.gold : record.kind === 'label' ? (record.gold ? 'same' : 'different') : record.gold;
 
 export function summarize(records, t) {
   const n = records.length, answered = records.filter(r => r.answered);
@@ -68,8 +72,10 @@ export function summarize(records, t) {
     accepted, correctAccepts: accepted - wrongAccepts, wrongAccepts, wrong, coverage: n ? accepted / n : 0, fallbackRate: n ? (n - accepted) / n : 0 };
 }
 
-/** Lexicographically stricter thresholds (first key, then the next); higher is stricter except `different` (a noul ceiling). */
-const stricter = (a, b) => { for (const key of Object.keys(a)) if (a[key] !== b[key]) return key === 'different' ? a[key] < b[key] : a[key] > b[key]; return false; };
+/** Ceilings: a lower value is stricter. */
+export const CEILINGS = ['different', 'action'];
+/** Lexicographically stricter thresholds (first key, then the next); higher is stricter except a ceiling. */
+const stricter = (a, b) => { for (const key of Object.keys(a)) if (a[key] !== b[key]) return CEILINGS.includes(key) ? a[key] < b[key] : a[key] > b[key]; return false; };
 
 /** Over the grid: the setting with the most coverage whose wrong-accepts stay within `cap(cases)`; ties go to the stricter setting. */
 export function best(records, grid, cap) {

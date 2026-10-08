@@ -1,6 +1,7 @@
 import type { LoopRun } from "../shared/contracts.ts";
 import { MANUAL_JOB_REQUEST_ID } from "../shared/manual-job-request.ts";
 import { validCalendarCadence, type CalendarCadence } from '../shared/routine-clock.ts';
+import { cleanRunUsage } from "./run-cost.ts";
 
 export interface LoopsFile {
   version: 3;
@@ -62,7 +63,10 @@ export function parseLoopsFile(raw: unknown, fallbackTimezone: string): LoopsFil
       row.requestId = requestId;
     }
     ids.add(row.id);
-    return { ...row } as unknown as LoopRun;
+    // Optional: a run saved before usage was recorded loads without it, and a malformed one is dropped.
+    const { usage: saved, ...rest } = row;
+    const usage = cleanRunUsage(saved);
+    return { ...rest, ...(usage ? { usage } : {}) } as unknown as LoopRun;
   });
   return { version: 3, timezone, state, runs };
 }

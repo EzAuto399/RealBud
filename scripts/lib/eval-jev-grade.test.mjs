@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { accept, best, choiceLead, summarize, sweep, CHOICE_GRID, LABEL_GRID, NOUL_GRID } from './eval-jev-grade.mjs';
+import { accept, best, choiceLead, summarize, sweep, CHOICE_GRID, LABEL_GRID, NOUL_GRID, SCREEN_GRID } from './eval-jev-grade.mjs';
 
 const choice = (id, gold, value, confidence, lead, extra = {}) => ({ kind: 'choice', id, gold, answered: true, value, confidence, lead, allowed: true, ...extra });
 const noul = (id, gold, p) => ({ kind: 'noul', id, gold, answered: true, noul: p });
@@ -83,4 +83,18 @@ test('duplicate-bill labels: "same" on a different bill and "different" on the s
   assert.equal(s.accepted, 4);
   // Zero wrong: "same" above 0.92 and "different" below 0.08; ties go to the higher same and the lower different.
   assert.deepEqual(best(records, LABEL_GRID, () => 0).thresholds, { same: 0.95, different: 0.05 });
+});
+
+test('W3 screen: screened only when bulk is high AND asks_action is low; a needed thread screened is a wrong-accept', () => {
+  const screen = (id, gold, bulk, action) => ({ kind: 'screen', id, gold, answered: true, bulk, action });
+  const t = { bulk: 0.97, action: 0.03 };
+  assert.equal(accept(screen('edge', true, 0.97, 0.03), t), true);
+  assert.equal(accept(screen('asks', true, 0.99, 0.031), t), null);
+  assert.equal(accept(screen('unsure', true, 0.969, 0), t), null);
+  const records = [screen('news', true, 0.99, 0.01), screen('failed-debit', false, 0.98, 0.02), screen('repair', false, 0.4, 0.95), screen('promo', true, 0.95, 0.04)];
+  assert.deepEqual(summarize(records, t).wrong, ['failed-debit']);
+  // The sweep can only drop the automated-but-needed debit by asking for less action (0.01): news stays, promo goes.
+  const zero = best(records, SCREEN_GRID, () => 0);
+  assert.deepEqual(zero.thresholds, { bulk: 0.99, action: 0.01 });
+  assert.equal(zero.coverage, 1 / 4);
 });

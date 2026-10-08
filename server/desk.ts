@@ -52,7 +52,8 @@ import { ambiguousMatchException, classifyMoneyRow, unmatchedException } from ".
 import { composeOwnerLetter, ownerLetterWeekStart } from "./owner-letter.ts";
 import { parseIntakeText, type IntakeItem } from "./intake.ts";
 import { assertRoutineCannotMint, freezeAuthorization, withPresentation, type BrowserPresentation } from "./handoff-auth.ts";
-import type { RoutineOrigin } from "../shared/contracts.ts";
+import type { RoutineOrigin, RunUsage } from "../shared/contracts.ts";
+import { addRunUsage } from "./run-cost.ts";
 import { emptyOffice, parseJurisdictions, parseOfficePatch } from "../shared/office.ts";
 import { FAKE_PORTAL_RECIPE } from "./portal-recipe.ts";
 import { CSV_FRESH_MS, isFresh, reiMoneyStaleReason, reiOwnerLetterStaleReason } from "./source-gate.ts";
@@ -400,14 +401,16 @@ export class Desk {
     return this.evaluateBook("demo", "Demo book — Recheck asks Bud or a CSV for live facts.");
   }
 
-  /** Live recheck. A miss never fabricates rows or a finished morning. */
-  async runMorningCheckLive(): Promise<DeskSnapshot> {
+  /** Live recheck. A miss never fabricates rows or a finished morning.
+   * `usage` collects the worker's Modelvia requests, even when the result is refused below. */
+  async runMorningCheckLive(usage?: RunUsage): Promise<DeskSnapshot> {
     this.assertWritable();
     const startedAtRevision = this.store.data.revision;
     const ids = this.store.data.properties.map((p) => p.id);
     // An empty book has nothing for Bud to read: no model turn, no hold.
     if (ids.length === 0) return this.recordEmptyBook();
     const attempt = await this.hermes(ids);
+    if (usage) addRunUsage(usage, attempt.usage);
     // The provider is the only await inside a Desk check. A PM may keep
     // working (or explicitly choose the sample book) while it is away; never
     // let that older response overwrite a newer durable Desk decision.

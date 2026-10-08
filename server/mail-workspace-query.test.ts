@@ -5,6 +5,7 @@ describe('private mail HTTP query admission', () => {
   it('keeps Unicode search and admits only bounded page fields', () => {
     expect(mailWorkspaceQuery(new URLSearchParams({ group: 'waiting', q: '租金 café', limit: '20', cursor: 'abc_DEF-123' }), 'tasks'))
       .toEqual({ group: 'waiting', q: '租金 café', limit: 20, cursor: 'abc_DEF-123' });
+    expect(mailWorkspaceQuery(new URLSearchParams({ group: 'screened', limit: '100' }), 'tasks')).toEqual({ group: 'screened', limit: 100 });
     expect(mailWorkspaceQuery(new URLSearchParams(), 'tasks')).toEqual({});
     expect(mailWorkspaceQuery(new URLSearchParams('limit=100'), 'scans')).toEqual({ limit: 100 });
   });

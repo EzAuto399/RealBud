@@ -20,6 +20,7 @@ import { DATA_DIR } from "./config.ts";
 import { createLearnedRecipeStore, LEARNED_RECIPES_DAMAGED, mergeLearnedRecipes, type LearnedPackRecipe } from "./learned-recipes.ts";
 import { PORTAL_TAB_MISSING, runPortalRecipes } from "./portal-recipe-runner.ts";
 import { decide, jevReady } from "./jev-client.ts";
+import { listHistory } from "./computer-history.ts";
 import type { BrowserJson } from "./browser-runtime.ts";
 import type { PortalRecipePack } from "./portal-recipe.ts";
 import type { LearnedRecipe } from "../shared/learned-recipes.ts";
@@ -195,11 +196,27 @@ describe("running a started recipe task", () => {
       return vi.mocked(runPortalRecipes).mock.calls[0][0];
     };
     try {
-      expect((await handed(true, "thread-ask-jev")).chooser).toBe(decide);
+      // Jev's decide, counted for the Ask's cost (countJevUsage).
+      expect((await handed(true, "thread-ask-jev")).chooser).toEqual(expect.any(Function));
       expect(await handed(false, "thread-ask-no-jev")).not.toHaveProperty("chooser");
     } finally { vi.mocked(jevReady).mockReturnValue(false); }
     // Every control was found by its own name: Jev was never asked.
     expect(decide).not.toHaveBeenCalled();
+  });
+
+  it("keeps the chooser's decisions as a history row on the Ask's thread", async () => {
+    const f = await fixture();
+    const real = (await vi.importActual<typeof import("./portal-recipe-runner.ts")>("./portal-recipe-runner.ts")).runPortalRecipes;
+    vi.mocked(jevReady).mockReturnValue(true);
+    vi.mocked(decide).mockResolvedValueOnce({ ok: true, id: "dec-fictional-pick", model: "fictional-jev", ms: 2, answers: {} });
+    vi.mocked(runPortalRecipes).mockImplementationOnce(async options => { await options.chooser!({ state: {}, questions: {} }, {}); return real(options); });
+    try {
+      const card = await f.store.propose(await portalRecipeTaskProposal({ threadId: "thread-ask-pick", messageId: "m1", portal: "rei-cloud", target: "bank-reconciliation-read", account: ACCOUNT }, fictional), NOW);
+      const started = await f.store.start(card.id, { threadId: "thread-ask-pick", browserId: "work" }, NOW);
+      await runPortalRecipeTask({ record: started, grant: started.grant, runtime: f.runtime, approve: async () => false, signal: new AbortController().signal, isActive: () => true, load: fictional, ...f.stores });
+    } finally { vi.mocked(jevReady).mockReturnValue(false); }
+    expect(listHistory(1)[0]).toMatchObject({ name: "portal control choice", threadId: "thread-ask-pick",
+      usage: { requestIds: ["dec-fictional-pick"], calls: 1, decisions: [{ id: "dec-fictional-pick", model: "fictional-jev", ms: 2 }] } });
   });
 
   it("reads the default arrears grid and keeps the rows at or above min_days, saying how many REI showed", async () => {

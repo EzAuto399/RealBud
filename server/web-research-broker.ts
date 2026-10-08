@@ -25,7 +25,9 @@ export class WebResearchError extends Error {
 // ── Loopback MCP tool server (shared with the Hermios CRM broker) ──────────
 
 export interface LoopbackToolDefinition { name: string; description: string; inputSchema: Record<string, unknown> }
-export interface LoopbackToolResult { content: Array<{ type: "text"; text: string }>; structuredContent?: Record<string, unknown>; isError?: boolean }
+/** An image block is for a tool that returns one screenshot to Bud's own model (workdesktop's get_window_state); every other tool answers in text. */
+export type LoopbackToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
+export interface LoopbackToolResult { content: LoopbackToolContent[]; structuredContent?: Record<string, unknown>; isError?: boolean }
 export interface LoopbackToolServer {
   descriptor: { type: "http"; name: string; url: string; headers: { name: string; value: string }[] };
   cancelPending(): void;

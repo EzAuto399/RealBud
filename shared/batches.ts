@@ -1,3 +1,4 @@
+import type { RunUsage } from "./contracts.ts";
 export const BATCH_LIMIT = 500;
 export const BATCH_HISTORY_ITEMS = 2000;
 export const BATCH_AUTO_ATTEMPTS = 3;
@@ -19,6 +20,8 @@ export interface BatchItem {
   gaps: string[];
   reviewedAt?: number;
   retryAt?: number;
+  /** Modelvia requests every attempt at this item made (server/run-cost.ts). */
+  usage?: RunUsage;
 }
 export interface WorkBatch {
   id: string;

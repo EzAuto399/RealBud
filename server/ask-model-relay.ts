@@ -68,7 +68,7 @@ import { MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER_ENTRY, managedModelProfil
 import { MANAGED_ACCESS_RELAY_DOWN, managedModelLaunchRefusal, normalizedGatewayUrl, onWorkerModelAccessChange, workerModelAccessSnapshot } from "./hermes-runtime-env.ts";
 import { MANAGED_VISION_CHOICE, managedModelChoice } from "../shared/managed-model-choices.ts";
 import { noteModelKeyAnswer } from "./office-link.ts";
-import { emptyRunUsage, noteModelviaReply, noteModelviaRequest } from "./run-cost.ts";
+import { emptyRunUsage, noteModelviaReply, noteModelviaRequest, recordJevUsage, type JevCall } from "./run-cost.ts";
 import type { RunUsage } from "../shared/contracts.ts";
 
 /** Office copy when an Ask launch finds no running relay in this process.
@@ -178,6 +178,8 @@ export interface AskModelRelayLease {
   revoke(): void;
   /** The Modelvia requests made since the last take; counting starts again. */
   takeUsage(): RunUsage;
+  /** One Jev decision this execution asked (Bud's `decide` tool), counted with its requests. */
+  recordJev(result: JevCall): void;
 }
 
 /** One execution's relay authority. Nothing is granted until a checked
@@ -197,7 +199,7 @@ export function createAskModelRelayLease(options: { signal?: AbortSignal; usage?
   if (options.signal?.aborted) revoke();
   else options.signal?.addEventListener("abort", revoke, { once: true });
   const takeUsage = () => { const taken = scope.usage; scope.usage = emptyRunUsage(); return taken; };
-  return { run: operation => leaseContext.run(scope, operation), revoke, takeUsage };
+  return { run: operation => leaseContext.run(scope, operation), revoke, takeUsage, recordJev: result => recordJevUsage(scope.usage, result) };
 }
 
 /** A one-shot launch holds relay authority only until its operation settles. */

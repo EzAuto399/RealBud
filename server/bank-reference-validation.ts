@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { bankBatchSource, bankDigest, createBankReferenceBatch, parseBankCsv, reviewBankReferences, type BankReferenceDecision } from './bank-reference.ts';
 import type { BankTenantSource, SavedBankBatch } from './bank-reference-store.ts';
 import { bankReviewId, bankReviewVersion } from '../shared/bank-review.ts';
+import { cleanRunUsage } from './run-cost.ts';
 
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const at = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
@@ -13,7 +14,7 @@ const hold = (): never => { throw Object.assign(new Error('This saved bank revie
 export function validateSavedBankBatch(id: string, value: unknown): SavedBankBatch {
   try {
     if (!object(value) || ![1,2].includes(Number(value.version)) || typeof value.version !== 'number' || !at(value.createdAt) || !object(value.batch) ||
-        Object.keys(value).some(key => !['version','createdAt','reviewedAt','batch','result',...(value.version === 2 ? ['decisions','legacyDecisionsUnavailable','amends','supersededBy','jevHints'] : [])].includes(key)) ||
+        Object.keys(value).some(key => !['version','createdAt','reviewedAt','batch','result',...(value.version === 2 ? ['decisions','legacyDecisionsUnavailable','amends','supersededBy','jevHints','jevUsage'] : [])].includes(key)) ||
         (value.reviewedAt !== undefined && (!at(value.reviewedAt) || value.result === undefined))) return hold();
     const saved = value as unknown as SavedBankBatch, batch = saved.batch;
     const source = bankBatchSource(batch);
@@ -39,6 +40,8 @@ export function validateSavedBankBatch(id: string, value: unknown): SavedBankBat
     if (hints !== undefined && (!Array.isArray(hints) || hints.length > fresh.rows.length || new Set(hints.map(hint => object(hint) ? hint.rowId : undefined)).size !== hints.length ||
         hints.some(hint => !object(hint) || Object.keys(hint).sort().join(',') !== 'propertyId,rowId,suggestion' || !fresh.rows.some(row => row.id === hint.rowId) ||
           !fresh.input.rules.some(rule => rule.propertyId === hint.propertyId) || typeof hint.suggestion !== 'string' || !hint.suggestion || hint.suggestion.length > 500 || /[\x00-\x1f\x7f]/.test(hint.suggestion)))) return hold();
+    // The hint pass's Modelvia requests, exactly as recorded.
+    if (saved.jevUsage !== undefined && !isDeepStrictEqual(cleanRunUsage(saved.jevUsage), saved.jevUsage)) return hold();
     if (saved.result !== undefined) {
       const result = saved.result;
       if (!object(result) || Object.keys(result).some(key => !['csv','changes','originalDigest','outputDigest','bytesBase64','byteLength','encoding'].includes(key)) ||

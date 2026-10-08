@@ -15,6 +15,7 @@ export const SUGGESTION_ONLY = "Suggestion only — not an approval; confirm wit
 type JevFailure = "refused" | "budget" | "unavailable" | "timeout" | "http" | "invalid" | "aborted";
 type JevRequest = { state: unknown; questions: Record<string, unknown> };
 type JevResult = { ok: true; answers: Record<string, unknown> } | { ok: false; reason: JevFailure };
+type JevCall = { ok: boolean; id?: string; model?: string; ms?: number; usage?: { input_tokens: number; output_tokens: number } };
 
 /** The host's binding for one turn. */
 export interface BudDecisions {
@@ -94,6 +95,9 @@ export async function startDecideBroker(options: {
   /** The current turn's binding, else undefined. */
   decisions(): BudDecisions | undefined;
   receipt?: (receipt: DecideReceipt) => void;
+  /** Each answered call, for the turn's run cost (`recordJevUsage`): its id,
+   * model, tokens and milliseconds are read there, never the state or answers. */
+  record?: (result: JevCall) => void;
 }): Promise<LoopbackToolServer> {
   const note = (receipt: DecideReceipt) => { try { options.receipt?.(receipt); } catch { /* receipts never change the outcome */ } };
   let spent = { turn: "", calls: 0 };
@@ -122,6 +126,7 @@ export async function startDecideBroker(options: {
       spent.calls += 1;
       const count = Object.keys(questions).length;
       const result = await binding.decide({ state, questions: questions as JevRequest["questions"] }, { signal });
+      try { options.record?.(result); } catch { /* counting never changes the outcome */ }
       if (!result.ok) { note({ tool: "decide", outcome: "failed", questions: count }); return toolError(FAILURE[result.reason]); }
       note({ tool: "decide", outcome: "succeeded", questions: count });
       return { content: [{ type: "text", text: `${JSON.stringify({ answers: result.answers })}\n${SUGGESTION_ONLY}` }] };

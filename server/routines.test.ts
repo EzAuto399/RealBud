@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Recipe } from "../shared/contracts.ts";
 import { removeFixture } from "./testing/private-fixture.ts";
+import { parseLoopsFile } from "./routine-persistence.ts";
 import {
   coverageFromUncoveredHeld,
   LOOP_CATALOG,
@@ -100,6 +101,31 @@ function makeManager(options: Partial<LoopManagerOptions> & { execute?: LoopMana
   }));
   return { manager, calls, runs };
 }
+
+describe("a loop run's own AI usage", () => {
+  it("keeps the usage a loop reports on its run and in durable history, and drops a malformed one", async () => {
+    const file = tempFile();
+    let usage: unknown = { requestIds: ["req-fictional-loop"], calls: 1, inputTokens: 9 };
+    const manager = track(new LoopManager({ file, execute: async () => ({ ok: true, detail: "checked", usage: usage as never }) }));
+    const first = manager.runNow("morning-arrears")!;
+    await manager.tick();
+    expect(manager.getRun(first.id)?.usage).toEqual({ requestIds: ["req-fictional-loop"], calls: 1, inputTokens: 9 });
+    usage = { requestIds: "req-fictional-loop", calls: 1 };
+    const second = manager.runNow("owner-letter")!;
+    await manager.tick();
+    expect(manager.getRun(second.id)).not.toHaveProperty("usage");
+    manager.close();
+    const reloaded = track(new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) }));
+    expect(reloaded.getRun(first.id)?.usage).toEqual({ requestIds: ["req-fictional-loop"], calls: 1, inputTokens: 9 });
+  });
+
+  it("loads a saved run without usage, and drops malformed usage without refusing the run", () => {
+    const run = { id: "run-1", loopId: "morning-arrears", loopName: "Morning money check", scheduledFor: 1, status: "completed", manual: false, createdAt: 1 };
+    const parsed = parseLoopsFile({ version: 3, timezone: "UTC", state: {}, runs: [run, { ...run, id: "run-2", usage: { requestIds: [], calls: -1 } }, { ...run, id: "run-3", usage: { requestIds: ["req-fictional-3"], calls: 1 } }] }, "UTC");
+    expect(parsed.runs.map(saved => saved.usage)).toEqual([undefined, undefined, { requestIds: ["req-fictional-3"], calls: 1 }]);
+    expect(parsed.runs[1]).not.toHaveProperty("usage");
+  });
+});
 
 describe("LoopManager catalog", () => {
   it("declares built mail routines and keeps the unqualified bank routine paused", () => {

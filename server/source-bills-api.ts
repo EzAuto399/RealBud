@@ -4,6 +4,8 @@ import { decide, jevReady } from './jev-client.ts';
 import type { SourceBillOccurrenceResult, SourceBillSeriesResult, SourceBillCurrentSourceResult } from '../shared/source-bills-api.ts';
 import { addBillDays } from '../shared/bill-dates.ts';
 import { billPageQuery, billQuery, billQueryText } from './bill-api-query.ts';
+import { countJevUsage, emptyRunUsage } from './run-cost.ts';
+import { recordUsage } from './computer-history.ts';
 
 const fail = (message: string, status = 400): never => { throw Object.assign(new Error(message), { status }); };
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -51,14 +53,16 @@ export function createSourceBillsApi(host: BillApiHost) {
       rankings.delete(digest); rankings.set(digest, current);
       if (rankings.size > RANKINGS_KEPT) rankings.delete(rankings.keys().next().value!);
       let transient = false;
-      const watched: typeof decide = async (request, options) => {
+      // The ranking is in memory only (no saved review yet), so its cost is a history row.
+      const usage = emptyRunUsage();
+      const watched: typeof decide = countJevUsage(usage, async (request, options) => {
         const result = await jev.decide(request, options).catch(() => ({ ok: false, reason: 'http' }) as const);
         if (!result.ok && !['refused', 'budget', 'invalid'].includes(result.reason)) transient = true;
         return result;
-      };
+      });
       current.pending = rankDuplicateCandidates(check, facts, watched, { signal: AbortSignal.timeout(RANK_BUDGET_MS) }).then(result => {
         if (!transient) current.order = result.candidates.map(({ billId, likely }) => ({ billId, ...(likely ? { likely } : {}) }));
-      }, () => undefined).finally(() => { current.pending = undefined; });
+      }, () => undefined).finally(() => { current.pending = undefined; recordUsage('bill duplicate ranking', usage); });
     }
     await entry.pending;
     return apply(check, entry.order);

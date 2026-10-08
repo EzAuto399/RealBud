@@ -47,6 +47,9 @@ describe("Ask mutation session boundary", () => {
     ["POST", "/api/browser/select"],
     ["POST", "/api/browser/stop"],
     ["POST", "/api/browser/disconnect"],
+    // Lists the open app windows on this computer (desktop tasks).
+    ["GET", "/api/desktop/windows"],
+    ["POST", "/api/browser/tasks/00000000-0000-4000-8000-000000000000/start"],
     ["GET", "/api/bank-source/redbark/key"],
     ["PUT", "/api/bank-source/redbark/key"],
     ["GET", "/api/bank-source/redbark/accounts"],
@@ -63,6 +66,7 @@ describe("Ask mutation session boundary", () => {
     ["POST", "/api/w1/bank-check"],
     // Reads Modelvia receipts with the office key.
     ["GET", "/api/job-runs/run-1/cost"],
+    ["GET", "/api/loop-runs/run-1/cost"],
   ])("requires the session before %s %s can change work or authority", (method, path) => {
     expect(needsSession(path, method)).toBe(true);
     const req = { url: path, method, headers: { host: "127.0.0.1:8799" } } as unknown as IncomingMessage;

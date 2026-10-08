@@ -9,6 +9,7 @@ import { expectedBillsPage } from './expected-bills-page.ts';
 import type { BillDuplicateCheck, BillFacts, BillMailSource } from '../shared/source-bills.ts';
 import type { JevRequest, JevResult } from './jev-client.ts';
 import { removeFixture } from './testing/private-fixture.ts';
+import { listHistory } from './computer-history.ts';
 
 const resources: { dir: string; db: WorkflowDatabase }[] = [];
 afterEach(async () => { for (const { dir, db } of resources.splice(0)) { db.close(); await removeFixture(dir); } });
@@ -74,7 +75,7 @@ describe('private source-bill host API', () => {
       const input = use('ad', 'fed'); ready = true;
       return { f, decide, input, ready: (value: boolean) => { ready = value; }, read: async (body: object = input, rank = true) => (await f.call(route, 'POST', rank ? { ...body, rank } : body))!.body as BillDuplicateCheck };
     }
-    const noul = (values: number[]) => (request: JevRequest): JevResult => ({ ok: true, model: 'fictional-jev', ms: 1,
+    const noul = (values: number[]) => (request: JevRequest): JevResult => ({ ok: true, id: "dec-fictional", model: 'fictional-jev', ms: 1,
       answers: Object.fromEntries(Object.keys(request.questions).map((key, n) => [key, { type: 'noul' as const, noul: values[n]! }])) });
 
     it('ranks once per review digest, keeps the digest and still holds the save', async () => {
@@ -89,6 +90,8 @@ describe('private source-bill host API', () => {
       expect(await f.call('/api/bill-occurrences', 'POST', { ...input, sourceReviewed: true, reviewReason: 'Checked fictional originals.' })).toMatchObject({ status: 409, body: { code: 'bill_duplicate_review_required' } });
       const saved = await f.call('/api/bill-occurrences', 'POST', { ...input, sourceReviewed: true, reviewReason: 'Checked fictional originals.', duplicateReview: { reviewDigest: first.reviewDigest } });
       expect(saved).toMatchObject({ status: 200 });
+      // The ranking keeps no record of its own: its one decision is a history row.
+      expect(listHistory(1)[0]).toMatchObject({ name: 'bill duplicate ranking', usage: { requestIds: ['dec-fictional'], calls: 1, decisions: [{ id: 'dec-fictional', model: 'fictional-jev', ms: 1 }] } });
     });
 
     it.each(['refused', 'budget', 'invalid'] as const)('keeps today\'s order after a hard %s and does not ask again for that review', async reason => {

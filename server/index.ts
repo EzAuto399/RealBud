@@ -11,7 +11,7 @@ import { managedMailBindingRevision, managedConnectorAccess, managedConnectorCon
 import { createOfficeLink, installationWorkerVersion } from "./office-link.ts";
 import { createWorkerModelAccess, workerModelGrant } from "./worker-model-access.ts";
 import { normalizedGatewayUrl, setWorkerModelAccessSnapshot, workerModelAccessSnapshot } from "./hermes-runtime-env.ts";
-import { runCost } from "./run-cost.ts";
+import { addRunUsage, countJevUsage, emptyRunUsage, runCost } from "./run-cost.ts";
 import { startAskModelRelay } from "./ask-model-relay.ts";
 import { recordRemoteEvidence } from './website-remote-evidence.ts';
 import { createRemoteDisclosureReview } from './website-remote-disclosure.ts';
@@ -53,7 +53,7 @@ import { createAgencySetupService } from './agency-setup.ts';
 import { workflowRecipeId } from '../shared/agency-workflow-packs.ts';
 import { createMailIngestionService } from './mail-ingestion.ts';
 import { knownMailSenders, runMorningMailWorkflow, screenMailNoise } from './morning-mail-workflow.ts';
-import { decide as jevDecide, jevReady } from './jev-client.ts';
+import { decide as jevDecide, jevReady, lunaReady } from './jev-client.ts';
 import { runWeeklyBillsWorkflow } from './weekly-bills-workflow.ts';
 import { createMaintenanceReviewApi, createMaintenanceReviewStore, runMaintenanceReview } from './maintenance-review.ts';
 import { createInspectionRulesApi, createInspectionRulesStore } from './inspection-rules.ts';
@@ -64,7 +64,7 @@ import { createAustinPack } from './austin-pack.ts';
 import { bindApprovalPolicy, bindWorkflowSettings } from './workflow-settings-broker.ts';
 import { createSupplierDirectory } from './supplier-directory.ts';
 import { createLoopChatCards } from './loop-chat-cards.ts';
-import type { LoopRun } from '../shared/contracts.ts';
+import type { LoopRun, RunUsage } from '../shared/contracts.ts';
 import { latestRoutineResult } from './routine-results.ts';
 import { createBillFollowUpsApi } from './bill-followups.ts';
 import { recordMorningResult } from './morning-routine-result.ts';
@@ -72,7 +72,7 @@ import { scanGmailReadOnly, readGmailPdfAttachment } from './composio-gmail.ts';
 import { scanManagedMail, readManagedMailAttachment } from './managed-connectors.ts';
 import { ConnectorEvents } from './connector-events.ts';
 import { askControlReply, parseAskControlIntent } from "./ask-control-intent.ts";
-import { askJevRoute, personAskTurn } from "./ask-jev-route.ts";
+import { askJevRoute, personAskTurn, personDesktopTurn } from "./ask-jev-route.ts";
 import { createPairingCode } from "./channel-pairing.ts";
 // RealBud server — the harness host. Clients hold no transports
 // (upstream rule): the React app dispatches typed commands over HTTP and
@@ -91,7 +91,7 @@ import { permissionCardFields, guardPermissionDecision, canUseReviewedPortalRule
 import { applyLawDrift, LAW_WATCH_UNAVAILABLE, lawWatchView, setLawWatchScheduled } from "./law-watch.ts";
 import { addPortalRule, addRule, evaluateRules, isPortalRuleSurface, loadRules, parsePortalRuleKey, removeRule } from "./rules.ts";
 import { createApprovalSettings, governApprovals, governingApprovals } from './approval-settings.ts';
-import { appendHistory, listHistory } from "./computer-history.ts";
+import { appendHistory, listHistory, recordUsage } from "./computer-history.ts";
 import { listWorkerIssues, noteWorkerIssue, resolveWorkerIssues, setWorkerIssueListener } from "./worker-issues.ts";
 import { assertRecipeRevision, deleteRecipe, fenceCapabilitiesFor, getRecipe, listRecipes, normalizeOrigin, patchRecipe, patchRecipeStatus, recipeClockRunnable, recipeHasPortalCapability, saveRecipe } from "./recipes.ts";
 import { distillRecipe } from "./recipe-distill.ts";
@@ -110,7 +110,7 @@ import { createSourceBillsApi } from './source-bills-api.ts';
 import { createBillProposals, readBillProposal } from './bill-proposals.ts';
 import { BillReviewDraftStore } from './bill-review-drafts.ts';
 import { createBillReviewApi } from './bill-review-api.ts';
-import { browserTaskIntent, portalJobIntentReply, reiReadIntent, reiReadOffer } from "./portal-job-intent.ts";
+import { browserTaskIntent, desktopTaskIntent, portalJobIntentReply, preselectedWindow, reiReadIntent, reiReadOffer } from "./portal-job-intent.ts";
 import { handleReiAccount, readReiAccount, readReiAccountRef, REI_ACCOUNT_NEEDED, saveReiAccount } from "./rei-account.ts";
 import {
   askBrowserTaskSystemBlock,
@@ -124,8 +124,13 @@ import {
   browserTaskEndNote,
   browserTaskLimitReached,
   browserTasks,
+  checkDesktopWindow,
+  DESKTOP_TASK_OFFER,
+  desktopWindowChoice,
+  listDesktopWindows,
   type BrowserTaskEnd,
 } from "./browser-grants.ts";
+import { releaseDesktopBrokers } from "./drivers/acp/core.ts";
 import { answerPortalRecipeAsk, portalRecipeApprovalChannel, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, holdPortalRecipeGrant, releasePortalRecipeGrant, runPortalRecipeTask, loadPortalRecipePack, loadShippedPortalRecipePack, PORTAL_RECIPE_PACKS } from "./portal-recipe-task.ts";
 import { reiDeskSyncLine, syncReiReadIntoDesk } from "./rei-desk-sync.ts";
 import { scheduleIntentReply } from "./schedule-intent.ts";
@@ -460,6 +465,7 @@ function lastAssistantText(threadId: string, since: number): string {
 
 async function releaseComputerControl() {
   await releaseBrowserBrokers();
+  await releaseDesktopBrokers();
   await browserRuntime.stop();
 }
 
@@ -747,7 +753,8 @@ function settleAttendedTurn(
   if (askTask) {
     const stopped = input.stopReason === "cancelled";
     const failed = !input.ok || ["interrupted", "error", "timeout", "stall"].includes(input.stopReason ?? "");
-    const signIn = !stopped && !failed ? humanSigninNeeded(input.detail ?? lastAssistantText(threadId, askTaskStartedAt.get(askTask.id) ?? Date.now())) : null;
+    // A desktop task never pauses for sign-in: the person signs in to the app themselves and asks again.
+    const signIn = !stopped && !failed && !askTask.desktop ? humanSigninNeeded(input.detail ?? lastAssistantText(threadId, askTaskStartedAt.get(askTask.id) ?? Date.now())) : null;
     if (signIn) {
       void pauseAskTaskForLogin(threadId, askTask, signIn).catch(async error => {
         await releaseComputerControl().catch(() => {});
@@ -816,6 +823,19 @@ function recordFenceEvidence(threadId: string, item: ReturnType<typeof fenceEvid
   }
 }
 
+/** A desktop broker step (server/desktop-broker.ts) as the task's evidence. A step that ended the work ends the task:
+ * Bud handed the window back, its time or steps ran out, or the window closed or changed. */
+function recordDesktopStep(threadId: string, grantId: string, step: { at: number; tool: string; outcome: string; note: string }) {
+  if (fenceContextFor(threadId)?.grant?.id !== grantId) return;
+  const kind = step.outcome === "asked" ? "asked" : step.outcome === "approved" ? "approval" : step.outcome === "refused" || step.outcome === "denied" ? "denied"
+    : step.outcome !== "allowed" ? "note" : step.tool === "get_window_state" || step.tool === "pick_control" ? "observation" : "action";
+  recordFenceEvidence(threadId, { at: step.at, kind, note: step.note });
+  if (step.outcome !== "ended") return;
+  const status: BrowserTaskEnd = step.tool === "release" ? "finished" : /used all its allowed steps/.test(step.note) ? "budget"
+    : /permission has ended/.test(step.note) ? "expired" : /^Stopped\b/.test(step.note) ? "stopped" : "interrupted";
+  void endAskBrowserTask(threadId, grantId, status, status === "interrupted" ? step.note : undefined).catch(() => {});
+}
+
 // ── Ask one-off browser tasks (server/browser-grants.ts) ─────────────────
 const askTaskTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const askTaskStartedAt = new Map<string, number>();
@@ -847,7 +867,12 @@ function reportBrowserTaskFailure(): void {
  * refuses any further step, and then the end is saved. Time running out, the
  * step limit and a sign-in request also say so in the conversation. */
 async function endAskBrowserTask(threadId: string, grantId: string, status: BrowserTaskEnd, note?: string) {
-  if (fenceContextFor(threadId)?.grant?.id === grantId) takeFenceContext(threadId);
+  const held = fenceContextFor(threadId);
+  if (held?.grant?.id === grantId) {
+    takeFenceContext(threadId);
+    // A desktop task's driver session ends with its grant, not only when its turn ends.
+    if (held.grant.desktop) void releaseDesktopBrokers(held.runId);
+  }
   recipeTaskStops.get(grantId)?.abort(); recipeTaskStops.delete(grantId); releasePortalRecipeGrant(grantId);
   askSignInWaits.get(grantId)?.abort(); askSignInWaits.delete(grantId);
   const timer = askTaskTimers.get(grantId);
@@ -1761,6 +1786,9 @@ async function startSeatTurn(
     memberSession?: string;
     /** Set only by the Ask message routes: the person typed this message. Gates the Jev pre-route. */
     personAsk?: boolean;
+    /** Set only by the session-authenticated desktop task Start route: the person pressed Start on their own card here.
+     * Gates pick_control on that task's turn (personDesktopTurn); never the Ask pre-route or `decide`. */
+    startedByPerson?: boolean;
   },
 ) {
   const bot = store.bot(botId);
@@ -1817,6 +1845,23 @@ async function startSeatTurn(
         broadcast({ kind: "message", threadId, message: reply });
         return;
       }
+      // "… in the Mail app", "… on my computer": a desktop task card (one app window, no site). A named app is
+      // preselected only when exactly one of its windows is open now; Start checks the window again.
+      const desktopIntent = desktopTaskIntent(text);
+      if (desktopIntent) {
+        let userMessage = opts?.userMessage;
+        if (!userMessage) {
+          userMessage = store.appendMessage(threadId, { role: "user", kind: "text", text });
+          broadcast({ kind: "message", threadId, message: userMessage });
+        }
+        const open = desktopIntent.app ? await listDesktopWindows({ timeoutMs: 5_000 }).catch(() => null) : null;
+        const desktop = preselectedWindow(desktopIntent.app, open);
+        let reply = store.appendMessage(threadId, { role: "bot", kind: "text", text: DESKTOP_TASK_OFFER });
+        try { await browserTasks().propose({ threadId, messageId: reply.id, request: desktopIntent.request, sites: [], siteSource: "none", savedJob: null, actions: desktopIntent.actions, ...(desktop ? { desktop } : {}) }); }
+        catch { reply = store.patchMessage(threadId, reply.id, { text: BROWSER_TASK_UNAVAILABLE }) ?? reply; }
+        broadcast({ kind: "message", threadId, message: reply });
+        return;
+      }
       // A one-off site request becomes a task card the person starts once;
       // routine and take-over requests keep the saved-job draft below.
       const taskIntent = browserTaskIntent(text, listRecipes);
@@ -1850,9 +1895,12 @@ async function startSeatTurn(
     // Every regex control missed: one Jev choice may pick a read-only control (server/ask-jev-route.ts).
     // While it waits the bot counts as busy (`routingBots`), so a second message queues instead of racing this one.
     let routed: Awaited<ReturnType<typeof askJevRoute>>;
+    const routeUsage = emptyRunUsage();
     routingBots.add(bot.id);
-    try { routed = await askJevRoute(text, { person: personAskTurn(opts), ready: jevReady, decide: jevDecide }); }
+    try { routed = await askJevRoute(text, { person: personAskTurn(opts), ready: jevReady, decide: countJevUsage(routeUsage, jevDecide) }); }
     finally { routingBots.delete(bot.id); }
+    // The routing call is this Ask's own history row: a control reply starts no turn to carry it.
+    recordUsage("ask routing", routeUsage, { threadId });
     if (store.bot(bot.id)?.busy) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
     const control = parseAskControlIntent(text) ?? (routed && routed !== "connected-status" ? routed : null);
     const scheduleReply = control ? askControlReply(control, loops?.listLoops() ?? []) : scheduleIntentReply(text);
@@ -2207,7 +2255,17 @@ async function startSeatTurn(
       if (browserJob !== seenJob || portalRecipeTaskRunning(browserJob?.grant?.id)) {
         throw Object.assign(new Error("Browser work in this conversation changed while this turn started. Try again."), { status: 409 });
       }
-      if (browserJob) {
+      const desktopGrant = browserJob?.grant?.desktop ? browserJob.grant : undefined;
+      if (browserJob && desktopGrant) {
+        // A desktop task mounts workdesktop instead of the browser (drivers/acp/core.ts). pick_control only for a person's own
+        // attended Ask or their own Start on the card here while Jev is ready; never a relay, a queued follow-up or another host start.
+        if (opts?.signInResumeId) throw new Error("An app task has no sign-in to continue. Start it again from your request.");
+        const member = desk.memberKeyForWorker();
+        integrations.desktop = { runId: browserJob.runId, grant: structuredClone(desktopGrant),
+          active: () => fenceContextFor(threadId)?.grant?.id === desktopGrant.id,
+          step: step => recordDesktopStep(threadId, desktopGrant.id, step),
+          ...(personDesktopTurn(opts) && jevReady() ? { decisions: { sameMember: () => desk.memberKeyForWorker() === member, ready: jevReady, lunaReady, decide: jevDecide } } : {}) };
+      } else if (browserJob) {
         const binding = opts?.signInResumeId ? signInHandoffs().get(opts.signInResumeId).value.binding : undefined;
         if (opts?.signInResumeId && !binding?.browser) throw new Error("Choose and check the connected browser page before resuming this step.");
         // Every browser mount carries the run's explicit grant (a saved job's own, or an Ask task's); without one nothing opens.
@@ -2381,19 +2439,35 @@ void bindRemoteToolCards({
   },
 });
 
+/** The office key and gateway that read Modelvia receipts for a cost line; null without an active grant. Never leaves this process. */
+function runCostAccess(): { baseUrl: string; key: string } | null {
+  const grant = workerModelGrant(), key = workerModelAccessSnapshot()[MANAGED_MODEL_KEY_ENV]?.trim();
+  return grant.state === "active" && key ? { baseUrl: normalizedGatewayUrl(grant.baseUrl), key } : null;
+}
+
 // Desk, Schedule, and a fast double-click all reach the same Recheck door.
 // One worker read must mint one durable Desk revision; overlapping callers
 // wait for that same result instead of duplicating facts, drafts, or receipts.
-const deskCheckFlight = new SingleFlight<ReturnType<Desk["snapshot"]>>();
-function runDeskCheck(origin?: Parameters<Desk["withRoutineOrigin"]>[0]) {
-  return deskCheckFlight.run(async () => {
+// The worker's Modelvia requests go to the caller that started the flight
+// (a joiner gets none), so one check is never costed twice. A check refused
+// after the worker answered (Desk changed, 409) was still billed: its
+// requests become a "desk recheck" row before the refusal goes back.
+const deskCheckFlight = new SingleFlight<{ snapshot: ReturnType<Desk["snapshot"]>; usage: RunUsage }>();
+async function runDeskCheck(origin?: Parameters<Desk["withRoutineOrigin"]>[0]): Promise<{ snapshot: ReturnType<Desk["snapshot"]>; usage?: RunUsage }> {
+  let started = false;
+  const { snapshot, usage } = await deskCheckFlight.run(async () => {
+    started = true;
+    const usage = emptyRunUsage();
     const check = async () => {
-      const snapshot = await desk.runMorningCheckLive();
-      commitDesk(snapshot);
-      return snapshot;
+      try {
+        const snapshot = await desk.runMorningCheckLive(usage);
+        commitDesk(snapshot);
+        return { snapshot, usage };
+      } catch (error) { recordUsage("desk recheck", usage, { ok: false }); throw error; }
     };
     return origin ? desk.withRoutineOrigin(origin, check) : check();
   });
+  return started && usage.calls ? { snapshot, usage } : { snapshot };
 }
 
 function emitLoopAndPulse(payload: unknown) {
@@ -2463,16 +2537,19 @@ loops = new LoopManager({
       timeZone: async () => (await agencySetup.getConfiguration()).settings.timeZone || hostTimezone() }),
     'inbound-triage': async () => websiteRunContext.runLoop(run.requestId, () => mailWorkspace.withWorkflow(async () => {
       const started = Date.now(); let modelCalls = 0, screen: { screened: number; model: string } | null = null;
-      const outcome = await runMorningMailWorkflow(run, {
+      // The screen's Jev calls are counted on the first batch's job run, or on this loop run when no batch runs.
+      const screenUsage = emptyRunUsage();
+      const outcome = await runMorningMailWorkflow(run, { screenUsage,
       collect: async () => { await checkWebsiteExecution(); return mailWorkspace.collect(); },
-      // Jev pre-screen. Senders on the supplier list or Desk owner contacts are never screened; a list that cannot be read screens nothing.
+      // Jev pre-screen (label, don't hide). Known contacts (supplier list, Desk owner contacts, tenant or owner names) and open work are never sent; a list that cannot be read screens nothing.
       screen: async scan => { await checkWebsiteExecution(); if (!jevReady()) return;
         const known = knownMailSenders(await supplierDirectory.read(), desk.snapshot().properties);
-        screen = await mailWorkspace.screenNoise(scan, threads => screenMailNoise(threads, { decide: jevDecide, known })); },
+        screen = await mailWorkspace.screenNoise(scan, threads => screenMailNoise(threads, { decide: countJevUsage(screenUsage, jevDecide), known })); },
       prepareInput: async scan => { await checkWebsiteExecution(); return mailWorkspace.prepareInput(scan); }, applyReview: async result => { await checkWebsiteExecution(); return mailWorkspace.applyReview(result); },
       recipe: async () => { const selected = (await agencySetup.getConfiguration()).settings.workflowPackId; const id = workflowRecipeId(selected,'inbox-triage'); return id ? getRecipe(id) : undefined; },
       admitPack: async id => { const selected = (await agencySetup.getConfiguration()).settings.workflowPackId; if (!selected) throw new Error('Choose the agency workflow pack.'); await customerPacks.packRecipeBinding(selected,id); },
-      execute: (recipe, input) => { modelCalls++; return executeRecipeJob(recipe, input, { readBookSnapshot: () => desk.snapshot(), instructionContext: async id => { const instructions = await customerPacks.instructionContext(id); await checkWebsiteExecution(); return instructions; } }); },
+      execute: (recipe, input, usage) => { modelCalls++;
+        return executeRecipeJob(recipe, input, { readBookSnapshot: () => desk.snapshot(), instructionContext: async id => { const instructions = await customerPacks.instructionContext(id); await checkWebsiteExecution(); return instructions; }, ...(usage ? { usage } : {}) }); },
       });
       return recordMorningResult(workflowDatabase(), run, outcome, await mailWorkspace.reviewSummary(), { elapsedMs: Date.now() - started, modelCalls, screen });
     })),
@@ -2519,7 +2596,7 @@ loops = new LoopManager({
     // Same door as Desk Recheck. Demo miss stays labelled Demo and writes
     // the shared worker clock. The fixture path never silently skips the worker.
     // An empty book skips the worker inside Desk and settles calmly here.
-    'morning-money': async () => morningCheckResult(await runDeskCheck(origin)),
+    'morning-money': async () => { const { snapshot, usage } = await runDeskCheck(origin); return { ...morningCheckResult(snapshot), ...(usage ? { usage } : {}) }; },
     });
   }),
 });
@@ -3748,6 +3825,13 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       batches.control(batchPath[1], body.action, body.expectedRevision, body.propertyId);
       return json(res, 200, { batch: batches.view(batchPath[1]) });
     }
+    // A batch's AI cost: its items' Modelvia requests summed, read like one run's (GET /api/job-runs/:id/cost).
+    const batchCost = path.match(/^\/api\/desk\/batches\/([\w-]+)\/cost$/);
+    if (batchCost && method === "GET") {
+      const usage = batches.get(batchCost[1]!).items.reduce((sum, item) => addRunUsage(sum, item.usage), emptyRunUsage());
+      res.setHeader("cache-control", "no-store");
+      return json(res, 200, { cost: await runCost(usage, runCostAccess()) });
+    }
 
     // ── taught jobs + durable prepare receipts ───────────────────────
     if (path === "/api/human-handoffs" || path.startsWith("/api/human-handoffs/")) {
@@ -3869,13 +3953,12 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     }
     // One run's AI cost, read from Modelvia receipts with the office key on
     // demand (server/run-cost.ts). The key never leaves this process.
-    const jobRunCost = path.match(/^\/api\/job-runs\/([\w-]+)\/cost$/);
-    if (jobRunCost && method === "GET") {
-      const run = jobRuns.get(jobRunCost[1]!);
-      if (!run) return json(res, 404, { error: "That job run is not on this computer." });
-      const grant = workerModelGrant(), key = workerModelAccessSnapshot()[MANAGED_MODEL_KEY_ENV]?.trim();
+    const runCostMatch = path.match(/^\/api\/(job|loop)-runs\/([\w-]+)\/cost$/);
+    if (runCostMatch && method === "GET") {
+      const run = runCostMatch[1] === "job" ? jobRuns.get(runCostMatch[2]!) : loops!.getRun(runCostMatch[2]!);
+      if (!run) return json(res, 404, { error: runCostMatch[1] === "job" ? "That job run is not on this computer." : "That routine run is not on this computer." });
       res.setHeader("cache-control", "no-store");
-      return json(res, 200, { cost: await runCost(run.usage, grant.state === "active" && key ? { baseUrl: normalizedGatewayUrl(grant.baseUrl), key } : null) });
+      return json(res, 200, { cost: await runCost(run.usage, runCostAccess()) });
     }
     if (path === "/api/job-runs" && method === "GET") {
       const jobId = url.searchParams.get("jobId")?.trim() || undefined;
@@ -4195,6 +4278,11 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         return json(res, status, { error: error instanceof Error ? error.message : String(error) });
       }
     }
+    // The open app windows a desktop task may use (server/browser-grants.ts). 503: not available on this computer.
+    if (path === "/api/desktop/windows" && method === "GET") {
+      const windows = await listDesktopWindows().catch(() => null);
+      return windows ? json(res, 200, { windows }) : json(res, 503, { error: "Apps on this computer aren't available here." });
+    }
     // ── Ask one-off browser tasks: the card, Start, Not now, Save as a job, Stop ──
     if (path === "/api/browser/tasks" && method === "GET") {
       const threadId = url.searchParams.get("threadId") ?? "";
@@ -4262,6 +4350,26 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         // Start: the thread is free, the browser is connected, and the grant is saved before any browser work.
         if (fenceContextFor(threadId)) return json(res, 409, { error: "Other browser work is running in this conversation. Stop it first." });
         if (signInHandoffs().isHolding()) return json(res, 409, { error: "Finish the saved sign-in handover before starting more browser work." });
+        // An app window (chosen on the card, or preselected from the request): the helper lists and reads it again now,
+        // and the grant is saved with that window and no sites. Started from this computer only: the card's Start.
+        if (body.window !== undefined || (record.desktop && body.site === undefined)) {
+          if (body.site !== undefined) return json(res, 400, { error: "Choose a website or an app window, not both." });
+          const target = await checkDesktopWindow(body.window !== undefined ? desktopWindowChoice(body.window) : record.desktop!);
+          const started = await browserTasks().start(taskId, { threadId, desktop: target });
+          const grant = started.grant;
+          setFenceContext(threadId, { botId: bud.id, runId: grant.runId, allowedOrigins: [], capabilities: browserTaskCapabilities(grant.actions), grant });
+          askTaskStartedAt.set(grant.id, started.startedAt ?? Date.now());
+          askTaskDone.set(grant.id, []);
+          armAskTaskTimer(threadId, grant);
+          try {
+            // The person pressed Start on their own card in this app: an attended, person-started task turn (pick_control).
+            await startTurn(bud.id, `Start this task: ${grant.request.text}`, { threadId, systemExtra: askBrowserTaskSystemBlock(grant), computer: true, startedByPerson: true });
+          } catch (error) {
+            await endAskBrowserTask(threadId, grant.id, "interrupted", `This task could not start. Nothing was done in ${target.appName}.`).catch(() => {});
+            throw error;
+          }
+          return json(res, 202, { task: browserTaskCardView(started) });
+        }
         const runtime = await askRuntime();
         let browser = await runtime.status();
         if (browser.state !== "ready" || !browser.selectedBrowserId) { try { browser = await runtime.connect(); } catch { /* answered below */ } }
@@ -4393,7 +4501,9 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       return json(res, 200, desk.snapshot());
     }
     if (path === "/api/desk/check" && method === "POST") {
-      const snapshot = await runDeskCheck();
+      const { snapshot, usage } = await runDeskCheck();
+      // A Recheck from Desk is no loop run: its cost is a history row.
+      if (usage) recordUsage("desk recheck", usage);
       return json(res, 200, snapshot);
     }
     if (path === "/api/desk/practice" && method === "POST") {
@@ -4792,6 +4902,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         // Revoke tool access before releasing the browser, including an in-flight approval.
         stopBrowserApprovals();
         await releaseBrowserBrokers();
+        await releaseDesktopBrokers();
         return json(res, 200, await browserRuntime.stop(path.endsWith("disconnect")));
       }
     }

@@ -34,6 +34,19 @@ const object = (v: unknown): v is Record<string, any> => !!v && typeof v === 'ob
 interface MailCoverageAccount { horizonAt: number | null; uncovered: MailInterval[]; missed: MailInterval[]; carryAfter: string | null }
 interface MailCoverageState { version: 1; purpose: 'mail-coverage'; workspaceId: string; accounts: Record<string, MailCoverageAccount> }
 const COVERAGE_FILE_BYTES = 400_000;
+/** Reason on a conversation nobody (person or Bud) has decided yet. Only those,
+ * and earlier noise, are ever offered to the Jev screen: a Bud hold, a follow-up
+ * or any other decision is open work and is never screened. */
+const NEW_CONVERSATION_REASON = 'New conversation collected; its meaning has not been reviewed.';
+const NEXT_REVIEW_ACTION = 'Review the source or ask Bud to prepare the morning list.';
+/** Shadow log for tuning the screen thresholds (docs/QA-LIVE-DEBUG.md): thread
+ * hash, model, the two probabilities and the outcome, plus "Not noise" labels.
+ * Never subject, sender or text. Last SCREEN_LOG_ROWS rows. */
+export const SCREEN_LOG_FILE = 'jev-screen-log.json', SCREEN_LOG_ROWS = 2_000;
+const SCREEN_LOG_BYTES = 600_000;
+export type ScreenLogRow = { threadHash: string; at: number } & ({ model: string; bulkP: number; actionP: number; screened: boolean } | { notNoise: true });
+const validScreenLog = (v: unknown): v is { version: 1; purpose: 'jev-screen-log'; rows: ScreenLogRow[] } =>
+    object(v) && v.version === 1 && v.purpose === 'jev-screen-log' && Array.isArray(v.rows) && v.rows.length <= SCREEN_LOG_ROWS;
 const emptyCoverageAccount = (): MailCoverageAccount => ({ horizonAt: null, uncovered: [], missed: [], carryAfter: null });
 function validCoverageState(value: unknown, workspaceId: string): value is MailCoverageState {
     return object(value) && Object.keys(value).sort().join(',') === 'accounts,purpose,version,workspaceId' && value.version === 1 &&
@@ -282,7 +295,7 @@ export function createMailIngestionService(options: Options) {
                             continue;
                     }
                     const latest = t.messages.at(-1)!;
-                    const next: MailWorkItem = previous ? { ...previous, revision: previous.revision + 1, sourceMessageIds: t.messages.map(m => m.id), sourceDigest: digest, sourceReceiptId: complete.id, subject: latest.subject, newEvidence: previous.newEvidence || substantive, status: substantive ? 'open' : previous.status, snoozedUntil: substantive ? null : previous.snoozedUntil, updatedAt: now(), lastMessageAt: latest.at } : { id, revision: 1, accountId: authority.accountId, threadId: t.id, sourceMessageIds: t.messages.map(m => m.id), sourceDigest: digest, sourceReceiptId: complete.id, subject: latest.subject, disposition: 'hold', priority: 'normal', owner: 'unassigned', reason: 'New conversation collected; its meaning has not been reviewed.', nextAction: 'Review the source or ask Bud to prepare the morning list.', missingFacts: [], status: 'open', snoozedUntil: null, note: '', reviewed: false, newEvidence: true, firstSeenAt: now(), updatedAt: now(), lastMessageAt: latest.at };
+                    const next: MailWorkItem = previous ? { ...previous, revision: previous.revision + 1, sourceMessageIds: t.messages.map(m => m.id), sourceDigest: digest, sourceReceiptId: complete.id, subject: latest.subject, newEvidence: previous.newEvidence || substantive, status: substantive ? 'open' : previous.status, snoozedUntil: substantive ? null : previous.snoozedUntil, updatedAt: now(), lastMessageAt: latest.at } : { id, revision: 1, accountId: authority.accountId, threadId: t.id, sourceMessageIds: t.messages.map(m => m.id), sourceDigest: digest, sourceReceiptId: complete.id, subject: latest.subject, disposition: 'hold', priority: 'normal', owner: 'unassigned', reason: NEW_CONVERSATION_REASON, nextAction: NEXT_REVIEW_ACTION, missingFacts: [], status: 'open', snoozedUntil: null, note: '', reviewed: false, newEvidence: true, firstSeenAt: now(), updatedAt: now(), lastMessageAt: latest.at };
                     storage.saveItem(next);
                 }
                 controller.signal.throwIfAborted();
@@ -577,6 +590,22 @@ export function createMailIngestionService(options: Options) {
             return { ...prepared.receipt, batchThreadCount: prepared.binding.input.threads.length };
         }));
     }
+    const threadHash = (threadId: string) => createHash('sha256').update(threadId).digest('hex');
+    let screenLog: Promise<void> = Promise.resolve();
+    /** Best effort and serial: a log that cannot be read or saved never blocks
+     * mail work, and a damaged log is preserved (never replaced). */
+    function appendScreenLog(rows: ScreenLogRow[]): Promise<void> {
+        if (!rows.length)
+            return screenLog;
+        const path = join(options.directory, SCREEN_LOG_FILE);
+        screenLog = screenLog.then(async () => {
+            const saved = await readPrivateJson(path, SCREEN_LOG_BYTES) ?? { version: 1, purpose: 'jev-screen-log', rows: [] };
+            if (!validScreenLog(saved))
+                return;
+            await writePrivateJson(path, { ...saved, rows: [...saved.rows, ...rows].slice(-SCREEN_LOG_ROWS) }, { maxBytes: SCREEN_LOG_BYTES, validate: value => { if (!validScreenLog(value)) throw new Error('damaged'); } });
+        }).catch(() => undefined);
+        return screenLog;
+    }
     /** Jev pre-screen before the review batches. Only conversations nobody has
      * given a view of (unreviewed, new evidence, still held or already noise)
      * are offered. `classify` answers which saved threads are noise; each one
@@ -584,7 +613,7 @@ export function createMailIngestionService(options: Options) {
      * later Bud review replaces it. A conversation that changed meanwhile keeps
      * its own state. */
     async function screenNoise(expected: Pick<MailScanReceipt, 'id' | 'accountId' | 'bindingRevision'>,
-        classify: (threads: MailThread[]) => Promise<{ noise: string[]; model: string } | null>): Promise<{ screened: number; model: string } | null> {
+        classify: (threads: MailThread[]) => Promise<{ noise: string[]; model: string; considered?: { id: string; bulk: number; action: number }[] } | null>): Promise<{ screened: number; model: string } | null> {
         assertWorkflowAccess();
         const authority = await options.authorize('morning-priorities');
         const offered = await locked(() => storage.run(() => {
@@ -602,7 +631,8 @@ export function createMailIngestionService(options: Options) {
             const rows: { item: MailWorkItem; thread: MailThread }[] = [];
             for (const row of storage.records('mail-item')) {
                 const item = row.value as MailWorkItem;
-                if (item.accountId !== authority.accountId || item.reviewed || item.status !== 'open' || !mailNeedsPreparation(item) || !['hold', 'noise'].includes(item.disposition))
+                if (item.accountId !== authority.accountId || item.reviewed || item.notNoise || item.followUpReviewedKey !== undefined || item.status !== 'open' || !mailNeedsPreparation(item) ||
+                    !(item.disposition === 'noise' || item.disposition === 'hold' && item.reason === NEW_CONVERSATION_REASON))
                     continue;
                 const thread = source.data.threads.find(t => t.id === item.threadId);
                 if (thread && hash(thread) === item.sourceDigest)
@@ -618,22 +648,25 @@ export function createMailIngestionService(options: Options) {
         const current = await options.authorize('morning-priorities');
         if (current.accountId !== authority.accountId || current.bindingRevision !== authority.bindingRevision || current.settingsRevision !== authority.settingsRevision)
             fail('Mail setup changed during preparation. Prepare the current source again.');
-        const noise = new Set(answer.noise);
-        return locked(() => storage.run(() => {
-            let screened = 0;
+        const noise = new Set(answer.noise), saved = new Set<string>();
+        const result = await locked(() => storage.run(() => {
             for (const { item: asked } of offered) {
                 const item = storage.item(asked.id);
                 if (!noise.has(asked.threadId) || !item || item.revision !== asked.revision)
                     continue;
-                storage.saveItem({ ...item, disposition: 'noise', priority: 'low', reason: 'Screened as noise',
-                    nextAction: 'No action needed. If a person should handle it, change what this conversation needs.',
+                storage.saveItem({ ...item, disposition: 'noise', priority: 'low', reason: 'Screened: likely a newsletter or automated mail.',
+                    nextAction: 'Check it. If a person should handle it, choose Not noise and Bud will prepare it.',
                     screenedBy: 'jev', newEvidence: false, revision: item.revision + 1, updatedAt: now() });
-                screened++;
+                saved.add(asked.threadId);
             }
-            if (screened)
+            if (saved.size)
                 storage.saveRegister(storage.register());
-            return { screened, model: answer.model };
+            return { screened: saved.size, model: answer.model };
         }));
+        const asked = new Set(offered.map(row => row.thread.id));
+        await appendScreenLog((answer.considered ?? []).filter(row => asked.has(row.id)).map(row => ({ threadHash: threadHash(row.id), at: now(),
+            model: answer.model, bulkP: row.bulk, actionP: row.action, screened: saved.has(row.id) })));
+        return result;
     }
     async function applyReview(run: JobRun) {
         assertWorkflowAccess();
@@ -707,6 +740,8 @@ export function createMailIngestionService(options: Options) {
         }));
     }
     async function update(id: string, body: unknown) {
+        if (object(body) && Object.hasOwn(body, 'notNoise'))
+            return notNoise(id, body);
         if (!object(body) || Object.keys(body).some(k => !['expectedRevision', 'status', 'snoozedUntil', 'priority', 'owner', 'note', 'disposition', 'nextAction'].includes(k)))
             fail('Choose the saved task revision and the fields to update.', 400);
         return locked(() => {
@@ -731,6 +766,31 @@ export function createMailIngestionService(options: Options) {
             });
         });
     }
+    /** "Not noise" on a Jev-screened conversation: it goes back, unreviewed, to
+     * Bud's next review batch and is never screened again. Recorded in the
+     * shadow log by thread hash only, as the label for tuning. */
+    async function notNoise(id: string, body: Record<string, unknown>) {
+        if (Object.keys(body).sort().join(',') !== 'expectedRevision,notNoise' || body.notNoise !== true)
+            fail('Choose the saved task revision to mark this conversation not noise.', 400);
+        const result = await locked(() => storage.run(() => {
+            recover();
+            const item = storage.item(id);
+            if (!item)
+                fail('That mail task is unavailable.', 404);
+            if (body.expectedRevision !== item.revision || item.screenedBy !== 'jev' || item.status !== 'open')
+                fail('This conversation changed. Refresh it before saving.');
+            const { screenedBy: _screen, ...rest } = item;
+            const next: MailWorkItem = { ...rest, disposition: 'hold', priority: 'normal', reason: 'A person marked this not noise. Bud will prepare it in the next review.',
+                nextAction: NEXT_REVIEW_ACTION, reviewed: false, newEvidence: true, notNoise: true, revision: item.revision + 1, updatedAt: now() };
+            if (!validItem(next))
+                fail('This conversation could not be saved. Refresh it before retrying.', 400);
+            storage.saveItem(next);
+            storage.saveRegister(storage.register());
+            return { workspace: storage.metadata(), item: next };
+        }));
+        await appendScreenLog([{ threadHash: threadHash(result.item.threadId), notNoise: true, at: now() }]);
+        return result;
+    }
     const compare = (a: MailWorkItem, b: MailWorkItem) => ({ high: 0, normal: 1, low: 2 }[a.priority] - { high: 0, normal: 1, low: 2 }[b.priority]) || b.lastMessageAt - a.lastMessageAt || a.id.localeCompare(b.id);
     function cursor(value: string | undefined) { if (value === undefined)
         return undefined; try {
@@ -748,7 +808,7 @@ export function createMailIngestionService(options: Options) {
         fail('Choose between 1 and 100 mail records.', 400); return n ?? 20; }
     async function page(query: MailTaskPageQuery = {}): Promise<MailTaskPage> {
         const size = limit(query.limit), group = query.group ?? 'open', q = typeof query.q === 'string' ? query.q.trim() : query.q === undefined ? '' : fail('Choose a valid mail search.', 400);
-        if (!['all', 'open', 'waiting', 'reference', 'snoozed', 'done'].includes(group) || typeof q !== 'string' || q.length > 200 || /[\u0000-\u001f\u007f]/.test(q) || Object.keys(query).some(k => !['group', 'q', 'limit', 'cursor'].includes(k)))
+        if (!['all', 'open', 'waiting', 'reference', 'snoozed', 'done', 'screened'].includes(group) || typeof q !== 'string' || q.length > 200 || /[\u0000-\u001f\u007f]/.test(q) || Object.keys(query).some(k => !['group', 'q', 'limit', 'cursor'].includes(k)))
             fail('Choose a valid mail view and search.', 400);
         const c = cursor(query.cursor);
         return locked(() => storage.run(() => {
@@ -761,7 +821,8 @@ export function createMailIngestionService(options: Options) {
             const needle = q.toLocaleLowerCase();
             for (const row of storage.records('mail-item')) {
                 const i = row.value as MailWorkItem;
-                if (group !== 'all' && mailWorkGroup(i) !== group || needle && ![i.subject, i.owner, i.note, i.reason, i.nextAction, i.threadId, ...i.missingFacts].join(' ').toLocaleLowerCase().includes(needle))
+                if (group === 'screened' ? i.status !== 'open' || i.screenedBy !== 'jev' : group !== 'all' && mailWorkGroup(i) !== group) continue;
+                if (needle && ![i.subject, i.owner, i.note, i.reason, i.nextAction, i.threadId, ...i.missingFacts].join(' ').toLocaleLowerCase().includes(needle))
                     continue;
                 total++;
                 if (c && compare(i, c.after as MailWorkItem) <= 0)

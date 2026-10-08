@@ -21,7 +21,6 @@ import { removeFixture } from "../../testing/private-fixture.ts";
 import { FakeAcpDriver } from "../../testing/fake-acp-driver.ts";
 import { hardenHermesChildEnv, HermesAgentDriver } from "./hermes.ts";
 import { CUA_EXTENSION_REFUSED, cuaNeverTool, ENGINE_FAILURE_REPLY, HERMES_BROWSER_REFUSED, hermesNativeBrowserTool, plainEngineFailure, WORKER_APPROVAL_CARD_MS } from "./core.ts";
-import { __setCuaConnectionForTests } from "../../local-computer.ts";
 import { HERMES_PIN } from "../../hermes-pin.ts";
 import { seedVault } from "../../vault.ts";
 import { revokeConnectedAppsBrokers } from "../../connected-apps-broker.ts";
@@ -295,7 +294,7 @@ process.stdin.on("data", chunk => {
   it("mounts a private browser capability for one job and revokes it on interruption", async () => {
     const dump = join(scratch, "browser-job.json"); process.env.FAKE_ACP_DUMP = dump;
     await create(HermesAgentDriver, "hang");
-    await instance.adapter.sendTurn({ threadId: "t-browser-job", text: "Read the saved job site", computer: true,
+    await instance.adapter.sendTurn({ threadId: "t-browser-job", text: "Read the saved job site",
       integrations: { browser: { runId: "run-browser", allowedOrigins: ["portal.example"], capabilities: ["portal-read"],
         grant: legacyBrowserGrant({ runId: "run-browser", allowedOrigins: ["portal.example"], capabilities: ["portal-read"] }) },
         localComputer: { command: "must-not-mount", args: [], env: {} } } });
@@ -365,7 +364,24 @@ process.stdin.on("data", chunk => {
       expect(bridge, channel).not.toContain("personAsk");
     }
     // The Ask pre-route uses the same gate.
-    expect(source).toContain("routed = await askJevRoute(text, { person: personAskTurn(opts), ready: jevReady, decide: jevDecide });");
+    expect(source).toContain("routed = await askJevRoute(text, { person: personAskTurn(opts), ready: jevReady, decide: countJevUsage(routeUsage, jevDecide) });");
+  });
+
+  it("lists pick_control on a desktop task's Start only when the person pressed Start on their own card here", () => {
+    // Source contract (a live Jev grant is needed to list it at runtime). personDesktopTurn is tested in server/ask-jev-route.test.ts.
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "index.ts"), "utf8");
+    expect(source).toContain("...(personDesktopTurn(opts) && jevReady() ? { decisions: { sameMember: () => desk.memberKeyForWorker() === member, ready: jevReady, lunaReady, decide: jevDecide } } : {}) };");
+    expect(source.match(/personDesktopTurn\(/g)).toHaveLength(1);
+    // Exactly one caller sets startedByPerson: the session-authenticated card Start route's app-window branch.
+    const lines = source.split("\n").filter(row => row.includes("startedByPerson: true"));
+    expect(lines).toEqual(["            await startTurn(bud.id, `Start this task: ${grant.request.text}`, { threadId, systemExtra: askBrowserTaskSystemBlock(grant), computer: true, startedByPerson: true });"]);
+    const route = source.slice(source.indexOf("const browserTaskRoute = path.match("), source.indexOf("const recipePrepare = path.match("));
+    const desktopStart = route.slice(route.indexOf("const target = await checkDesktopWindow("), route.indexOf("const runtime = await askRuntime();"));
+    expect(desktopStart).toContain("startedByPerson: true");
+    // Loops, recovery, sign-in continuations, saved jobs and the queued drain never pass it, nor do the phone bridges.
+    for (const channel of ["telegram", "discord", "slack"]) {
+      expect(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "channels", `${channel}.ts`), "utf8"), channel).not.toContain("startedByPerson");
+    }
   });
 
   // Pinned Hermes gives a delegated child the parent's `mcp-browser` toolset
@@ -387,7 +403,7 @@ process.stdin.on("data", chunk => {
     ];
     try {
       await create(HermesAgentDriver, "hang");
-      await instance.adapter.sendTurn({ threadId: "t-browser-child", text: "Delegate reading the fictional levies", computer: true,
+      await instance.adapter.sendTurn({ threadId: "t-browser-child", text: "Delegate reading the fictional levies",
         integrations: { browser: { runId: "run-browser-child", allowedOrigins: ["portal.example"], capabilities: ["portal-read"],
           grant: legacyBrowserGrant({ runId: "run-browser-child", allowedOrigins: ["portal.example"], capabilities: ["portal-read"] }) } } });
       await vi.waitFor(() => expect(JSON.parse(readFileSync(dump, "utf8")).promptCount).toBe(1));
@@ -893,29 +909,26 @@ process.stdin.on("data", chunk => {
       expect(cuaNeverTool(title), title).toMatch(/^(install_extension|parse_visual_regions)$/);
     }
     expect(cuaNeverTool(undefined, "install_extension")).toBe("install_extension");
-    for (const [title, tool] of [["mcp__computer__install_ffmpeg", "install_ffmpeg"], ["mcp_computer_set_config: {}", "set_config"], ["computer.check_for_update", "check_for_update"], ["Tool: computer/install_extension", "install_extension"], ["Tool: mcp__computer__replay_trajectory", "replay_trajectory"], ["  computer.start_recording", "start_recording"], ["install_extension.call", "install_extension"], [`mcp__${"s".repeat(300)}__set_config(x)`, "set_config"], ["re_install_extension", "install_extension"]]) {
+    for (const [title, tool] of [["mcp__computer__install_ffmpeg", "install_ffmpeg"], ["mcp_computer_set_config: {}", "set_config"], ["computer.check_for_update", "check_for_update"], ["Tool: computer/install_extension", "install_extension"], ["Tool: mcp__computer__replay_trajectory", "replay_trajectory"], ["  computer.start_recording", "start_recording"], ["install_extension.call", "install_extension"], ["mcp__computer__set_config(x)", "set_config"]]) {
       expect(cuaNeverTool(title), title).toBe(tool);
     }
-    for (const other of ["reinstall_extension", "install_extensions", "mcp__computer__get_window_state", "echo install_extension", "Tool: computer/get_window_state", "get_config", "check_for_updates", undefined]) {
+    for (const other of ["reinstall_extension", "install_extensions", "mcp__computer__get_window_state", "echo install_extension", "Tool: computer/get_window_state", "mcp__office_connectors__zoom__start_recording", "mcp_office_zoom_start_recording", "mcp__other__install_extension", "get_config", "check_for_updates", undefined]) {
       expect(cuaNeverTool(other), String(other)).toBeNull();
     }
   });
 
   it.each([
-    { engine: "fake ACP, cards", driver: FakeAcpDriver, fullAuto: false, computer: false, title: "mcp__computer__parse_visual_regions" },
-    { engine: "fake ACP, cards, desktop mounted", driver: FakeAcpDriver, fullAuto: false, computer: true, title: "mcp__computer__install_extension" },
-    { engine: "Hermes, fullAuto, desktop mounted", driver: HermesAgentDriver, fullAuto: true, computer: true, title: "mcp_computer_install_extension: perception" },
-    { engine: "Hermes, fullAuto", driver: HermesAgentDriver, fullAuto: true, computer: false, title: "mcp_computer_parse_visual_regions" },
-  ])("refuses Cua's extension tools before any card or auto-approval ($engine)", async ({ driver, fullAuto, computer, title }) => {
+    { engine: "fake ACP, cards", driver: FakeAcpDriver, fullAuto: false, title: "mcp__computer__parse_visual_regions" },
+    { engine: "fake ACP, cards, install", driver: FakeAcpDriver, fullAuto: false, title: "mcp__computer__install_extension" },
+    { engine: "Hermes, fullAuto, install", driver: HermesAgentDriver, fullAuto: true, title: "mcp_computer_install_extension: perception" },
+    { engine: "Hermes, fullAuto", driver: HermesAgentDriver, fullAuto: true, title: "mcp_computer_parse_visual_regions" },
+  ])("refuses Cua's extension tools before any card or auto-approval ($engine)", async ({ driver, fullAuto, title }) => {
     const dump = join(scratch, "cua-extension-permission.json"), script = join(scratch, "cua-extension-callback.json");
     writeFileSync(script, JSON.stringify({ tool: "other", rawInput: { name: "perception", confirm: true }, title }));
     process.env.FAKE_ACP_SCRIPT = script; process.env.FAKE_ACP_DUMP = dump;
-    __setCuaConnectionForTests(computer ? { command: "/fictional/cua-driver", args: ["mcp"], env: {} } : null);
-    try {
-      await create(driver as typeof FakeAcpDriver, "permission", fullAuto);
-      await instance.adapter.sendTurn({ threadId: "cua-extension", text: "go", computer });
-      await recorder.until(event => event.type === "turn.completed");
-    } finally { __setCuaConnectionForTests(undefined); }
+    await create(driver as typeof FakeAcpDriver, "permission", fullAuto);
+    await instance.adapter.sendTurn({ threadId: "cua-extension", text: "go" });
+    await recorder.until(event => event.type === "turn.completed");
     expect(JSON.parse(readFileSync(dump, "utf8")).selectedPermissionOption).toBeNull();
     expect(recorder.events.some(event => event.type === "request.opened")).toBe(false);
     expect(recorder.events).toContainEqual(expect.objectContaining({ type: "runtime.error", message: CUA_EXTENSION_REFUSED }));
@@ -1018,9 +1031,10 @@ process.stdin.on("data", chunk => {
     expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(true);
   });
 
-  it("does not mount a computer MCP server when computer is requested but no descriptor exists", async () => {
-    const userData = join(scratch, "no-cua");
+  it("never mounts the raw Cua computer server, even with a CUA descriptor (desktop tasks use workdesktop)", async () => {
+    const userData = join(scratch, "cua");
     mkdirSync(userData, { recursive: true });
+    writeFileSync(join(userData, "cua-connection.json"), JSON.stringify({ mode: "embedded", mcpCommand: "/tmp/cua-driver", mcpArgs: ["mcp", "--embedded"], mcpEnv: {} }));
     const dump = join(scratch, "dump.json");
     const prevUserData = process.env.OMB_USER_DATA;
     const prevHome = process.env.HOME;
@@ -1029,7 +1043,7 @@ process.stdin.on("data", chunk => {
     process.env.FAKE_ACP_DUMP = dump;
     try {
       await create();
-      await instance.adapter.sendTurn({ threadId: "t-no-cua", text: "go", computer: true });
+      await instance.adapter.sendTurn({ threadId: "t-no-cua", text: "go" });
       await recorder.until((e) => e.type === "turn.completed");
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       expect(seen.mcpServers ?? []).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: "computer" })]));
@@ -1040,59 +1054,6 @@ process.stdin.on("data", chunk => {
       else process.env.HOME = prevHome;
     }
   });
-
-  it.skipIf(process.platform === "linux")(
-    "mounts the computer MCP server from a CUA descriptor when computer is requested",
-    async () => {
-      const userData = join(scratch, "cua");
-      mkdirSync(userData, { recursive: true });
-      writeFileSync(
-        join(userData, "cua-connection.json"),
-        JSON.stringify({
-          mode: "embedded",
-          mcpCommand: "/tmp/cua-driver",
-          mcpArgs: ["mcp", "--embedded"],
-          mcpEnv: { CUA_DRIVER_EMBEDDED: "1", CUA_SOCKET: "/tmp/cua.sock" },
-        }),
-      );
-      const dump = join(scratch, "dump.json");
-      const prevUserData = process.env.OMB_USER_DATA;
-      const prevHome = process.env.HOME;
-      process.env.OMB_USER_DATA = userData;
-      process.env.HOME = scratch;
-      process.env.FAKE_ACP_DUMP = dump;
-      try {
-        await create();
-        assertCapability.mockImplementation((capability: string) => {
-          if (capability === "computer-use") throw new ServiceEntitlementError("Computer use is not included.", 403);
-        });
-        await expect(instance.adapter.sendTurn({ threadId: "t-cua-denied", text: "go", computer: true })).rejects.toThrow("Computer use is not included.");
-        expect(instance.adapter.hasSession("t-cua-denied")).toBe(false);
-        assertCapability.mockReset();
-        await instance.adapter.sendTurn({ threadId: "t-cua", text: "go", computer: true });
-        await recorder.until((e) => e.type === "turn.completed");
-        const seen = JSON.parse(readFileSync(dump, "utf8"));
-        expect(seen.mcpServers).toEqual(
-          expect.arrayContaining([
-            {
-              name: "computer",
-              command: "/tmp/cua-driver",
-              args: ["mcp", "--embedded"],
-              env: [
-                { name: "CUA_DRIVER_EMBEDDED", value: "1" },
-                { name: "CUA_SOCKET", value: "/tmp/cua.sock" },
-              ],
-            },
-          ]),
-        );
-      } finally {
-        if (prevUserData === undefined) delete process.env.OMB_USER_DATA;
-        else process.env.OMB_USER_DATA = prevUserData;
-        if (prevHome === undefined) delete process.env.HOME;
-        else process.env.HOME = prevHome;
-      }
-    },
-  );
 });
 
 describe("ACP snapshot", () => {
