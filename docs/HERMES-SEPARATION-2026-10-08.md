@@ -22,7 +22,7 @@ Branch `claude/hermes-separation`, intended for **0.1.43**, after the Auston sho
 | Launch | A turn refuses while memory RealBud hasn't approved would reach the worker, or while the profile folder is a link. |
 
 ## Evidence (source + local tests; no packaged or installed run yet)
-- Full `vitest run` on this branch before the final review round: 639 files / 10,250 tests passed (322 environment-gated skips are not passes). Final run: see `outputs/hermes-separation-2026-10-08/vitest-full-5.log`.
+- Full `vitest run` on this branch before the final review round: 639 files / 10,250 tests passed (322 environment-gated skips are not passes). Final run at `09394fe5`: 639 files / 10,261 tests passed, 0 failed.
 - Independent review (Codex gpt-6-astra, ultra) took seven rounds: 2 High plus 5 Medium, then 2 High plus 3 Medium, then 1 High each round after that. Automated security reviews flagged 12 more. All were fixed. Final verdict at `09394fe5`: **safe to ship as 0.1.43: yes** (static review).
 
 ## Behaviour changes for offices
