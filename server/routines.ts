@@ -259,18 +259,25 @@ export function hostTimezone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
+// A minute repeat asks for many wall times per tick; building a formatter each time is the slow part.
+const wallFormats = new Map<string, Intl.DateTimeFormat>();
 function wallInZone(ms: number, timeZone: string) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour12: false,
-    weekday: "short",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).formatToParts(new Date(ms));
+  let format = wallFormats.get(timeZone);
+  if (!format) {
+    format = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hour12: false,
+      weekday: "short",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    wallFormats.set(timeZone, format);
+  }
+  const parts = format.formatToParts(new Date(ms));
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "0";
   const weekday = get("weekday");
   const dow =
@@ -297,8 +304,31 @@ function utcFromWall(timeZone: string, year: number, month: number, day: number,
   return guess;
 }
 
+const clockMinute = (clock: string) => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3, 5));
+
+/** A minute repeat: `time` + k·everyMinutes before `until` (end of day by default) on the
+ * schedule's weekdays, walked by calendar date so a short DST day is never skipped. */
+function nextRepeatSlot(schedule: LoopSchedule, after: number, timeZone: string): number | null {
+  const step = schedule.everyMinutes!, start = clockMinute(schedule.time), end = schedule.until ? clockMinute(schedule.until) : 1440;
+  const weekdays = new Set(schedule.weekdays);
+  const from = wallInZone(after, timeZone), fromMinute = from.hour * 60 + from.minute;
+  for (let offset = 0; offset <= 8; offset++) {
+    const date = new Date(Date.UTC(from.year, from.month - 1, from.day + offset));
+    if (!weekdays.has(date.getUTCDay())) continue;
+    for (let k = offset ? 0 : Math.max(0, Math.floor((fromMinute - start) / step)); start + k * step < end; k++) {
+      const hour = Math.floor((start + k * step) / 60), minute = (start + k * step) % 60;
+      const candidate = utcFromWall(timeZone, date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate(), hour, minute);
+      const wall = wallInZone(candidate, timeZone);
+      // A nonexistent DST minute is skipped, as for a daily time.
+      if (candidate > after && wall.hour === hour && wall.minute === minute) return candidate;
+    }
+  }
+  return null;
+}
+
 export function nextOccurrence(schedule: LoopSchedule, after: number, timeZone?: string): number | null {
   if (!validCalendarCadence(schedule)) return null;
+  if (schedule.everyMinutes) return nextRepeatSlot(schedule, after, timeZone ?? hostTimezone());
   const [hour, minute] = schedule.time.split(":").map(Number);
   const weekdays = new Set(schedule.weekdays);
   // Up to seven cycles covers an interval restricted to selected weekdays.
@@ -488,7 +518,7 @@ export class LoopManager {
    * bookmark or revision, so it can never swallow a pending slot.
    * `expectedRevision`, when given, is compare-and-set: a stale one is a 409
    * with code "schedule_changed" and nothing changes. */
-  patchClock(id: LoopId, patch: { enabled?: boolean; time?: string; weekdays?: number[]; timezone?: string; intervalDays?: number | null; anchorDate?: string; expectedRevision?: number }): Loop {
+  patchClock(id: LoopId, patch: { enabled?: boolean; time?: string; weekdays?: number[]; timezone?: string; intervalDays?: number | null; anchorDate?: string; everyMinutes?: number | null; until?: string | null; expectedRevision?: number }): Loop {
     this.assertWritable();
     this.refreshRecipeLoops();
     this.assertWritable();
@@ -511,7 +541,8 @@ export class LoopManager {
     if (wantsEnable && !loop.available) {
       throw Object.assign(new Error("that loop is declared but not built yet"), { status: 409 });
     }
-    if (patch.enabled === undefined && patch.time === undefined && patch.weekdays === undefined && patch.timezone === undefined && patch.intervalDays === undefined && patch.anchorDate === undefined) {
+    if (patch.enabled === undefined && patch.time === undefined && patch.weekdays === undefined && patch.timezone === undefined && patch.intervalDays === undefined && patch.anchorDate === undefined &&
+      patch.everyMinutes === undefined && patch.until === undefined) {
       throw Object.assign(new Error("nothing to change — send enabled, time, or weekdays"), { status: 400 });
     }
     if (patch.time !== undefined && !parseClockTime(patch.time)) {
@@ -524,17 +555,29 @@ export class LoopManager {
     const currentOverride = this.overrides.get(id);
     const nextTime = patch.time ?? currentOverride?.time ?? loop.schedule.time;
     const nextZone = patch.timezone ?? currentOverride?.timezone ?? loop.schedule.timezone;
-    const nextCadence: CalendarCadence = patch.intervalDays === null ? {} : {
-      intervalDays: patch.intervalDays ?? loop.schedule.intervalDays,
-      anchorDate: patch.anchorDate ?? loop.schedule.anchorDate,
-      ...(loop.schedule.monthly ? { monthly: loop.schedule.monthly } : {}),
+    // null clears: intervalDays drops the day interval (and monthly), everyMinutes the repeat and its window end.
+    const nextCadence: CalendarCadence = {
+      ...(patch.intervalDays === null ? {} : {
+        intervalDays: patch.intervalDays ?? loop.schedule.intervalDays,
+        anchorDate: patch.anchorDate ?? loop.schedule.anchorDate,
+        ...(loop.schedule.monthly ? { monthly: loop.schedule.monthly } : {}),
+      }),
+      ...(patch.everyMinutes === null ? {} : {
+        everyMinutes: patch.everyMinutes ?? loop.schedule.everyMinutes,
+        until: patch.until === null ? undefined : patch.until ?? loop.schedule.until,
+      }),
     };
-    if (!validCalendarCadence(nextCadence)) throw Object.assign(new Error('Choose an interval of 1–31 calendar days and a valid first date.'), { status: 400 });
+    if (!validCalendarCadence({ ...nextCadence, time: nextTime })) {
+      throw Object.assign(new Error(nextCadence.everyMinutes !== undefined || nextCadence.until !== undefined
+        ? 'Choose a repeat of 1–1440 minutes, an end time after the start time, and no day interval.'
+        : 'Choose an interval of 1–31 calendar days and a valid first date.'), { status: 400 });
+    }
     // compare by content: catalog arrays are shared references
     const nextDays = (patch.weekdays ?? currentOverride?.weekdays ?? loop.schedule.weekdays).slice().sort((a, b) => a - b);
     const clockChanged =
       nextTime !== loop.schedule.time || nextDays.join(",") !== loop.schedule.weekdays.join(",") || nextZone !== loop.schedule.timezone ||
-      nextCadence.intervalDays !== loop.schedule.intervalDays || nextCadence.anchorDate !== loop.schedule.anchorDate || nextCadence.monthly !== loop.schedule.monthly;
+      nextCadence.intervalDays !== loop.schedule.intervalDays || nextCadence.anchorDate !== loop.schedule.anchorDate || nextCadence.monthly !== loop.schedule.monthly ||
+      nextCadence.everyMinutes !== loop.schedule.everyMinutes || nextCadence.until !== loop.schedule.until;
     if (!clockChanged && !wantsEnable) return cloneLoop(loop);
     this.commit(() => {
       if (clockChanged) this.overrides.set(id, { time: nextTime, weekdays: nextDays, ...(nextZone ? { timezone: nextZone } : {}), ...nextCadence });
@@ -699,7 +742,8 @@ export class LoopManager {
         // Compress ancient downtime into one explicit missed receipt per loop.
         // Only the recent catch-up window is enumerated, irrespective of file age.
         const first = nextOccurrence(loop.schedule, handled, this.zoneForClock(loop.schedule));
-        if (handled < recent && first != null && first < recent) {
+        const compressed = handled < recent && first != null && first < recent;
+        if (compressed) {
           let missed!: LoopRun;
           this.commit(() => {
             missed = this.newRun(loop, first, false);
@@ -711,7 +755,8 @@ export class LoopManager {
           this.emitRun(missed);
           handled = this.handledThrough.get(loop.id)!;
         }
-        for (let at = nextOccurrence(loop.schedule, handled, this.zoneForClock(loop.schedule)); at != null && at <= now;
+        if (loop.schedule.everyMinutes) this.catchUpRepeat(loop, handled, now, compressed);
+        else for (let at = nextOccurrence(loop.schedule, handled, this.zoneForClock(loop.schedule)); at != null && at <= now;
           at = nextOccurrence(loop.schedule, Math.max(at, this.handledThrough.get(loop.id) ?? at), this.zoneForClock(loop.schedule))) {
           let run!: LoopRun;
           this.commit(() => {
@@ -753,6 +798,39 @@ export class LoopManager {
     } finally {
       this.ticking = false;
     }
+  }
+
+  /** A minute repeat never replays a backlog: it runs once for the latest due slot and
+   * writes one missed receipt for the slots before it (none when the 12-hour receipt
+   * already covers them). A slot whose previous run is still open only moves the
+   * bookmark. The run is not awaited, so a slow repeat never holds the tick; the
+   * `executing` lock still prevents overlap. */
+  private catchUpRepeat(loop: Loop, handled: number, now: number, compressed: boolean): void {
+    const zone = this.zoneForClock(loop.schedule);
+    let first: number | null = null, latest: number | null = null, due = 0;
+    for (let at = nextOccurrence(loop.schedule, handled, zone); at != null && at <= now; at = nextOccurrence(loop.schedule, at, zone)) {
+      first ??= at;
+      latest = at;
+      due++;
+    }
+    if (latest == null) return;
+    const skipped = compressed ? 0 : due - 1;
+    const occupied = Boolean(this.activeRun(loop.id)) || this.executing.has(loop.id);
+    let missed: LoopRun | undefined, run: LoopRun | undefined;
+    this.commit(() => {
+      if (skipped > 0) {
+        missed = this.newRun(loop, first!, false);
+        missed.status = "missed";
+        missed.finishedAt = now;
+        missed.detail = `Skipped ${skipped} time${skipped === 1 ? "" : "s"} while this computer was asleep. They were not replayed.`;
+      }
+      if (!occupied) run = this.newRun(loop, latest!, false);
+      this.handledThrough.set(loop.id, Math.max(this.handledThrough.get(loop.id) ?? 0, latest!));
+    });
+    if (missed) this.emitRun(missed);
+    if (!run) return;
+    this.emitRun(run);
+    void this.executeRun(run, loop).catch(() => this.hold(WRITE_RECOVERY));
   }
 
   private async executeRun(run: LoopRun, loop: Loop): Promise<void> {
@@ -834,11 +912,17 @@ export class LoopManager {
     return run;
   }
 
+  /** Drops the oldest settled run of the loop with the most of them, so a chatty
+   * repeat can never evict another job's latest receipt. Evicted runs stay in the ledger. */
   private trimRuns(): void {
     while (this.runs.length > MAX_RUNS) {
-      const removable = this.runs.findIndex((item) => item.status !== "queued" && item.status !== "running");
-      if (removable < 0) break;
-      this.runs.splice(removable, 1);
+      const settled = (item: LoopRun) => item.status !== "queued" && item.status !== "running";
+      const counts = new Map<LoopId, number>();
+      for (const item of this.runs) if (settled(item)) counts.set(item.loopId, (counts.get(item.loopId) ?? 0) + 1);
+      let busiest: LoopId | undefined, most = 0;
+      for (const [id, count] of counts) if (count > most) { busiest = id; most = count; }
+      if (!busiest) break;
+      this.runs.splice(this.runs.findIndex((item) => item.loopId === busiest && settled(item)), 1);
     }
   }
 
@@ -947,8 +1031,10 @@ export class LoopManager {
       if (!recipe.schedule) continue;
       const time = parseClockTime(recipe.schedule.time);
       const weekdays = parseWeekdays(recipe.schedule.weekdays);
-      if (!time || !weekdays) continue;
-      wanted.set(recipeLoopId(recipe.id), { recipe, catalog: { type: "daily", time, weekdays } });
+      const { everyMinutes, until } = recipe.schedule;
+      const repeat = everyMinutes === undefined ? {} : { everyMinutes, ...(until === undefined ? {} : { until }) };
+      if (!time || !weekdays || !validCalendarCadence({ ...repeat, time })) continue;
+      wanted.set(recipeLoopId(recipe.id), { recipe, catalog: { type: "daily", time, weekdays, ...repeat } });
     }
 
     this.loops = this.loops.filter((loop) => !recipeIdFromLoopId(loop.id) || wanted.has(loop.id));

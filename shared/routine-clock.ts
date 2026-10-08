@@ -1,8 +1,16 @@
-/** Calendar cadence, independent of elapsed hours and daylight saving. Either an
- * anchored interval of calendar days, or `monthly: 'first-weekday'` (the first
- * Monday–Friday of each month), never both. */
-export interface CalendarCadence { intervalDays?: number; anchorDate?: string; monthly?: 'first-weekday' }
-export function validCalendarCadence(value: CalendarCadence): boolean {
+/** Calendar cadence, independent of elapsed hours and daylight saving. One of: an
+ * anchored interval of calendar days; `monthly: 'first-weekday'` (the first
+ * Monday–Friday of each month); or a repeat every `everyMinutes` (1–1440) from the
+ * schedule's `time` up to `until` (exclusive; end of day when absent) on its weekdays. */
+export interface CalendarCadence { intervalDays?: number; anchorDate?: string; monthly?: 'first-weekday'; everyMinutes?: number; until?: string }
+const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
+/** Give the schedule's `time` too, so a repeat window must end after it starts. */
+export function validCalendarCadence(value: CalendarCadence & { time?: unknown }): boolean {
+  if (value.everyMinutes !== undefined || value.until !== undefined) {
+    return Number.isSafeInteger(value.everyMinutes) && value.everyMinutes! >= 1 && value.everyMinutes! <= 1440 &&
+      value.intervalDays === undefined && value.anchorDate === undefined && value.monthly === undefined &&
+      (value.until === undefined || (typeof value.until === 'string' && CLOCK.test(value.until) && (typeof value.time !== 'string' || value.until > value.time)));
+  }
   if (value.monthly !== undefined) return value.monthly === 'first-weekday' && value.intervalDays === undefined && value.anchorDate === undefined;
   if (value.intervalDays === undefined && value.anchorDate === undefined) return true;
   if (!Number.isSafeInteger(value.intervalDays) || value.intervalDays! < 1 || value.intervalDays! > 31 ||

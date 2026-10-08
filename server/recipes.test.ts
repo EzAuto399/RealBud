@@ -125,6 +125,22 @@ describe("validateRecipe", () => {
     expect(validateRecipe({ ...card, schedule: null }).schedule).toBeNull();
   });
 
+  it("round-trips a minute repeat through save and load, and drops an invalid one", () => {
+    const repeat = { time: "09:00", weekdays: [1, 2, 3, 4, 5], everyMinutes: 2, until: "17:00" };
+    const [saved] = saveRecipe({ ...card, id: "repeat-job", schedule: repeat });
+    expect(saved.schedule).toEqual(repeat);
+    expect(loadRecipes(true)[0]!.schedule).toEqual(repeat);
+    // A cadence change is a material plan change: approval never floats to it.
+    patchRecipe(saved.id, { planApproved: true, expectedRevision: saved.revision });
+    const [retimed] = saveRecipe({ ...card, id: saved.id, schedule: { ...repeat, everyMinutes: 5 }, expectedRevision: saved.revision });
+    expect(retimed).toMatchObject({ revision: saved.revision + 1, approvedRevision: null, schedule: { everyMinutes: 5, until: "17:00" } });
+    expect(validateRecipe({ ...card, schedule: { time: "09:00", weekdays: [1], everyMinutes: 15 } }).schedule).toEqual({ time: "09:00", weekdays: [1], everyMinutes: 15 });
+    for (const bad of [{ everyMinutes: 0 }, { everyMinutes: 1441 }, { everyMinutes: 1.5 }, { everyMinutes: 2, until: "08:00" }, { everyMinutes: 2, until: "09:00" },
+      { until: "17:00" }, { everyMinutes: 2, intervalDays: 2, anchorDate: "2026-10-02" }, { everyMinutes: 2, until: "25:00" }]) {
+      expect(validateRecipe({ ...card, schedule: { time: "09:00", weekdays: [1], ...bad } }).schedule).toBeNull();
+    }
+  });
+
   it("rejects a bad origin", () => {
     try {
       validateRecipe({ ...card, allowedOrigins: ["not a host"] });

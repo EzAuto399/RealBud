@@ -13,6 +13,7 @@ import {
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { parseClockTime, parseWeekdays } from "./routines.ts";
+import { validCalendarCadence, type CalendarCadence } from "../shared/routine-clock.ts";
 
 export { recipeClockRunnable } from "../shared/contracts.ts";
 
@@ -122,15 +123,18 @@ export function normalizeOrigin(raw: string): string | null {
   return ORIGIN_RE.test(host) ? host : null;
 }
 
-/** Optional clock. Missing or unusable cadence becomes null — never fails the card. */
-export function parseRecipeSchedule(value: unknown): { time: string; weekdays: number[] } | null {
+/** Optional clock. Missing or unusable cadence becomes null — never fails the card.
+ * A repeat (`everyMinutes`, optional `until`) is checked like the loop clock and never mixes with a day interval. */
+export function parseRecipeSchedule(value: unknown): Recipe["schedule"] {
   if (value == null) return null;
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const row = value as Record<string, unknown>;
   const time = parseClockTime(row.time);
   const weekdays = parseWeekdays(row.weekdays);
   if (!time || !weekdays) return null;
-  return { time, weekdays };
+  if (row.everyMinutes === undefined && row.until === undefined) return { time, weekdays };
+  if (!validCalendarCadence({ ...(row as CalendarCadence), time })) return null;
+  return { time, weekdays, everyMinutes: row.everyMinutes as number, ...(row.until === undefined ? {} : { until: row.until as string }) };
 }
 
 export function validateRecipe(input: unknown): {
@@ -142,7 +146,7 @@ export function validateRecipe(input: unknown): {
   capabilities: JobCapability[];
   limits: JobLimits;
   siteNotes: string | null;
-  schedule: { time: string; weekdays: number[] } | null;
+  schedule: Recipe["schedule"];
 } {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     bad("That is not a job card.");

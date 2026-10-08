@@ -38,10 +38,11 @@ export function parseLoopsFile(raw: unknown, fallbackTimezone: string): LoopsFil
         !Array.isArray(clock.weekdays) || !clock.weekdays.length || clock.weekdays.length > 7 ||
         clock.weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) invalid();
       if (clock.timezone !== undefined && !validTimezone(clock.timezone)) invalid();
-      if (!validCalendarCadence(clock as CalendarCadence)) invalid();
+      if (!validCalendarCadence({ ...(clock as CalendarCadence), time: clock.time })) invalid();
       schedule = { time: clock.time, weekdays: [...new Set(clock.weekdays as number[])].sort((a, b) => a - b), ...(typeof clock.timezone === 'string' ? { timezone: clock.timezone } : {}) };
       if (clock.intervalDays !== undefined) Object.assign(schedule, { intervalDays: clock.intervalDays, anchorDate: clock.anchorDate });
       if (clock.monthly !== undefined) Object.assign(schedule, { monthly: clock.monthly });
+      if (clock.everyMinutes !== undefined) Object.assign(schedule, { everyMinutes: clock.everyMinutes, ...(clock.until !== undefined ? { until: clock.until } : {}) });
     }
     state[id] = { enabled: value.enabled, handledThrough: value.handledThrough, ...(schedule ? { schedule } : {}), ...(value.revision === undefined ? {} : { revision: Number(value.revision) }) };
   }
