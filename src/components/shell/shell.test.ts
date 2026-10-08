@@ -87,6 +87,18 @@ describe('desktop shell markup', () => {
     expect(running).toMatch(/<button[^>]*title="Open AI usage in Workspace"[^>]*>Spend 12.5% of budget<\/button>/);
     expect(running).not.toMatch(/<button[^>]*>[^<]*<span[^>]*><\/span>Connected/);
   });
+  it('reads a busy service as busy and a silent one as offline', () => {
+    const bar = (state: { connected: boolean; serviceBusy: boolean }) => {
+      store.state = { desk: null, loops: [], ...state };
+      return renderToStaticMarkup(createElement(StatusBar, { browser: null, stopping: false, stopError: '', onStop: () => {}, budget: null }));
+    };
+    const busy = bar({ connected: false, serviceBusy: true });
+    expect(busy).toContain('Busy — still working, your work is safe');
+    expect(busy).not.toContain('Offline');
+    const down = bar({ connected: false, serviceBusy: false });
+    expect(down).toContain('Offline — reconnecting');
+    expect(down).not.toContain('Busy');
+  });
   it('offers Hide on ordinary cards and no Hide on locked ones', () => {
     const ordinary = renderToStaticMarkup(createElement(CardMenu, { label: 'Morning brief', locked: false, shown: true }));
     expect(ordinary).toContain('aria-label="Morning brief options"');

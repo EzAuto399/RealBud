@@ -52,6 +52,17 @@ describe("missAction", () => {
     });
   });
 
+  it("hands key and billing misses to the owner for managed staff; owners keep the model connection", () => {
+    for (const detail of ["the model provider refused Bud's key; check the model connection in Workspace → Settings & help", "Billing or credits exhausted at the model provider"]) {
+      expect(missAction(detail, false)).toEqual({ ownerRequest: "modelAccess" });
+      expect(missAction(detail, true)).toEqual({ label: "Open model connection", hash: "attach-model" });
+      expect(missAction(detail)).toEqual({ label: "Open model connection", hash: "attach-model" });
+    }
+    // Not a key or billing fix: staff keep the Bud status route.
+    expect(missAction("no model is attached", false)).toEqual({ label: "Open model connection", hash: "attach-model" });
+    expect(missAction("Bud is not installed on this Mac", false)).toEqual({ label: "Install Bud", hash: "you-worker" });
+  });
+
   it("opens Bud install when the CLI is missing or the build is unsupported", () => {
     expect(missAction("Bud is not installed on this Mac")).toEqual({
       label: "Install Bud",

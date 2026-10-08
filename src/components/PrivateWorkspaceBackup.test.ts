@@ -80,3 +80,24 @@ describe('private backup saved operation controls', () => {
     expect(renderSelected(op({ phase: 'failed', requiresPassphrase: true, error: { code: 'workspace-busy' } }))).toContain('Finish the current work before continuing this backup operation.');
   });
 });
+
+describe('private backup restore readiness before upload', () => {
+  const renderStatus = (status: object) => { observed.setters.length = 0; observed.seed.clear(); observed.seed.set(0, status); return renderToStaticMarkup(createElement(PrivateWorkspaceBackup)); };
+  beforeEach(() => { vi.stubGlobal('window', {}); });
+  afterEach(() => { observed.seed.clear(); vi.unstubAllGlobals(); });
+  it('names the server reason beside the upload when this workspace cannot restore', () => {
+    const reason = 'Restore requires a fresh workspace with only its untouched sample book. Existing private work is kept.';
+    const html = renderStatus({ canRestore: false, bootstrap: true, staged: false, reason, completed: null });
+    const form = html.slice(html.indexOf('aria-label="Preview private backup"'));
+    expect(form).toContain(`<p role="status" class="text-sm text-hold">${reason} You can still check a backup’s contents here; nothing is restored.</p>`);
+    expect(form.indexOf(reason)).toBeLessThan(form.indexOf('Encrypted private backup file'));
+    expect(html.split(reason)).toHaveLength(2); // said once, in the form
+    const notBootstrapped = renderStatus({ canRestore: false, bootstrap: false, staged: false, reason: 'Start this installation through the RealBud desktop service before restoring.', completed: null });
+    expect(notBootstrapped).toContain('text-hold">Start this installation through the RealBud desktop service before restoring.');
+  });
+  it('adds no hold when restore is available', () => {
+    const html = renderStatus({ canRestore: true, bootstrap: true, staged: false, reason: 'A reviewed backup can replace the untouched sample book.', completed: null });
+    expect(html).toContain('A reviewed backup can replace the untouched sample book.');
+    expect(html).not.toContain('nothing is restored');
+  });
+});

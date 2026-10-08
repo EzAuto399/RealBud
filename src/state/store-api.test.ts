@@ -47,6 +47,26 @@ describe("api() local session recovery", () => {
     expect(sent).toEqual(paths.map((path, index) => [path, index < 10 ? member : null]));
   });
 
+  it("words a failed request as busy only when the health check answers busy, and as not responding when nothing answers", async () => {
+    const details: unknown[] = [];
+    vi.stubGlobal("window", {
+      ogb: { getLocalSession: async () => BEFORE },
+      sessionStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+      dispatchEvent: (event: Event) => { details.push((event as CustomEvent).detail); return true; },
+    });
+    const { api } = await import("./store");
+    const { LOCAL_SERVICE_BUSY, LOCAL_SERVICE_UNAVAILABLE } = await import("@/lib/api-error");
+    const timedOut = () => Promise.reject(new DOMException("signal timed out", "TimeoutError"));
+    fetchMock.mockImplementation(async (path) => path === "/api/health" ? json({ app: "realbud", busy: true }) : timedOut());
+    await expect(api("/api/desk")).rejects.toThrow(LOCAL_SERVICE_BUSY);
+    fetchMock.mockImplementation(async () => { throw new TypeError("Failed to fetch"); });
+    await expect(api("/api/desk")).rejects.toThrow(LOCAL_SERVICE_UNAVAILABLE);
+    // Answering but not busy, or a foreign answer, is not proof the service is merely slow.
+    fetchMock.mockImplementation(async (path) => path === "/api/health" ? json({ app: "other", busy: true }) : timedOut());
+    await expect(api("/api/desk")).rejects.toThrow(LOCAL_SERVICE_UNAVAILABLE);
+    expect(details).toEqual([{ busy: true }, { busy: false }, { busy: false }]);
+  });
+
   it("asks the owner to reconnect after a second refusal instead of retrying again", async () => {
     stubWindow(async () => BEFORE);
     const { api } = await import("./store");

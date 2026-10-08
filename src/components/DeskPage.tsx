@@ -20,6 +20,8 @@ import {
   type QueueFilter,
 } from "@/lib/desk-queue";
 import { deskHandsStatus, missAction } from "@/lib/hands-label";
+import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
+import { OwnerRequestButton } from "./OwnerRequestButton";
 import { stableOrder } from "@/lib/schedule-rows";
 import { draftViaLine, phoneChip, phoneChipTone, phonePaired } from "@/lib/phone-label";
 import { StatusLabel } from "./pm";
@@ -85,6 +87,7 @@ function deskFacingError(cause: unknown): string {
 
 export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   const { state, dispatch, refreshHermes } = useStore();
+  const canAdminister = useServiceAdminAccess(state.serviceAdmin ?? state.config?.serviceAdmin);
   const { preferences } = useWorkspacePreferences();
   // Saved Desk sections; an absent or invalid layout renders today's order.
   const deskLayout = useWorkspaceTabs().data?.state?.desk.sections;
@@ -488,7 +491,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   const brief = morningBrief(snap);
   const timezone = snap.book?.agency.timezone || snap.timezone;
   const missed = isDemoWorkerMiss(snap.hands, snap.handsDetail);
-  const miss = snap.handsDetail && missed ? missAction(snap.handsDetail) : null;
+  const miss = snap.handsDetail && missed ? missAction(snap.handsDetail, canAdminister) : null;
   const checkAction = deskCheckAction(snap);
   // "Sample book" unless the book is live and not a demo.
   const sampleBook = Boolean(snap.demo || snap.mode === "demo");
@@ -551,7 +554,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
             timezone={timezone}
             failed={checkState === "failed"}
             failedLine={missed && snap.lastRunAt != null ? missedCheckLine(snap.handsDetail) : undefined}
-            failedAction={miss ? (
+            failedAction={miss ? "ownerRequest" in miss ? <OwnerRequestButton request={miss.ownerRequest} /> : (
               <button
                 type="button"
                 className="pm-control rounded border border-hold/40 bg-sheet px-3 text-[13px] text-ink"

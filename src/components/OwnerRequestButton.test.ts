@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { OWNER_COMPUTERS_URL, OWNER_REQUEST, type OwnerRequestKind } from "@/lib/owner-request";
+import { OWNER_AI_BILLING_URL, OWNER_COMPUTERS_URL, OWNER_REQUEST, type OwnerRequestKind } from "@/lib/owner-request";
 import { OwnerRequestButton } from "./OwnerRequestButton";
 
 describe("Copy request for your owner", () => {
@@ -20,8 +20,9 @@ describe("Copy request for your owner", () => {
       expect(text).toMatch(/^Hi, /);
       expect(text).not.toMatch(/Hermes|MCP|broker|installation(?!s)/i);
       // The bank feed is connected in RealBud itself; every website step names its page.
-      if (kind !== "bankFeed") expect(text).toContain(OWNER_COMPUTERS_URL);
+      if (kind !== "bankFeed") expect(text).toContain(kind === "modelAccess" ? OWNER_AI_BILLING_URL : OWNER_COMPUTERS_URL);
     }
+    expect(OWNER_REQUEST.modelAccess).toContain("hello@realbud.app");
     expect(OWNER_REQUEST.bankFeed).toContain("Workspace → Connected apps → Bank feed");
     expect(OWNER_REQUEST.bankFeed).toContain("bank CSV");
   });
