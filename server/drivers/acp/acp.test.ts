@@ -8,7 +8,7 @@ import { withWorkerProfile } from "../../hermes-profile.ts";
 //
 // The fake CLI is a shebang script Windows cannot exec directly —
 // resolveCliSpawn turns it into `node <script>`, so these run everywhere.
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -337,6 +337,54 @@ process.stdin.on("data", chunk => {
     await vi.waitFor(() => expect(JSON.parse(readFileSync(plain, "utf8")).promptCount).toBe(1));
     expect((JSON.parse(readFileSync(plain, "utf8")).mcpServers ?? []).map((row: { name: string }) => row.name)).not.toContain("decisions");
     await instance.adapter.interruptTurn("t-no-decisions");
+  });
+
+  it("reads and counts workroom files without approval, and revokes access on member change, lost entitlement or Stop", async () => {
+    const dump = join(scratch, "workroom.json"); process.env.FAKE_ACP_DUMP = dump;
+    const root = join(scratch, "workroom"); mkdirSync(root);
+    writeFileSync(join(root, "Property.csv"), "Address,Council\nFictional one,0012\nFictional two,\n");
+    let active = true;
+    await create(HermesAgentDriver, "hang");
+    await instance.adapter.sendTurn({ threadId: "t-workroom", text: "Count the supplied rows", integrations: {
+      workroom: { root: realpathSync(root), scope: "fictional-member", active: () => active } } });
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(dump, "utf8")).promptCount).toBe(1));
+    const descriptor = JSON.parse(readFileSync(dump, "utf8")).mcpServers.find((row: { name: string }) => row.name === "workroom");
+    expect(descriptor.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+    expect(JSON.stringify(descriptor)).not.toContain(root);
+    const call = async (operation: string) => ((await (await fetch(descriptor.url, { method: "POST",
+      headers: { "content-type": "application/json", ...Object.fromEntries(descriptor.headers.map((row: { name: string; value: string }) => [row.name, row.value])) },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "workroom_read", arguments: { operation, path: "Property.csv" } } }) })).json()) as any).result;
+    const csv = await call("csv");
+    expect(csv.isError).not.toBe(true);
+    expect(csv.content[0].text).toContain('"rowCount":2');
+    expect(csv.content[0].text).toContain('"Council":"0012"');
+    expect((await call("stat")).isError).not.toBe(true);
+    expect(recorder.events.filter(event => event.type === "request.opened")).toEqual([]);
+    active = false;
+    expect((await call("csv")).isError).toBe(true);
+    active = true;
+    assertCapability.mockImplementation(() => { throw new Error("fictional expired entitlement"); });
+    expect((await call("csv")).isError).toBe(true);
+    assertCapability.mockReset();
+    await instance.adapter.interruptTurn("t-workroom");
+    expect((await call("csv").catch(() => ({ isError: true }))).isError).toBe(true);
+  });
+
+  it("replaces a warm workroom capability when its host scope changes", async () => {
+    const dump = join(scratch, "workroom-scope.json"); process.env.FAKE_ACP_DUMP = dump;
+    await create(HermesAgentDriver);
+    const send = (scope: string) => instance.adapter.sendTurn({ threadId: "t-workroom-scope", text: "Read the current workroom",
+      integrations: { workroom: { root: realpathSync(scratch), scope, active: () => true } } });
+    const first = await send("fictional-first-member");
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === first.turnId);
+    const original = JSON.parse(readFileSync(dump, "utf8")).mcpServers.find((row: { name: string }) => row.name === "workroom");
+    const second = await send("fictional-second-member");
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === second.turnId);
+    const replacement = JSON.parse(readFileSync(dump, "utf8")).mcpServers.find((row: { name: string }) => row.name === "workroom");
+    expect(replacement.url).not.toBe(original.url);
+    const stale = await fetch(original.url, { method: "POST", signal: AbortSignal.timeout(1000),
+      headers: Object.fromEntries(original.headers.map((row: { name: string; value: string }) => [row.name, row.value])) }).catch(() => null);
+    expect(stale === null || stale.status === 403).toBe(true);
   });
 
   it("binds decisions only for a person's own non-relay Ask while Jev is ready, never for a systemExtra turn", () => {

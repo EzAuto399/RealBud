@@ -157,6 +157,11 @@ describe("ask book", () => {
     expect(prompt).toMatch(/Never inspect or decrypt desk\.json, desk\.key/i);
     expect(prompt).toMatch(/untrusted data/i);
     expect(prompt).toMatch(/answers that permission here in Work/i);
+    expect(prompt).toMatch(/workroom_read/);
+    expect(prompt).toMatch(/These fixed reads need no approval/);
+    expect(prompt).toMatch(/Do not wrap these operations in execute_code/);
+    expect(prompt).toMatch(/Arbitrary scripts still need review/);
+    expect(prompt).toMatch(/local copy time, not evidence/);
     expect(prompt).toMatch(/do not say the decision is still waiting/i);
     expect(prompt).toMatch(/Never tell the user that Desk approves a local tool permission/i);
     expect(prompt).toMatch(/Chat history is temporary working context/i);

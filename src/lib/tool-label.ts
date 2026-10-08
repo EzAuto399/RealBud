@@ -8,6 +8,7 @@ const LABELED_PLACE =
 
 const ALIAS: Record<string, string> = {
   bud_connected_app_action: "reviewing an action Bud prepared",
+  workroom_read: "checking workroom files",
   read_file: "reading a file",
   read: "reading a file",
   write_file: "writing a file",

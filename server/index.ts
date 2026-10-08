@@ -2196,6 +2196,9 @@ async function startSeatTurn(
       }
       if (instance.driverKind === 'hermesAgent' && !opts?.systemExtra) {
         const memberKey = currentWorkerProfile().memberKey ?? '';
+        // Fixed read-only reads of this member's workroom with no card (server/workroom-read-broker.ts).
+        integrations.workroom = { root: join(DATA_DIR, 'vault'), scope: `${currentWorkerProfile().profile}:${memberKey}`,
+          active: () => (desk.memberKeyForWorker() ?? '') === memberKey && !desk.recovery.active };
         const proposalIntegration = memoryReviews.proposalIntegration(threadId, () => (desk.memberKeyForWorker() ?? '') === memberKey);
         if (proposalIntegration) integrations.memoryProposals = proposalIntegration;
       }
