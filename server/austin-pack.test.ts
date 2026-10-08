@@ -177,12 +177,32 @@ describe('Austin setup checklist', () => {
     expect(items.find(i => i.id === 'tenants')?.done).toBe(false);
   });
 
-  it('counts a saved tenant list as a signed-in REI read and finishes when all six are on', () => {
-    const pack = loadAustinPack();
-    const on = AUSTIN.map(id => ({ id, enabled: true })) as never;
-    const items = austinChecklist(pack, on, { gmail: true, redbark: true, tenants: 40, suppliers: 9, reiSignedIn: false });
+  it('counts a saved tenant list as a signed-in REI read and finishes when all six have a next run', async () => {
+    const { pack, loops } = office({ signals: { gmail: true, redbark: true, tenants: 40, suppliers: 9 } });
+    await pack.install();
+    for (const loop of loops.listLoops()) if (AUSTIN.includes(loop.id)) loops.patchClock(loop.id, { enabled: true });
+    const scheduled = loops.listLoops().filter(loop => AUSTIN.includes(loop.id));
+    expect(scheduled).toHaveLength(6);
+    expect(scheduled.every(loop => loop.enabled && loop.available && loop.nextRunAt !== null)).toBe(true);
+    const items = (await pack.view()).checklist;
     expect(items.every(i => i.done)).toBe(true);
     expect(items.find(i => i.id === 'workflows')?.next).toBeUndefined();
+  });
+
+  it.each([
+    { name: 'unavailable', fields: { available: false }, reason: 'is not currently available' },
+    { name: 'without a recorded next run', fields: { nextRunAt: null }, reason: 'has no next run' },
+  ])('keeps an enabled workflow $name incomplete', async ({ fields, reason }) => {
+    const { pack, loops } = office();
+    await pack.install();
+    for (const loop of loops.listLoops()) if (AUSTIN.includes(loop.id)) loops.patchClock(loop.id, { enabled: true });
+    const reported = loops.listLoops().map(loop => loop.id === 'bank-references' ? { ...loop, ...fields } : loop);
+    const items = austinChecklist(loadAustinPack(), reported, { gmail: true, redbark: true, tenants: 40, suppliers: 9, reiSignedIn: true });
+    expect(items.find(i => i.id === 'workflows')).toMatchObject({
+      done: false, next: 'bank-references',
+      detail: `5 of 6 scheduled. Bank reference review is switched on but ${reason}. Review its schedule.`,
+    });
+    expect(items.every(i => i.done)).toBe(false);
   });
 });
 

@@ -2,6 +2,12 @@
 
 Latest continuation, 8 October (round 2): [Jev, Luna and desktop-app tasks](JEV-DESKTOP-2026-10-08.md), merged after 0.1.40: desktop-app tasks with a fence and Jev/Luna control picks, mail loop labels instead of hiding, every AI call in per-run cost. Local tests only; Modelvia Luna route, live eval and full QA pending.
 
+Product continuation, 8 October: [Claude Code and Codex UX implementation](CLAUDE-UX-COLLABORATION-2026-10-08.md) adds an explicit organization workspace for existing admin AI/apps controls, organization-specific drafts and recovery, and a simpler customer Home with computer- and budget-aware guidance. Implemented with the actual Claude Code CLI and locally checked against source components. Organization-scoped workflow engineering and verified device delivery remain open; no deployment or live customer acceptance is claimed.
+
+Previous product continuation, 8 October: [Portal layout repairs and remaining gaps](PORTAL-LAYOUT-AND-GAPS-2026-10-08.md). Actual website source fixes address Support hierarchy, code fields and responsive portal layout. The next product work is a scoped FDE customer workspace, verified workflow delivery and simpler customer guidance. Local source/UI evidence only; not deployed or customer acceptance.
+
+Previous product continuation, 8 October: [FDE console and customer workspace](decisions/2026-10-08-fde-console-and-customer-workspace.md). The RealBud team gets a distinct FDE console for configuring and maintaining customers; customers get a simpler work-focused UI. Routine adjustments use granted managed configuration access. Role clarity and a fictional preview are local changes; new operator workflow control and reporting are not deployed or complete.
+
 Earlier, 8 October: [cua-driver 0.34 and Jev tuning](CUA-034-JEV-2026-10-08.md) merged after 0.1.40: driver upgrade, Jev batching, Ask pre-route, duplicate-bill ranking, Bud `decide` tool and the Jev eval. Local tests only; live Jev eval and live REI run pending.
 
 Intelligent UI, 8 October: [Intelligent UI and demo polish](INTELLIGENT-UI-2026-10-08.md) makes Desk honest about saved versus live data, gives each queue row a reason and a stable order, folds customising into Arrange Desk, adds a state-based Next step in Work and clearer Schedule actions, and removes about 1,360 lines of dead renderer code. `pnpm qa` and renderer QA pass; not packaged or installed.

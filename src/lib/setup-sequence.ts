@@ -419,9 +419,9 @@ function nextBlocker(pack: AustinPackView, setup: AgencySetupRead, loopId: strin
 
 /**
  * Step 5 with a role pack: each of the pack's workflows reviewed and switched
- * on. The count follows the live loops when they are read, else the pack's
- * own checklist; the action opens the next workflow still off, or what it
- * still needs first.
+ * on with a next run. The count follows the live loops when they are read,
+ * else the pack's own checklist; the action opens the next incomplete
+ * workflow, or what it still needs first.
  */
 function packWorkflowsFact(pack: AustinPackView, schedule: ScheduleRead | undefined, setup: AgencySetupRead): Fact {
   if (schedule?.read !== "ready") {
@@ -432,16 +432,25 @@ function packWorkflowsFact(pack: AustinPackView, schedule: ScheduleRead | undefi
   }
   const loops = schedule.loops;
   const ids = pack.loops.map((loop) => loop.loopId);
-  const off = ids.filter((id) => !loops.find((loop) => loop.id === id)?.enabled);
+  const off = ids.filter((id) => {
+    const loop = loops.find((loop) => loop.id === id);
+    // Match the host checklist and the generic setup: a switch alone is not a scheduled run.
+    return !(loop?.enabled && loop.available && loop.nextRunAt !== null);
+  });
   if (!off.length) return { fact: "done", status: `All ${ids.length} workflows are on.` };
   const next = off[0];
-  const name = loops.find((loop) => loop.id === next)?.name?.trim() || "the next workflow";
+  const nextLoop = loops.find((loop) => loop.id === next);
+  const name = nextLoop?.name?.trim() || "The next workflow";
+  const clockIssue = nextLoop?.enabled
+    ? `${name} is switched on but ${!nextLoop.available ? "is not currently available" : "has no next run"}. Review its schedule.`
+    : null;
+  const countLabel = off.some(id => loops.find(loop => loop.id === id)?.enabled) ? "scheduled" : "on";
   const blocker = nextBlocker(pack, setup, next, name);
   return {
     fact: "todo",
-    status: `${ids.length - off.length} of ${ids.length} on. ${blocker?.status ?? REVIEW_EACH}`,
-    actionLabel: blocker?.actionLabel ?? `Review ${name}`,
-    target: blocker?.target ?? `job-${next}`,
+    status: `${ids.length - off.length} of ${ids.length} ${countLabel}. ${clockIssue ?? blocker?.status ?? REVIEW_EACH}`,
+    actionLabel: clockIssue ? "Review schedule" : blocker?.actionLabel ?? `Review ${name}`,
+    target: clockIssue ? `job-${next}` : blocker?.target ?? `job-${next}`,
   };
 }
 

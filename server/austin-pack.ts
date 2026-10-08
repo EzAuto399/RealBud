@@ -70,7 +70,16 @@ export interface AustinSignals { gmail: boolean; redbark: boolean; tenants: numb
  * recorded REI sign-in, or a tenant list that only a signed-in REI read can save.
  * Only the items the pack's workflows need are listed. */
 export function austinChecklist(pack: AustinLoopPack, loops: readonly Loop[], signals: AustinSignals & { reiSignedIn: boolean }): AustinChecklistItem[] {
-  const off = pack.loops.filter(item => !loops.find(loop => loop.id === item.loopId)?.enabled);
+  const off = pack.loops.filter(item => {
+    const loop = loops.find(loop => loop.id === item.loopId);
+    // Recovery or an unavailable clock can keep the saved switch on without scheduling a run.
+    return !(loop?.enabled && loop.available && loop.nextRunAt !== null);
+  });
+  const nextLoop = off[0] ? loops.find(loop => loop.id === off[0].loopId) : undefined;
+  const clockIssue = nextLoop?.enabled
+    ? `${nextLoop.name} is switched on but ${!nextLoop.available ? 'is not currently available' : 'has no next run'}. Review its schedule.`
+    : null;
+  const countLabel = off.some(item => loops.find(loop => loop.id === item.loopId)?.enabled) ? 'scheduled' : 'on';
   const item = (id: AustinChecklistId, label: string, done: boolean, yes: string, no: string): AustinChecklistItem => ({ id, label, done, detail: done ? yes : no });
   const needed = new Set<AustinChecklistId>(['workflows', ...pack.loops.flatMap(loop => loop.needs)]);
   return ([
@@ -80,7 +89,7 @@ export function austinChecklist(pack: AustinLoopPack, loops: readonly Loop[], si
     item('tenants', 'REI tenant list saved', signals.tenants > 0, `${signals.tenants} tenants saved.`, 'In Bank reference review, choose Refresh from REI to save the tenant list.'),
     item('suppliers', 'REI supplier list saved', signals.suppliers > 0, `${signals.suppliers} suppliers saved.`, 'In Bills, Maintenance checks, choose Refresh from REI to save the supplier list.'),
     { ...item('workflows', 'Each workflow reviewed and switched on', off.length === 0, `All ${pack.loops.length} workflows are on.`,
-      `${pack.loops.length - off.length} of ${pack.loops.length} on. Open each one, read what it does, then switch it on.`), ...(off[0] ? { next: off[0].loopId } : {}) },
+      `${pack.loops.length - off.length} of ${pack.loops.length} ${countLabel}. ${clockIssue ?? 'Open each one, read what it does, then switch it on.'}`), ...(off[0] ? { next: off[0].loopId } : {}) },
   ] satisfies AustinChecklistItem[]).filter(entry => needed.has(entry.id));
 }
 

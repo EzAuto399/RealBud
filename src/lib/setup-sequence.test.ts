@@ -227,6 +227,30 @@ describe("step 5: review and switch on the workflows", () => {
     expect(step({ ...ahead, schedule: loopsOn(["bank-references", "inbound-triage"]) }, "workflows").status).toMatch(/^2 of 3 on\./);
   });
 
+  it.each([
+    { name: "unavailable", fields: { available: false }, reason: "is not currently available" },
+    { name: "without a recorded next run", fields: { nextRunAt: null }, reason: "has no next run" },
+  ])("keeps an enabled role workflow $name incomplete, including the server-checklist fallback", ({ fields, reason }) => {
+    const schedule = loopsOn(["bank-references", "inbound-triage", "maintenance-review"]);
+    Object.assign(schedule.loops[0], fields);
+    const steps = setupSequence({ ...ahead, schedule });
+    const status = `2 of 3 scheduled. Bank reference review is switched on but ${reason}. Review its schedule.`;
+    expect(steps.find((item) => item.id === "workflows")).toMatchObject({
+      state: "current", target: "job-bank-references", actionLabel: "Review schedule", status,
+    });
+    expect(setupSequenceComplete(steps)).toBe(false);
+
+    const checklist = pack({ gmail: true });
+    checklist.checklist = checklist.checklist.map((item) => item.id === "workflows"
+      ? { ...item, done: false, detail: status, next: "bank-references" }
+      : item);
+    const fallback = setupSequence({ ...ahead, austinPack: checklist, schedule: { read: "loading" } });
+    expect(fallback.find((item) => item.id === "workflows")).toMatchObject({
+      state: "current", target: "job-bank-references", status,
+    });
+    expect(setupSequenceComplete(fallback)).toBe(false);
+  });
+
   describe("names what the next workflow still needs before it can switch on", () => {
     const kevin = (done: Partial<Record<AustinChecklistItem["id"], boolean>> = {}): AustinPackView => ({
       ...pack({ gmail: true }),
@@ -283,6 +307,11 @@ describe("step 5: review and switch on the workflows", () => {
     expect(all.map((item) => item.state)).toEqual(["done", "done", "done", "done", "done"]);
     expect(setupSequenceComplete(all)).toBe(true);
     expect(currentSetupStep(all)).toBeNull();
+    const checked = pack({ gmail: true, workflows: true });
+    checked.checklist.find((item) => item.id === "workflows")!.detail = "All 3 workflows are on.";
+    const fallback = setupSequence({ ...ahead, austinPack: checked, schedule: { read: "loading" } });
+    expect(fallback.find((item) => item.id === "workflows")).toMatchObject({ state: "done", status: "All 3 workflows are on." });
+    expect(setupSequenceComplete(fallback)).toBe(true);
     const budStill = setupSequence({ ...ahead, bud: installing, schedule: loopsOn(["bank-references", "inbound-triage", "maintenance-review"]) });
     expect(setupSequenceComplete(budStill)).toBe(false);
   });
