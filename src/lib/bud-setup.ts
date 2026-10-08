@@ -42,7 +42,7 @@ export function budFacingCopy(value: unknown, fallback: string): string {
     .replace(/"property" pack/gi, "Bud's hands safeguards")
     .replace(/property profile/gi, "Bud's hands")
     .replace(/\bpack\b/gi, "safeguards")
-    .replace(/\bprofile\b/gi, "private setup")
+    .replace(/\b(?:private )?profile\b/gi, "private setup")
     .replace(/\bpin\b/gi, "supported build");
 }
 
