@@ -12,12 +12,14 @@ import { createBackupOperationStore } from './private-backup-operations.ts';
 import { PRIVATE_BACKUP_COMPLETION_FILE, readBackupColdCompletion } from './private-backup-completion.ts';
 import type { PrivateBackupTransferOperation } from '../shared/private-backup-transfers.ts';
 import { plantPrivateFile, privateDir, privateTempRoot, removeFixture, windowsAdmissionTimeout } from './testing/private-fixture.ts';
+import { OWNED_MEMORY_RUNTIME, runOwnedMemoryReview } from './hermes-memory-owned.ts';
+import { projectProfileFacts, workerScope, workerStateFile } from './worker-state.ts';
 
 const roots: string[] = [], stores: PrivateBackupPreparedStore[] = [];
 const sha = (v: Uint8Array | string) => createHash('sha256').update(v).digest('hex');
 function write(root: string, path: string, bytes: Buffer | string) { plantPrivateFile(join(root, path), bytes); }
 async function* input(bytes: Buffer) { for (let offset = 0; offset < bytes.length; offset += 509) yield bytes.subarray(offset, offset + 509); }
-async function fixture() {
+async function fixture(extra?: (workspaceId: string) => Promise<Map<string, Buffer>>) {
   const directory = privateTempRoot(join(realpathSync(tmpdir()), 'RealBud cold restore Ω ')); roots.push(directory);
   const key = randomBytes(32), workspaceId = randomUUID(), directoryId = randomUUID();
   const oldIdentity = JSON.stringify({ version: 1, id: randomUUID(), workerMemberKey: null });
@@ -31,11 +33,12 @@ async function fixture() {
     ['company-installation/workspace.json', Buffer.from(nextIdentity)],
     ['vault/USER.md', Buffer.from('\uFEFFFictional exact café 🏡\r\n  unfinished  ')],
     ['vault/workflow-inputs/bank.csv', Buffer.from('\uFEFFDate,Reference\r\n2026-09-21,00012\r\n')],
+    ...(extra ? await extra(workspaceId) : []),
   ]);
   for (const [path, bytes] of expected) await prepared.addFile(path, existsSync(join(directory, path)) ? sha(readFileSync(join(directory, path))) : null, input(bytes));
   await prepared.addRemoval('vault/README.md', sha('Fictional removable fixture'));
   const summary = await prepared.seal(); await prepared.close();
-  const receipt: PrivateBackupReceipt = { digest: sha('Fictional encrypted uploaded archive'), createdAt: '2026-09-21T00:00:00.000Z', workspaceId, fileCount: 3, recordCount: 0, plainBytes: [...expected.values()].reduce((n, b) => n + b.length, 0), included: ['Private fixture files'], excluded: ['Credentials'], restoreChanges: ['Review work'] };
+  const receipt: PrivateBackupReceipt = { digest: sha('Fictional encrypted uploaded archive'), createdAt: '2026-09-21T00:00:00.000Z', workspaceId, fileCount: expected.size, recordCount: 0, plainBytes: [...expected.values()].reduce((n, b) => n + b.length, 0), included: ['Private fixture files'], excluded: ['Credentials'], restoreChanges: ['Review work'] };
   const options = { directory, key, directoryId, storeId: summary.storeId, workspaceId, expectedPreparedDigest: summary.digest, receipt, assertFresh: () => {}, assertIdle: () => {}, epoch: () => 'fixture-idle' };
   return { directory, key, prepared, expected, options, receipt };
 }
@@ -174,6 +177,45 @@ describe('bounded cold private restore coordination', () => {
     const completed = parsePrivateRestoreReceipt(JSON.parse(readFileSync(join(f.directory, PRIVATE_RESTORE_RECEIPT_FILE), 'utf8')));
     expect(completed?.receipt).toEqual(f.receipt);
     expect(await applyStagedPrivateRestoreV2(f.options)).toEqual({ restored: false });
+  });
+
+  it('restores Bud’s canonical facts: a deleted worker regenerates with decisions closed and pending work resumable', windowsAdmissionTimeout(90), async () => {
+    const source = privateTempRoot(join(realpathSync(tmpdir()), 'RealBud worker facts ')); roots.push(source);
+    const profile = join(source, 'hermes/profiles/property'), signing = randomBytes(32).toString('base64');
+    const settings = 'memory:\n  write_approval: true\n  memory_enabled: true\n  user_profile_enabled: true\n';
+    const staged = (id: string, content: string) => JSON.stringify({ id, subsystem: 'memory', action: 'add', summary: 'Fictional', origin: 'background_review', created_at: 1_790_000_000, payload: { action: 'add', target: 'memory', content } });
+    write(source, 'hermes/profiles/property/config.yaml', settings); write(source, 'hermes/profiles/property/memories/MEMORY.md', 'Prefers concise updates.');
+    write(source, 'hermes/profiles/property/pending/memory/0000000a.json', staged('0000000a', 'Prefers weekly summaries.'));
+    write(source, 'hermes/profiles/property/pending/memory/0000000b.json', staged('0000000b', 'Prefers morning calls.'));
+    let workspace = '';
+    const review = (dataDir: string, directory: string, command: string, extra: Record<string, unknown> = {}) =>
+      runOwnedMemoryReview({ command, key: signing, workspaceId: workspace, profileId: 'property', runtimeId: OWNED_MEMORY_RUNTIME, profileDirectory: directory, ...extra }, { dataDir });
+    const decide = async (dataDir: string, directory: string, id: string, decision: 'approve' | 'reject') => {
+      const preview = await review(dataDir, directory, 'preview', { id }) as { ok: true; result: { reviewDigest: string } };
+      return review(dataDir, directory, 'decide', { id, expectedDigest: preview.result.reviewDigest, decision });
+    };
+    const f = await fixture(async workspaceId => {
+      workspace = workspaceId;
+      expect(await review(source, profile, 'list')).toMatchObject({ ok: true });
+      expect(await decide(source, profile, '0000000a', 'approve')).toMatchObject({ ok: true, result: { state: 'applied' } });
+      const proposed = await review(source, profile, 'propose', { scopeId: 'd'.repeat(64), input: { requestId: 'fictional-request', payload: { target: 'user', action: 'add', content: 'Fictional manager.' } } }) as { ok: true; result: { id: string } };
+      expect(await decide(source, profile, proposed.result.id, 'reject')).toMatchObject({ ok: true, result: { state: 'rejected' } });
+      const scope = workerScope(workspaceId, 'property', profile);
+      return new Map([[`worker-state/${workspaceId}/${scope.scopeId}/state.json`, readFileSync(workerStateFile(scope, source))]]);
+    });
+    await stagePrivateRestoreV2(f.options); await applyStagedPrivateRestoreV2(f.options);
+    // The worker folder is never part of a backup: the restored office has none yet.
+    const target = join(f.directory, 'hermes/profiles/property'), targetScope = workerScope(workspace, 'property', target);
+    expect(existsSync(target)).toBe(false);
+    const listed = await review(f.directory, target, 'list') as { ok: true; result: { items: { id: string; state: string }[] } };
+    expect(listed.result.items.map(item => item.state).sort()).toEqual(['applied', 'pending', 'rejected']);
+    expect(await review(f.directory, target, 'propose', { scopeId: 'd'.repeat(64), input: { requestId: 'fictional-request', payload: { target: 'user', action: 'add', content: 'Fictional manager.' } } }))
+      .toMatchObject({ ok: true, result: { id: listed.result.items.find(item => item.state === 'rejected')!.id } });
+    write(f.directory, 'hermes/profiles/property/config.yaml', settings);
+    await projectProfileFacts(targetScope, { dataDir: f.directory });
+    expect(readFileSync(join(target, 'memories/MEMORY.md'), 'utf8')).toBe('Prefers concise updates.\n§\nPrefers weekly summaries.');
+    expect(await decide(f.directory, target, '0000000b', 'approve')).toMatchObject({ ok: true, result: { state: 'applied' } });
+    expect(readFileSync(join(target, 'memories/MEMORY.md'), 'utf8')).toBe('Prefers concise updates.\n§\nPrefers weekly summaries.\n§\nPrefers morning calls.');
   });
 
   it.each([1, 2, 3, 4])('resumes exact intended files after interruption following replacement/removal %i', windowsAdmissionTimeout(93), async count => {

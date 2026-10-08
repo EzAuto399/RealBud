@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, realpath, mkdir, writeFile, readFile, rm, symlink, link, readdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { createHermesMemoryReviewService, runMemoryReviewHelper, MEMORY_REVIEW_CANDIDATE_RUNTIME, type MemoryReviewContext } from './hermes-memory-review.ts';
+import { createHermesMemoryReviewService, runMemoryReviewHelper, validateNativeMemoryRuntime, MEMORY_REVIEW_CANDIDATE_RUNTIME, type MemoryReviewContext } from './hermes-memory-review.ts';
 import { runtimeCommit } from './hermes-runtime-selection.ts';
 import { MEMORY_REVIEW_API as api, MEMORY_LEARNING_API, type MemoryReviewPreview, type MemoryLearningState } from '../shared/hermes-memory-review.ts';
 import type { MemoryProposalInput } from '../shared/hermes-memory-proposal.ts';
@@ -26,7 +26,7 @@ async function fixture(before = 'Prefers concise updates.\n§\nUse Australian En
   await writeFile(cfg, config(), { mode: 0o600 }); await writeFile(file, before, { mode: 0o600 });
   const context: MemoryReviewContext = { profileDirectory: profile, runtimeDirectory: runtime!, runtimeId: basename(dirname(runtime!)),
     profileId: 'property', workspaceId: '55555555-5555-4555-8555-555555555555', python: join(runtime!, 'venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python') };
-  const service = createHermesMemoryReviewService({ context: () => context, key: () => Buffer.alloc(32, 27), ...options }); services.push(service);
+  const service = createHermesMemoryReviewService({ context: () => context, key: () => Buffer.alloc(32, 27), invoke: runMemoryReviewHelper, validateRuntime: validateNativeMemoryRuntime, ...options }); services.push(service);
   return { directory, profile, file, proposal, cfg, context, service,
     async stage(payload: Record<string, unknown>) { await writeFile(proposal, JSON.stringify(pending(payload)), { mode: 0o600 }); },
     async preview() { return service.handle(`${api}/1234abcd`, 'GET'); },

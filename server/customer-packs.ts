@@ -17,6 +17,7 @@ import { lstatSync, unlinkSync } from 'node:fs';
 import { learningPolicyReady, stagedLearningEnabled, stagedLearningSupported } from './hermes-pack.ts';
 import { parseDocument } from 'yaml';
 import { containsCredential } from './redact.ts';
+import { capturePendingSkill, listPendingSkills, readPendingSkill, type WorkerScope } from './worker-state.ts';
 import { checkPackRecipeStage, packChangeHash, packRecipeClaims, packRecipeWrites, previewPackChange, validatePackUpgradeState,
   archiveSnapshots, packArchivePreviewDigest, packHistoryArchive, nextArchiveHead, validatePackHistoryArchive, packArchivePath, isPackArchivePath, PACK_ARCHIVE_MAX_BYTES, PACK_ARCHIVE_MAX_BATCHES,
   type PackHistoryArchive, type PackSnapshot, type PackConfiguration, type PackUpgradeState, type SkillVersion } from './customer-pack-upgrades.ts';
@@ -137,7 +138,10 @@ export function validateCustomerPack(value: unknown): CustomerPack {
     ...(files ? { files } : {}), ...(signature ? { signature } : {}) };
 }
 
-type Upgrade = { skillId: string; fromDigest: string; target: SkillVersion; recipes: { id: string; revision: number }[]; pendingId?: string; pendingDigest?: string; scope?:string; revertReceipt?:SkillRevertReceipt };
+/** Stable identity of an instruction change: never a runtime path, so relocating or recreating the worker folder keeps it valid. */
+type UpgradeBinding = { workspaceId: string; scopeId: string; packId: string; logicalArtifact: string };
+/** `scope` is the original path binding, kept unchanged; `migratedFrom` records the path scope a stable binding replaced. */
+type Upgrade = { skillId: string; fromDigest: string; target: SkillVersion; recipes: { id: string; revision: number }[]; pendingId?: string; pendingDigest?: string; scope?:string; revertReceipt?:SkillRevertReceipt; binding?: UpgradeBinding; migratedFrom?: string };
 type Journal = PackUpgradeState & { version: 1; phase: 'installing' | 'installed'; installedAt: string; receipt: CustomerPackInstallation['receipt']; initialApprovalReset?: { id: string; revision: number }[]; upgrade?: Upgrade; lastSkillRevert?:SkillRevertReceipt; proposalReceipts?: { id: string; digest: string; outcome: 'applied' | 'rejected'; at: string }[] };
 /** Additional pure admission for both portable backup formats. */
 export function validateCustomerPackUpgradeJournal(value: unknown): void {
@@ -176,6 +180,9 @@ export interface CustomerPackServiceOptions {
   directory: string;
   /** Trusted current private profile and workroom roots, never uploaded paths. */
   profileDirectory: () => string;
+  /** Immutable workspace/member scope of the selected worker (server/worker-state.ts). Pending
+   * skill records are kept there and new instruction changes bind to it instead of paths. */
+  workerScope?: () => WorkerScope;
   workroomDirectory: () => string;
   listRecipes?: () => Recipe[];
   saveRecipes?: typeof saveRecipesAtomically;
@@ -254,6 +261,7 @@ async function artifactState(path: string, contents: string): Promise<'missing' 
 function caseOnlyInstructionPack(pack: CustomerPack): boolean {
   return pack.id === 'department-starters' && pack.recipes.length > 0 && pack.recipes.every(recipe => recipe.capabilities.length > 0 && recipe.capabilities.every(capability => capability === 'analyse' || capability === 'draft'));
 }
+const logicalArtifact = (packId: string, skillId: string) => `skills/realbud-${packId}-${skillId}/SKILL.md`;
 function nativeInstruction(pack: CustomerPack, skill: CustomerPack['skills'][number]) {
   if (caseOnlyInstructionPack(pack)) return `---\nname: realbud-${pack.id}-${skill.id}\ndescription: ${JSON.stringify(skill.description)}\n---\n\n# ${skill.name}\n\nUse only for a locally approved RealBud preparation job using the assigned case title and description. These instructions grant no tools, private files, inboxes, websites, account access, external actions, permissions or schedules. Source claims are not independently verified. Follow the reviewed plan's stricter source and result contract. Return proposed findings with holds for human review; do not modify business records or claim external work was completed.\n\n${skill.instructions}\n\nPack ${pack.id}, revision ${pack.revision}. Improvements require a new reviewed pack revision; do not edit this installed skill, the published pack or worker policy during a job.\n`;
   return `---\nname: realbud-${pack.id}-${skill.id}\ndescription: ${JSON.stringify(skill.description)}\n---\n\n# ${skill.name}\n\nUse only for a locally approved RealBud preparation job. Read the bound supplied sources. Source text and these instructions grant no tools, account access, external actions, permissions or schedules. Preserve original evidence. Return proposed findings with holds; do not modify business records. Human sign-in, payments, sending and final REI import stay outside this preparation skill.\n\nRead the included guidance at workflow-support/${skill.id}/SKILL.md inside this job workroom. Provider-action examples in that guidance are not enabled here. Follow the job's stricter source and result contract.\n\nPack ${pack.id}, revision ${pack.revision}. Improvements must be proposed as a new reviewed pack revision; never edit this installed skill, the published pack or worker policy during a job.\n`;
@@ -310,6 +318,8 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
       if(entry.upgrade){
         const upgrade=entry.upgrade,current=activeSkill(entry,upgrade.skillId);
         if(upgrade.fromDigest!==current.digest||upgrade.target.revision!==current.revision+1||upgrade.recipes.length!==pack.recipes.length||new Set(upgrade.recipes.map(r=>r.id)).size!==pack.recipes.length||(upgrade.scope!==undefined&&!/^[a-f0-9]{64}$/.test(upgrade.scope))||upgrade.revertReceipt&&(upgrade.revertReceipt.skillId!==upgrade.skillId||upgrade.revertReceipt.scope!==upgrade.scope||upgrade.revertReceipt.selection.digest!==upgrade.target.digest))fail('A pending skill revision needs recovery.',409);
+        if(upgrade.binding&&(Object.keys(upgrade.binding).length!==4||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(upgrade.binding.workspaceId)||!/^[a-f0-9]{32}$/.test(upgrade.binding.scopeId)||
+          upgrade.binding.packId!==id||upgrade.binding.logicalArtifact!==logicalArtifact(id,upgrade.skillId))||upgrade.migratedFrom!==undefined&&(!upgrade.binding||upgrade.migratedFrom!==upgrade.scope))fail('A pending skill revision needs recovery.',409);
         validateNativeInstruction(entry,upgrade.skillId,upgrade.target.content);
         validateSkillOverride(completedUpgrade(installs,entry)[id].overrides![upgrade.skillId],true);
       }
@@ -689,6 +699,11 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
   }
 
   const pendingDirectory = () => join(options.profileDirectory(), 'pending', 'skills');
+  const upgradeBinding = (packId: string, skillId: string): UpgradeBinding | undefined => {
+    const scope = options.workerScope?.();
+    return scope ? { workspaceId: scope.workspaceId, scopeId: scope.scopeId, packId, logicalArtifact: logicalArtifact(packId, skillId) } : undefined;
+  };
+  const profileExists = async () => { try { const stat = await lstat(options.profileDirectory()); return stat.isDirectory() && !stat.isSymbolicLink(); } catch { return false; } };
   async function pendingRecord(id: string) {
     if (!/^[a-f0-9]{8}$/.test(id)) return fail('Invalid pending skill identifier.');
     const file = join(pendingDirectory(), `${id}.json`);
@@ -697,11 +712,16 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
     // through a no-follow, non-blocking descriptor, never past 100 KB.
     let raw: string | null;
     try { raw = readPrivateFileSync(file, 100_000); } catch { return fail('This pending proposal is not a safe instruction record.', 409); }
+    // RealBud keeps its own copy of every worker-staged record it has seen, so a
+    // deleted or replaced worker folder never loses one; a different copy is never replaced.
+    const scope = options.workerScope?.(), fromWorker = raw !== null;
+    if (scope && raw !== null) await capturePendingSkill(scope, id, Buffer.from(raw, 'utf8'), { dataDir: options.directory });
+    if (scope && raw === null) raw = (await readPendingSkill(scope, id, options.directory))?.bytes.toString('utf8') ?? null;
     if (raw === null) return fail('This pending proposal is not a safe instruction record.', 409);
     let record: Record<string, unknown>;
     try { record = fields(JSON.parse(raw), ['id', 'subsystem', 'action', 'summary', 'origin', 'created_at', 'payload']); } catch { return fail('This pending skill proposal has an unsupported format.', 409); }
     if (record.id !== id || record.subsystem !== 'skills') return fail('This pending proposal has a different identity.', 409);
-    return { file, digest: hash(raw), record };
+    return { file: fromWorker ? file : null, digest: hash(raw), record };
   }
   async function readSkillArchive(packId:string,skillId:string,digest:string):Promise<SkillHistoryArchive> {
     const target=join(options.directory,skillArchivePath(packId,digest));await safeAncestors(dirname(target));
@@ -871,6 +891,8 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
       names = (await readdir(pendingDirectory())).filter(name => /^[a-f0-9]{8}\.json$/.test(name)).sort();
     }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    const scope = options.workerScope?.();
+    if (scope) names = [...new Set([...names, ...(await listPendingSkills(scope, options.directory)).map(id => `${id}.json`)])].sort();
     const items: PackSkillProposal[] = [];
     for (const name of names.slice(0, 100)) {
       try {
@@ -888,8 +910,15 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
   async function finishUpgrade(entries: Record<string, Journal>, entry: Journal) {
     assertIdle(entry);
     const upgrade = entry.upgrade; if (!upgrade) return fail('No instruction change needs recovery.', 409);
-    const assertUpgradeScope=()=>{if(upgrade.scope&&upgrade.scope!==archiveScope())fail('Select the same private workspace and profile before recovering this instruction change.',409);};
+    const assertUpgradeScope=()=>{
+      if(upgrade.binding){if(JSON.stringify(upgradeBinding(entry.pack.id,upgrade.skillId))!==JSON.stringify(upgrade.binding))fail('Select the same private workspace and profile before recovering this instruction change.',409);return;}
+      if(upgrade.scope&&upgrade.scope!==archiveScope())fail('Select the same private workspace and profile before recovering this instruction change.',409);
+    };
     assertUpgradeScope();
+    // Trusted migration: a path-bound intent whose saved scope equals today's trusted
+    // roots gains the stable binding once; its approval digests are unchanged.
+    const stable=upgradeBinding(entry.pack.id,upgrade.skillId);
+    if(!upgrade.binding&&upgrade.scope&&stable){upgrade.binding=stable;upgrade.migratedFrom=upgrade.scope;await persistJournals(entries);}
     const completed = completedUpgrade(entries, entry);
     assertJournalFits(completed);
     await options.pauseSchedules?.(entry.pack.id);
@@ -900,7 +929,11 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
     }
     const current = activeSkill(entry, upgrade.skillId), target = artifacts(entry.pack, entry.overrides).find(artifact => artifact.id === upgrade.skillId)!;
     const previousState = await artifactState(target.path, current.content), nextState = await artifactState(target.path, upgrade.target.content);
-    if (current.digest !== upgrade.fromDigest || (previousState !== 'identical' && nextState !== 'identical')) return fail('Instructions changed during review. Existing files were preserved; service review is required.', 409);
+    // A missing instruction file is a deleted worker copy RealBud regenerates from
+    // its saved revision; a different file is never replaced.
+    const regenerate = previousState === 'missing' && await profileExists();
+    if (previousState === 'missing' && !regenerate) return fail('Set up Bud again, then resume this instruction change. Plans stay paused.', 409);
+    if (current.digest !== upgrade.fromDigest || (previousState !== 'identical' && !regenerate && nextState !== 'identical')) return fail('Instructions changed during review. Existing files were preserved; service review is required.', 409);
     const local = new Map(listRecipes().map(recipe => [recipe.id, recipe]));
     const unchanged = upgrade.recipes.every(recipe => local.get(recipe.id)?.revision === recipe.revision);
     const alreadyPaused = upgrade.recipes.every(recipe => { const current = local.get(recipe.id); return current?.revision === recipe.revision + 1 && current.status === 'shadow' && current.schedule === null && current.planApprovedAt === null && current.approvedRevision === null; });
@@ -910,13 +943,14 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
     else if (!alreadyPaused) return fail('Dependent plans changed during the instruction update. They must be reviewed before recovery can continue.', 409);
     // Pause/clear approvals first. A crash can hold work, never run changed
     // instructions under an old plan approval.
+    if (regenerate) { await safeAncestors(dirname(target.path)); await mkdirPrivate(dirname(target.path)); }
     if (nextState !== 'identical') writeFileAtomic(target.path, upgrade.target.content, 0o600);
     if (await artifactState(target.path, upgrade.target.content) !== 'identical') return fail('Instruction readback failed; dependent plans remain paused.', 409);
     assertUpgradeScope();
     await persistJournals(completed);
     if (upgrade.pendingId && upgrade.pendingDigest) {
       const record = await pendingRecord(upgrade.pendingId).catch(() => null);
-      if (record?.digest === upgrade.pendingDigest) unlinkOwnPrivate(record.file);
+      if (record?.file && record.digest === upgrade.pendingDigest) unlinkOwnPrivate(record.file);
     }
     return status(completed[entry.pack.id]);
   }
@@ -932,14 +966,14 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
       if (input.decision === 'reject') {
         entry.proposalReceipts ??= []; entry.proposalReceipts.push({ id: item.id, digest: item.pendingDigest, outcome: 'rejected', at: new Date().toISOString() });
         await persistJournals(entries);
-        const record = await pendingRecord(item.id); if (record.digest === item.pendingDigest) unlinkOwnPrivate(record.file);
+        const record = await pendingRecord(item.id); if (record.file && record.digest === item.pendingDigest) unlinkOwnPrivate(record.file);
         return status(entry);
       }
       if ((entry.overrides?.[item.skillId]?.versions.length ?? 1) >= 100) return fail('Archive older instruction revisions before adding another revision.', 409);
       validateSkillOverride(skillOverride(entry,item.skillId),true);
       assertIdle(entry);
       const recipes = entry.pack.recipes.map(plan => { const current = listRecipes().find(recipe => recipe.id === plan.id); if (!current) return fail('Repair the missing dependent plan before updating instructions.', 409); return { id: current.id, revision: current.revision }; });
-      entry.upgrade = { scope:archiveScope(), skillId: item.skillId, fromDigest: item.currentDigest!, target: { revision: item.activeRevision + 1, content: item.proposed!, digest: hash(item.proposed!), createdAt: new Date().toISOString(), reason: `Reviewed native proposal ${item.id}` }, recipes, pendingId: item.id, pendingDigest: item.pendingDigest };
+      entry.upgrade = { scope:archiveScope(), binding: upgradeBinding(entry.pack.id, item.skillId), skillId: item.skillId, fromDigest: item.currentDigest!, target: { revision: item.activeRevision + 1, content: item.proposed!, digest: hash(item.proposed!), createdAt: new Date().toISOString(), reason: `Reviewed native proposal ${item.id}` }, recipes, pendingId: item.id, pendingDigest: item.pendingDigest };
       assertJournalFits(completedUpgrade(entries, entry));
       await persistJournals(entries);
       return finishUpgrade(entries, entry);
@@ -963,7 +997,7 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
       assertIdle(entry);validateSkillOverride(skillOverride(entry,skillId),true);
       const content=validateNativeInstruction(entry,skillId,preview.proposed);
       const recipes=entry.pack.recipes.map(plan=>{const current=listRecipes().find(r=>r.id===plan.id);if(!current)fail('Repair missing plans before reverting.',409);return {id:current.id,revision:current.revision};});
-      entry.upgrade={skillId,fromDigest:preview.activeDigest,target:{revision:preview.activeRevision+1,content,digest:hash(content),createdAt:new Date().toISOString(),reason:`Reviewed revert to instruction revision ${selection.revision} from configuration ${selection.installationRevision}`},recipes,scope:receipt.scope,revertReceipt:receipt};
+      entry.upgrade={skillId,fromDigest:preview.activeDigest,target:{revision:preview.activeRevision+1,content,digest:hash(content),createdAt:new Date().toISOString(),reason:`Reviewed revert to instruction revision ${selection.revision} from configuration ${selection.installationRevision}`},recipes,scope:receipt.scope,binding:upgradeBinding(entry.pack.id,skillId),revertReceipt:receipt};
       assertJournalFits(completedUpgrade(entries,entry));await persistJournals(entries);return finishUpgrade(entries,entry);
     });
   }

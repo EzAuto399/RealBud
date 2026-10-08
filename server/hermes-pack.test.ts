@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { applyManagedModelProfile, applyPropertyPack, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelConfig, managedModelProfile, mergePropertyPolicy, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS, propertyProfileDir, RETIRED_PACK_SKILLS, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, WORKER_ACP_TOOLSETS, WORKER_BROWSER_POLICY, WORKER_DEFERRED_TOOLS, WORKER_DIRECT_TOOLS, WORKER_DISABLED_TOOLSETS, WORKER_DISABLED_VAULTS, WORKER_DENIED_COMMANDS, MEMORY_SCHEMA_READY_COMMITS, yamlBlock } from "./hermes-pack.ts";
+import { applyManagedModelProfile, applyPropertyPack, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelConfig, managedModelProfile, mergePropertyPolicy, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS, propertyProfileDir, RETIRED_PACK_SKILLS, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, WORKER_ACP_TOOLSETS, WORKER_BROWSER_POLICY, WORKER_DEFERRED_TOOLS, WORKER_DIRECT_TOOLS, WORKER_DISABLED_TOOLSETS, WORKER_DISABLED_VAULTS, WORKER_DENIED_COMMANDS, MEMORY_SCHEMA_READY_COMMITS, shippedProfileDigests, yamlBlock } from "./hermes-pack.ts";
 import { MANAGED_MODEL_CHOICES } from "../shared/managed-model-choices.ts";
 import { HERMES_RECOMMENDED } from "./hermes-releases.ts";
 import { releaseHome, resetRuntimeSelectionForTests, saveRuntimeSelection, selectedHermesCli } from "./hermes-runtime-selection.ts";
@@ -608,6 +608,16 @@ describe("migratePropertyProfileFromLegacyHermes", () => {
     expect(migratePropertyProfileFromLegacyHermes(home)).toEqual({ migrated: false });
     expect(packInstalled(home)).toBe(true);
     void legacy;
+  });
+});
+
+describe("shippedProfileDigests", () => {
+  it("names the current pack SOUL/skills and earlier shipped revisions, never an office edit", () => {
+    const shipped = shippedProfileDigests(), digest = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
+    expect(shipped.has("SOUL.md", digest(join(PACK_DIR, "SOUL.md")))).toBe(true);
+    expect(shipped.has("skills/morning-arrears/SKILL.md", digest(join(PACK_DIR, "skills", "morning-arrears", "SKILL.md")))).toBe(true);
+    expect(shipped.has("SOUL.md", "e7991443b5d1bc198277b04845090ca13dccf0d617df4758fce79e8d024faa04")).toBe(true);
+    expect(shipped.has("SOUL.md", createHash("sha256").update("Fictional office edit.\n").digest("hex"))).toBe(false);
   });
 });
 

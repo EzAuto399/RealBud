@@ -5,7 +5,7 @@ import { mkdtemp, realpath, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createHermesMemoryReviewService, type MemoryReviewContext } from './hermes-memory-review.ts';
+import { createHermesMemoryReviewService, runMemoryReviewHelper, validateNativeMemoryRuntime, type MemoryReviewContext } from './hermes-memory-review.ts';
 import { MEMORY_RECOVERY_API as api, type MemoryRecoveryPage } from '../shared/hermes-memory-recovery.ts';
 import { MEMORY_REVIEW_API, type MemoryReviewPreview } from '../shared/hermes-memory-review.ts';
 import type { MemoryProposalInput } from '../shared/hermes-memory-proposal.ts';
@@ -25,7 +25,7 @@ async function fixture(input: MemoryProposalInput = addInput) {
   const context: MemoryReviewContext = { profileDirectory: f.profile, runtimeDirectory: f.runtime, runtimeId: f.runtimeId,
     workspaceId: '77777777-7777-4777-8777-777777777777', profileId: 'property', python: join(f.runtime, 'venv/bin/python') };
   const rootKey = Buffer.alloc(32, 41);
-  const open = () => { const service = createHermesMemoryReviewService({ context: () => context, key: () => rootKey }); services.push(service); return service; };
+  const open = () => { const service = createHermesMemoryReviewService({ context: () => context, key: () => rootKey, invoke: runMemoryReviewHelper, validateRuntime: validateNativeMemoryRuntime }); services.push(service); return service; };
   const service = open(), capability = service.proposalIntegration('fictional-interrupted-chat', () => true)!;
   const key = createHmac('sha256', rootKey).update(`realbud-memory-review-v1\0${context.workspaceId}\0${context.profileId}`).digest();
   const { python, ...binding } = context;

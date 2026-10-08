@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Recipe } from '../shared/contracts.ts';
@@ -10,6 +10,7 @@ import { DATA_DIR } from './config.ts';
 import { austinCustomerPack } from './customer-pack-definition.ts';
 import { createCustomerPackService as createPackService, validateCustomerPack } from './customer-packs.ts';
 import { getRecipe } from './recipes.ts';
+import { workerScope } from './worker-state.ts';
 import { LoopManager } from './routines.ts';
 import { FICTIONAL_PACK_KEYS, withFictionalPublisher } from './testing/pack-publisher.ts';
 import { privateTempRoot, removeFixture } from './testing/private-fixture.ts';
@@ -318,6 +319,63 @@ describe('portable customer pack lifecycle', () => {
     expect((await f.service.proposals()).proposals[0].state).toBe('unsupported');
     await expect(f.service.reviewProposal({ id: '../escape', pendingDigest: '0'.repeat(64), currentDigest: '', decision: 'approve' })).rejects.toThrow(/identifier/);
     expect(await readFile(nativePath(f.root), 'utf8')).toBe(f.baseline); expect(f.resetRecipeApprovals).not.toHaveBeenCalled();
+  });
+});
+
+describe('worker folder deleted or replaced', () => {
+  const scoped = (f: Awaited<ReturnType<typeof installedFixture>>, workspaceId: string, profile = join(f.root, 'profile')) =>
+    ({ ...f.options, profileDirectory: () => profile, workerScope: () => workerScope(workspaceId, 'property', profile) });
+  it('resumes an approved, interrupted instruction change from RealBud’s saved record and stable binding', async () => {
+    const f = await installedFixture(), workspaceId = randomUUID(), improved = `${f.baseline}\nRecoverable improvement.\n`; await stage(f.root, improved);
+    const reset = f.options.resetRecipeApprovals;
+    const failing = createCustomerPackService({ ...scoped(f, workspaceId), resetRecipeApprovals: expected => { reset(expected); throw new Error('Synthetic interruption after durable plan reset'); } });
+    const item = (await failing.proposals()).proposals[0];
+    await expect(failing.reviewProposal({ id: item.id, pendingDigest: item.pendingDigest, currentDigest: item.currentDigest, decision: 'approve' })).rejects.toThrow(/interruption/);
+    const saved = JSON.parse(await readFile(join(f.root, 'customer-packs.json'), 'utf8')).installs[f.pack.id].upgrade;
+    expect(saved.binding).toEqual({ workspaceId, scopeId: expect.stringMatching(/^[a-f0-9]{32}$/), packId: f.pack.id, logicalArtifact: `skills/realbud-${f.pack.id}-${f.pack.skills[0].id}/SKILL.md` });
+    await rm(join(f.root, 'profile'), { recursive: true });
+    const gone = createCustomerPackService(scoped(f, workspaceId));
+    expect((await gone.proposals()).pendingUpgrades).toHaveLength(1);
+    await expect(gone.handle('/api/customer-packs/austin-office/recover-instructions', 'POST', { expectedDigest: f.preview.digest })).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/Set up Bud again/) });
+    await expect(gone.assertReadyForRecipe(f.pack.recipes[0].id)).rejects.toThrow(/recovery/);
+    // A replacement worker folder at another location: the stable binding still matches; the paths do not.
+    const replacement = join(f.root, 'profile-replacement'); await mkdir(replacement, { recursive: true, mode: 0o700 });
+    const restored = createCustomerPackService(scoped(f, workspaceId, replacement));
+    expect(await restored.handle('/api/customer-packs/austin-office/recover-instructions', 'POST', { expectedDigest: f.preview.digest })).toMatchObject({ status: 200 });
+    expect(await readFile(join(replacement, 'skills/realbud-austin-office-email-inbox-triage/SKILL.md'), 'utf8')).toBe(improved);
+    expect(f.resetRecipeApprovals).toHaveBeenCalledTimes(1);
+    // The decided proposal stays closed although only RealBud's copy remains.
+    expect((await restored.proposals()).proposals).toEqual([]);
+  });
+  it('migrates a path-bound intent once under the same trusted roots, keeping its approval binding, and refuses it after relocation', async () => {
+    const f = await installedFixture(), workspaceId = randomUUID(), improved = `${f.baseline}\nLegacy improvement.\n`; await stage(f.root, improved);
+    const reset = f.options.resetRecipeApprovals;
+    const legacy = createCustomerPackService({ ...f.options, resetRecipeApprovals: expected => { reset(expected); throw new Error('Synthetic interruption after durable plan reset'); } });
+    const item = (await legacy.proposals()).proposals[0];
+    await expect(legacy.reviewProposal({ id: item.id, pendingDigest: item.pendingDigest, currentDigest: item.currentDigest, decision: 'approve' })).rejects.toThrow(/interruption/);
+    const journal = () => readFile(join(f.root, 'customer-packs.json'), 'utf8').then(text => JSON.parse(text).installs[f.pack.id].upgrade);
+    const original = await journal(); expect(original.binding).toBeUndefined();
+    const moved = join(f.root, 'profile-moved'); await mkdir(moved, { recursive: true, mode: 0o700 });
+    await expect(createCustomerPackService(scoped(f, workspaceId, moved)).handle('/api/customer-packs/austin-office/recover-instructions', 'POST', { expectedDigest: f.preview.digest })).rejects.toMatchObject({ status: 409 });
+    expect((await journal()).binding).toBeUndefined();
+    let pause = true;
+    const same = createCustomerPackService({ ...scoped(f, workspaceId), pauseSchedules: async () => { if (pause) throw new Error('Synthetic pause failure'); } });
+    await expect(same.handle('/api/customer-packs/austin-office/recover-instructions', 'POST', { expectedDigest: f.preview.digest })).rejects.toThrow('Synthetic pause failure');
+    const migrated = await journal();
+    expect(migrated).toMatchObject({ scope: original.scope, migratedFrom: original.scope, pendingDigest: original.pendingDigest, binding: { workspaceId, packId: f.pack.id } });
+    pause = false;
+    expect(await same.handle('/api/customer-packs/austin-office/recover-instructions', 'POST', { expectedDigest: f.preview.digest })).toMatchObject({ status: 200 });
+    expect(await readFile(nativePath(f.root), 'utf8')).toBe(improved);
+  });
+  it('never resumes from a worker copy that changed after approval', async () => {
+    const f = await installedFixture(), workspaceId = randomUUID(), improved = `${f.baseline}\nApproved text.\n`; const file = await stage(f.root, improved);
+    const reset = f.options.resetRecipeApprovals;
+    const failing = createCustomerPackService({ ...scoped(f, workspaceId), resetRecipeApprovals: expected => { reset(expected); throw new Error('Synthetic interruption after durable plan reset'); } });
+    const item = (await failing.proposals()).proposals[0];
+    await expect(failing.reviewProposal({ id: item.id, pendingDigest: item.pendingDigest, currentDigest: item.currentDigest, decision: 'approve' })).rejects.toThrow(/interruption/);
+    await writeFile(file, JSON.stringify({ changed: true }));
+    await expect(createCustomerPackService(scoped(f, workspaceId)).handle('/api/customer-packs/austin-office/recover-instructions', 'POST', { expectedDigest: f.preview.digest })).rejects.toMatchObject({ status: 409 });
+    expect(await readFile(nativePath(f.root), 'utf8')).toBe(f.baseline);
   });
 });
 
