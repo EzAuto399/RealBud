@@ -82,6 +82,7 @@ Use a skill when it fits the request:
 ## Lessons
 - When scripting build → install, gate the install on the build's success and on the new app's version string; never swap /Applications from a stale release/ folder.
 <!-- Newest on top. "When X, do Y". Delete what no longer applies. -->
+- When deploying realbud.app, apply every new `supabase/migrations` file to production first; `scripts/website-deploy-bundle.sh` lists them and needs `MIGRATIONS_APPLIED=1`. Code ahead of the schema showed every owner "Computer links are not ready" (8 Oct).
 - When a UI error tells someone to do something, put that fix on the same screen (control, return link, or copy-for-owner) and show the limit before the action; the owner hit a link page at the 5-computer cap with no way to disconnect (8 Oct).
 - When a Package Windows run for `main` is building an installer you need, merge nothing into `main` until it finishes; every push cancels the running build (`cancel-in-progress`). Batch the merges instead.
 - When testing in a VM on this Mac, keep at least 30 GB free on the internal disk; a full host disk corrupted the Windows VM beyond repair (6 Oct).
