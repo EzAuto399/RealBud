@@ -18,7 +18,9 @@ describe("links in chat", () => {
       connect: noop, check: noop, refresh: noop,
     } }));
     expect(view("not_connected", true)).toMatch(/<button[^>]*>Connect bank feed<\/button>/);
-    expect(view("not_connected", false)).not.toContain("<button");
+    // A member who cannot connect gets no Connect control, only the hand-off to the owner.
+    expect(view("not_connected", false)).not.toMatch(/<button[^>]*>Connect bank feed<\/button>/);
+    expect(view("not_connected", false)).toMatch(/<button[^>]*>[^<]*(?:<[^b][^>]*>[^<]*)*Copy request for your owner/);
     expect(view("not_connected", false)).toContain("Only the office owner or an administrator can connect the bank feed.");
     expect(view("connected", true)).toContain("Bank feed connected (Office account).");
   });
