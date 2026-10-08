@@ -32,6 +32,7 @@ import { attendedRunLabel, jobRunStatusChip, jobRunSummaryLine, safeJobRunDetail
 import { budFacingCopy } from "@/lib/bud-setup";
 import { PortalJobActions } from "./schedule/PortalJobActions";
 import { WorkflowPacksCard } from "./schedule/WorkflowPacksCard";
+import { refreshSetupReads } from "@/lib/use-setup-state";
 import {
   CHANNEL_PLATFORM_LABEL,
   LIVE_CHANNEL_PLATFORMS,
@@ -346,6 +347,7 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
         <div id="you-packs">
           <WorkflowPacksCard
             onInstalled={() => {
+              refreshSetupReads();
               void api("/api/recipes")
                 .then((body) => setRecipes(Array.isArray(body.recipes) ? body.recipes : []))
                 .catch(() => {});
