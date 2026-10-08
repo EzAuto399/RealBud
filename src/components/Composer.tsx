@@ -27,6 +27,8 @@ import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { canUseTaskStarter } from "@/lib/pm-task-starters";
 import { mergeWorkContext } from "@/lib/work-continuation";
+import { buildDeskQueue } from "@/lib/desk-queue";
+import { deskCaseInstruction, deskCaseNextStep } from "@/lib/desk-ask-context";
 import { askMessageSizeError } from "@shared/ask-message";
 
 /** The active @mention query at the caret: the text between an `@` that
@@ -58,6 +60,7 @@ export function Composer({
   readiness,
   starter,
   onConnectApp,
+  onCaseAddress,
 }: {
   bot?: Bot;
   group?: Group;
@@ -80,6 +83,8 @@ export function Composer({
   starter?: { id: number; text: string };
   /** Opens the in-Ask key/sign-in flow — never navigates to You. */
   onConnectApp?: (label?: string) => void;
+  /** Address of the attached Desk case whose next step this composer offers, so Ask's chips skip it. */
+  onCaseAddress?: (address: string | null) => void;
 }) {
   const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
@@ -192,6 +197,25 @@ export function Composer({
   const accessWithdrawn = askBlocked && state.connected && !state.desk?.recovery?.active && Boolean(state.hermes?.modelAccess?.withdrawn);
   const interactionBlocked = Boolean(DESIGN_PREVIEW_REASON) || Boolean(approval) || askBlocked || Boolean(actionPending) || attachmentCopies > 0;
   dictationBlocked.current = Boolean(approval) || Boolean(actionPending);
+  // The attached Desk case's one next step, read from its current Desk state.
+  const caseRef = productAsk ? attachments.find(item => item.id.startsWith("desk-case-")) : undefined;
+  const caseId = caseRef?.id.slice("desk-case-".length);
+  const deskCase = useMemo(() => caseId && state.desk ? buildDeskQueue(state.desk).find(row => row.id === caseId) : undefined, [caseId, state.desk]);
+  const caseStep = deskCase ? deskCaseNextStep(deskCase) : null;
+  const caseInstruction = deskCase && caseStep ? deskCaseInstruction(deskCase, caseStep.intent) : null;
+  // Already in the composer: offering it again would be a button that changes nothing.
+  const offerCaseStep = caseInstruction !== null && text.trim() !== caseInstruction;
+  const caseStepAddress = caseStep ? deskCase?.address ?? null : null;
+  useEffect(() => {
+    onCaseAddress?.(caseStepAddress);
+    return () => onCaseAddress?.(null);
+  }, [caseStepAddress, onCaseAddress]);
+  // Same path as a Desk handoff: fills this intent's instruction, keeps a typed request, never sends.
+  // The handed-off attachment stays as it is, so unsaved Desk edits it carries are kept.
+  const stageCaseStep = () => {
+    if (caseRef?.kind !== "paste" || caseInstruction === null) return;
+    dispatch({ type: "stageAskContext", context: { id: crypto.randomUUID(), sourceKey: caseRef.id, title: caseRef.label ?? "", text: caseRef.text, instruction: caseInstruction } });
+  };
   // A send tried while Bud is not ready explains itself; the draft stays put.
   const [blockedNotice, setBlockedNotice] = useState(false);
   useEffect(() => { if (!askBlocked) setBlockedNotice(false); }, [askBlocked]);
@@ -718,6 +742,7 @@ export function Composer({
           </div>
         )}
         {productAsk && attachments.filter(item => item.id.startsWith("desk-case-") || item.id.startsWith("job-result-")).map(item => <WorkContextCard key={item.id} title={item.kind === "paste" ? item.label || "Attached work" : "Attached work"} status="Reference attached" detail="Continue this work below. Bud must recheck facts before taking action.">
+          {item.id === caseRef?.id && caseStep && offerCaseStep && <button type="button" className="pm-control mr-1.5 border border-agency/30 bg-agency text-left text-white hover:bg-agency-hover disabled:cursor-not-allowed disabled:opacity-40" aria-label={`Next step: ${caseStep.label}`} disabled={Boolean(approval) || Boolean(actionPending)} onClick={stageCaseStep}><span className="shrink-0 text-[12px] text-white/85">Next step</span>{caseStep.label}</button>}
           {item.id.startsWith("desk-case-") && <button type="button" className="pm-control" onClick={() => { openDeskCase(item.id.replace(/^desk-case-/, "")); onBackToDesk?.(); }}>Back to this case</button>}
           <button type="button" className="pm-control" aria-label={`Remove work context: ${item.kind === "paste" ? item.label || "Attached work" : "Attached work"}`} onClick={() => removeAttachment(item.id)}>Remove from this request</button>
         </WorkContextCard>)}
