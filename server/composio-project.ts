@@ -197,7 +197,12 @@ export async function createProject(orgKey: string, name: string): Promise<Compo
   const projectName = checkedProjectName(name);
   // Ask for the key up front: the office needs it to use the project at all, and
   // Composio only returns it from this call and from regenerate.
-  const body = await platformCall(key, "POST", "/org/owner/project/new", { name: projectName, should_create_api_key: true });
+  // Keep the connection branding in parity with managed-gateway/composio-org.ts.
+  // The office name remains its identity; the connection screen presents RealBud.
+  const body = await platformCall(key, "POST", "/org/owner/project/new", {
+    name: projectName, should_create_api_key: true,
+    config: { display_name: "RealBud", logo_url: "https://assets.composio.dev/project-files/pr_WlL-cuUFVGLK/xQiBOAlskQozlBcFpoztri47XI9k.png" },
+  });
   return readProject(body, "Composio did not return a readable new project. Check the project in the Composio dashboard.", true);
 }
 
