@@ -211,7 +211,9 @@ import type { WorkflowRecord } from "./workflow-database.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN, type BrowserTaskGrant } from "../shared/browser-task.ts";
 import { browserApprovalCardFrom, stopBrowserApprovalCards } from "./browser-approval-card.ts";
 import { applyPropertyPack, ensurePropertyPack, MANAGED_MODEL_KEY_ENV, propertyProfileDir, shippedProfileDigests } from "./hermes-pack.ts";
-import { importLegacyProfileFacts, projectProfileFacts, retireRepairedArtifacts, workerScope } from "./worker-state.ts";
+import { importLegacyProfileFacts, MEMORY_HELD_MESSAGE, memoryHeldForLaunch, projectProfileFacts, retireRepairedArtifacts, workerScope } from "./worker-state.ts";
+import { legacyProposalContextIdentity } from "./hermes-memory-review.ts";
+import { ensureWorkspaceMemorySigning } from "./hermes-memory-signing.ts";
 import { applyHandsReadiness, hermesStatus } from "./hermes-status.ts";
 import { tryHermesPing } from "./hermes-hands.ts";
 import { ASK_ATTACH_MAX_BYTES, saveAskAttachment } from "./ask-attach.ts";
@@ -2111,6 +2113,8 @@ async function startSeatTurn(
   await assertRuntimeIntegrity();
   // The worker reads memory and skills from this seat's profile: project RealBud's copy first.
   await projectProfileFacts(workerFactsScope(), { shipped: shippedProfileDigests() });
+  // Memory RealBud has not approved (changed outside it, unsafe or too large) never reaches the worker.
+  if ((await memoryHeldForLaunch(workerFactsScope())).length) throw Object.assign(new Error(MEMORY_HELD_MESSAGE), { status: 409 });
   const model = bot.modelSelection.model;
 
   // an edit hands us its already-branched user message; a plain send appends
@@ -6136,11 +6140,18 @@ desk.setMemberKey(workspaceIdentity.workerMemberKey ?? '');
 // worker profile is a projection, so deleting or replacing the worker loses nothing.
 const workerFactsScope = () => workerScope(workspaceIdentity.id, currentWorkerProfile().profile, propertyProfileDir());
 const projectWorkerFacts = () => withWorkerProfile(desk.memberKeyForWorker(), () => projectProfileFacts(workerFactsScope(), { shipped: shippedProfileDigests() }));
-await withWorkerProfile(desk.memberKeyForWorker(), async () => {
-  const scopes = [workerFactsScope(), withWorkerProfile(null, workerFactsScope)].filter((scope, index, all) => all.findIndex(other => other.scopeId === scope.scopeId) === index);
-  try { await importLegacyProfileFacts(scopes, { shipped: shippedProfileDigests() }); await projectWorkerFacts(); }
-  catch { oplog('boot', 'Bud’s saved learning needs service recovery; its profile was left unchanged.'); }
-});
+// Each seat imports inside its own profile, so helper-era proposal identities and
+// signing keys bind to the right scope before any backup or review runs.
+try {
+  for (const seat of [...new Set([desk.memberKeyForWorker() || null, null])]) {
+    await withWorkerProfile(seat, () => importLegacyProfileFacts([workerFactsScope()], {
+      shipped: shippedProfileDigests(),
+      legacyProposalContext: scope => legacyProposalContextIdentity(scope.workspaceId),
+      afterImport: async () => { await ensureWorkspaceMemorySigning(Buffer.from(desk.recoveryKeyHex(), 'hex'), workspaceIdentity.id); },
+    }));
+  }
+  await projectWorkerFacts();
+} catch { oplog('boot', 'Bud’s saved learning needs service recovery; its profile was left unchanged.'); }
 const memoryReviews = createHermesMemoryReviewService({ context: () => memoryReviewContext(workspaceIdentity.id),
   key: () => Buffer.from(desk.recoveryKeyHex(), 'hex'),
   // The automatic learning pass runs off-request, so it must select the
