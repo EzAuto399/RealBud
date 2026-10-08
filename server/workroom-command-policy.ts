@@ -2,7 +2,8 @@
 // (docs/decisions/2026-10-02-workroom-script-approvals.md). Only two shapes are
 // `auto`: one reviewed bundled document script run as
 // `<runtimeHome>/hermes-agent/venv/bin/python3 -E -s <script> ...` from a
-// pinned runtime commit whose scripts directory hashes match, or a plain
+// pinned runtime commit whose scripts directory hashes match, inside that
+// release's own intact runtime (`documentRuntimeRefusal`), or a plain
 // cat/head/wc/ls of workroom files. Everything else, including anything that
 // does not parse cleanly, is `ask`.
 //
@@ -14,6 +15,8 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { BUD_WORK_FOLDER } from "./vault.ts";
+import { documentRuntimeRefusal } from "./hermes-document-deps.ts";
+import { runtimeCommit as commitOf } from "./hermes-runtime-selection.ts";
 
 export type WorkroomCommandDecision = "auto" | "ask";
 
@@ -235,7 +238,10 @@ export function classifyWorkroomCommand({ command, workroom, runtimeHome, runtim
   }
   // `-E -s` ignores PYTHON* variables (PYTHONPATH, PYTHONSTARTUP) and the user
   // site; not `-I`, which drops the script directory the sibling imports need.
-  if (!runtimeHome || !runtimeCommit || !runtimePython(program, runtimeHome)) return "ask";
+  // The interpreter must be the named release's own, in a venv RealBud would
+  // still add libraries to: a legacy, unknown or replaced runtime asks.
+  if (!runtimeHome || !runtimeCommit || commitOf(basename(runtimeHome)) !== runtimeCommit || documentRuntimeRefusal(runtimeHome) ||
+    !runtimePython(program, runtimeHome)) return "ask";
   const [e, s, script, ...scriptArgs] = args;
   if (e !== "-E" || s !== "-s" || !script || !reviewedScript(script, runtimeHome, runtimeCommit)) return "ask";
   return argumentsStayInWorkroom(scriptArgs, workroom) ? "auto" : "ask";
