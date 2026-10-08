@@ -1,6 +1,6 @@
 // Compatibility queue: V2 snapshot + V3 book → Desk case rows. Import holds are not wording cases.
 import type { DeskSnapshot, Draft, DraftStatus, WorkItem, WorkKind, WorkState } from "../../shared/contracts.ts";
-import { startOfDay } from "./au.ts";
+import { relativeAgo, startOfDay } from "./au.ts";
 
 /** Same key as server/desk.ts REI_PAGE_CHANGED_KEY (server/rei-morning-refresh.test.ts builds this queue from a real Desk). */
 const REI_PAGE_CHANGED_KEY = "rei-page-changed:";
@@ -488,6 +488,33 @@ export function buildDeskQueue(snap: DeskSnapshot): DeskQueueItem[] {
     (a, b) =>
       order[a.bucket] - order[b.bucket] || licenseeFirst(a) - licenseeFirst(b) || b.updatedAt - a.updatedAt,
   );
+}
+
+const WAITING_REASON: Partial<Record<string, string>> = {
+  held: "Held · needs checking",
+  stale: "Stale · needs a fresh check",
+  failed: "Failed · needs checking",
+  "effect-unknown": "Result unknown · needs checking",
+  "handoff-expired": "Handoff expired",
+};
+const BUCKET_REASON: Record<QueueBucket, string> = { now: "Needs you", next: "Up next", waiting: "Waiting", done: "Decided" };
+
+/** Why a row sits where it does, in a few words, from facts the row already
+ *  carries (the sort above: bucket, licensee first, then latest change). No
+ *  scores, risk or deadlines: RealBud does not have them. */
+export function queueReason(row: DeskQueueItem, now = Date.now()): string {
+  const why =
+    row.kind === "licensee-required"
+      ? "Licensee escalation"
+      : row.kind === "import-issue"
+        ? row.meta.startsWith("REI's page changed") ? "REI page changed" : "Source row not matched"
+        : row.bucket === "next"
+          ? row.state === "preparing" ? "Preparing" : "On the book"
+          : row.bucket === "waiting"
+            ? (WAITING_REASON[row.state] ?? "")
+            : "";
+  const when = row.updatedAt > 0 ? `Changed ${relativeAgo(row.updatedAt, now)}` : "";
+  return [why, when].filter(Boolean).join(" · ") || BUCKET_REASON[row.bucket];
 }
 
 export function filterDeskQueue(rows: DeskQueueItem[], filter: QueueFilter, query = ""): DeskQueueItem[] {

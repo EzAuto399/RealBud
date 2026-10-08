@@ -13,12 +13,14 @@ import {
   buildDeskQueue,
   filterDeskQueue,
   queueCounts,
+  queueReason,
   type DeskQueueItem,
   type DeskRecoveryPlan,
   type QueueCounts,
   type QueueFilter,
 } from "@/lib/desk-queue";
 import { deskHandsStatus, missAction } from "@/lib/hands-label";
+import { stableOrder } from "@/lib/schedule-rows";
 import { draftViaLine, phoneChip, phoneChipTone, phonePaired } from "@/lib/phone-label";
 import { StatusLabel } from "./pm";
 import { DeskBook } from "./desk/DeskBook";
@@ -327,8 +329,30 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
     const ids = new Set(taskScope.ids);
     return rows.filter(row => row.propertyId && ids.has(row.propertyId));
   }, [rows, taskScope]);
-  const visible = useMemo(() => filterDeskQueue(scopedRows, filter, query).filter(row => caseKind === "all" || row.kind === caseKind), [scopedRows, filter, query, caseKind]);
+  const live = useMemo(() => filterDeskQueue(scopedRows, filter, query).filter(row => caseKind === "all" || row.kind === caseKind), [scopedRows, filter, query, caseKind]);
+  // While a case is open, new data never reorders the rows under the person
+  // (Schedule does the same). Changing the view or Update order applies the live order.
+  const viewKey = `${mode}|${filter}|${query}|${caseKind}|${taskScope?.label ?? ""}`;
+  const reviewed = useRef<{ view: string; ids: string[] } | null>(null);
+  const [, setOrderNonce] = useState(0);
+  const { rows: visible, updates: orderUpdates } = reviewOrder(selectedId && reviewed.current?.view === viewKey ? reviewed.current.ids : null, live);
+  reviewed.current = { view: viewKey, ids: visible.map((row) => row.id) };
+  const updateOrder = () => {
+    reviewed.current = null;
+    setOrderNonce((value) => value + 1);
+    document.getElementById("desk-queue-list")?.focus();
+  };
   const selected = visible.find((row) => row.id === selectedId) ?? visible[0];
+  // A new licensee escalation joins the end of a held order, so it is always announced too.
+  const licenseeSeen = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (!snap) return;
+    const seen = licenseeSeen.current;
+    const licensee = rows.filter((row) => row.kind === "licensee-required");
+    licenseeSeen.current = new Set(licensee.map((row) => row.id));
+    const fresh = seen ? licensee.find((row) => !seen.has(row.id)) : undefined;
+    if (fresh) setAnnounce(`New licensee escalation · ${fresh.address.split(",")[0]?.trim() || fresh.address}`);
+  }, [rows]);
   const counts = queueCounts(scopedRows);
   const askAboutCase = (intent: DeskAskIntent = "next") => {
     if (!snap || !selected) return;
@@ -596,6 +620,8 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
             checkState={checkState}
             liveEmpty={liveEmpty}
             selectedId={selected?.id}
+            orderUpdates={orderUpdates}
+            onUpdateOrder={updateOrder}
             onClose={() => setQueueOpen(false)}
             onHighlight={setSelectedId}
             onSelect={(id) => {
@@ -936,8 +962,19 @@ function queueRowId(id: string): string {
   return `queue-row-${id}`;
 }
 
+/** Rows in the order the person is reviewing: rows stay put, finished rows drop
+ *  out and new rows join the end. `updates` says the live order differs. */
+export function reviewOrder(frozen: readonly string[] | null, live: readonly DeskQueueItem[]): { rows: DeskQueueItem[]; updates: boolean } {
+  if (!frozen) return { rows: [...live], updates: false };
+  const liveIds = live.map((row) => row.id);
+  const byId = new Map(live.map((row) => [row.id, row]));
+  const ids = stableOrder(frozen, liveIds);
+  return { rows: ids.map((id) => byId.get(id)!), updates: ids.some((id, index) => id !== liveIds[index]) };
+}
+
 /** A queue row: a pointer to the case, two lines, plus the licensee badge so a
- *  licensee hold is conspicuous before the case is opened. */
+ *  licensee hold is conspicuous before the case is opened, and one muted line
+ *  saying why the row sits where it does. */
 function QueueRow({ row, selected, onSelect }: { row: DeskQueueItem; selected: boolean; onSelect: () => void }) {
   const licensee = row.kind === "licensee-required";
   const meta = licensee ? row.meta : `${CASE_KIND_LABELS[row.kind] ?? row.kind} · ${row.meta}`;
@@ -960,6 +997,7 @@ function QueueRow({ row, selected, onSelect }: { row: DeskQueueItem; selected: b
       {licensee ? <LicenseeBadge /> : null}
       <span className="desk-queue-meta line-clamp-2 text-[12px] text-ink-muted" title={meta}>{meta}</span>
       {showAction ? <span className="text-[12px] text-agency">{row.action}</span> : null}
+      <span className="desk-queue-reason text-[13px] text-ink-muted">{queueReason(row)}</span>
     </button>
   );
 }
@@ -995,6 +1033,8 @@ function QueuePane({
   checkState,
   liveEmpty,
   selectedId,
+  orderUpdates,
+  onUpdateOrder,
   onHighlight,
   onSelect,
   onClose,
@@ -1013,6 +1053,8 @@ function QueuePane({
   checkState: QueueCheckState;
   liveEmpty: boolean;
   selectedId?: string;
+  orderUpdates: boolean;
+  onUpdateOrder: () => void;
   onHighlight: (id: string) => void;
   onSelect: (id: string) => void;
   onClose: () => void;
@@ -1069,6 +1111,12 @@ function QueuePane({
       </div>
       {scope && <div className="property-scope-banner"><strong>{scope.label}</strong><button type="button" onClick={onClearScope}>Show all properties</button></div>}
       {reminders ? <div className="desk-queue-reminders border-b border-line px-3 py-2">{reminders}</div> : null}
+      {orderUpdates ? (
+        <div className="flex items-center justify-between gap-2 border-b border-line px-3 text-[13px] text-ink-muted">
+          <span>Updates available</span>
+          <button type="button" onClick={onUpdateOrder} className="pm-control text-agency">Update order</button>
+        </div>
+      ) : null}
       <div
         id="desk-queue-list"
         role="listbox"
