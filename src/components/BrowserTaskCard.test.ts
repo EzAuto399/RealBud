@@ -1,7 +1,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { BROWSER_TASK_OFFER_MARK, BrowserTaskCard, DESKTOP_TASK_SCOPE, DesktopWindowPicker, browserTaskAsksFirst, browserTaskLooksOnly, browserTaskSteps, parseBrowserTaskList, type BrowserTaskBrowser, type BrowserTaskCardView } from './BrowserTaskCard';
+import { BROWSER_TASK_OFFER_MARK, BrowserTaskCard, DESKTOP_TASK_CHOOSE, DESKTOP_TASK_SCOPE, DesktopWindowPicker, browserTaskAsksFirst, browserTaskLooksOnly, browserTaskSteps, parseBrowserTaskList, type BrowserTaskBrowser, type BrowserTaskCardView } from './BrowserTaskCard';
 
 vi.mock('@/state/store', () => ({ api: vi.fn() }));
 
@@ -175,8 +175,8 @@ describe('BrowserTaskCard', () => {
 
   it('shows a running app task: the window Bud may use, what asks first, and Stop', () => {
     const html = render(task({ status: 'active', sites: [], siteSource: 'person', savedJob: null, actions: ['read', 'click', 'keys'], startedAt: NOW, expiresAt: NOW + 30 * 60_000, desktop: mail }));
-    expect(html).toContain('aria-label="App task"');
-    expect(html).toContain('App task · running');
+    expect(html).toContain('aria-label="Task in an app on this computer"');
+    expect(html).toContain('Task in an app on this computer · running');
     expect(html).toMatch(/Running in Mail · ends by .+ or after 40 steps/);
     expect(html).toContain('App window');
     expect(html).toContain('Mail — Inbox');
@@ -189,6 +189,28 @@ describe('BrowserTaskCard', () => {
     expect(html).not.toContain('Bud only looks');
     expect(button(html, 'Stop the task')).toContain('Ends this task and its access to Mail.');
     expect(html).not.toMatch(/\bpid\b|\bAX\b|token|windowId|broker|MCP/i);
+  });
+
+  it('titles a request for an app as an app task and asks only for the window, never a site, before one is chosen', () => {
+    const notepad = task({ request: 'Open Notepad on this computer and type the rent note', sites: [], siteSource: 'none', savedJob: null, actions: ['read', 'fill', 'click'], appTask: true });
+    const html = render(notepad, ready, { onStartWindow: vi.fn() });
+    expect(html).toContain('aria-label="Task in an app on this computer"');
+    expect(html).toContain(DESKTOP_TASK_CHOOSE.replace(/'/g, '&#x27;'));
+    expect(DESKTOP_TASK_CHOOSE).toMatch(/^Bud works only in the window you choose\. /);
+    expect(html).toContain('>App window<');
+    expect(html).toContain('Choose the window Bud works in');
+    expect(html).toContain('Choose the app window to start.');
+    expect(button(html, 'Start this task')).toContain('disabled=""');
+    expect(html).toContain('<li>Read the window and scroll it</li>');
+    expect(html).toContain('30 minutes or 40 steps in the app');
+    for (const browserWords of ['Browser task', 'Bud only looks', '>Site<', 'web address', '>Browser<', 'or an app on this computer']) expect(html).not.toContain(browserWords);
+    // A site request with no site named keeps the browser wording.
+    const site = render(task({ sites: [], siteSource: 'none', savedJob: null, actions: ['read'] }), ready, { onStartWindow: vi.fn() });
+    expect(site).toContain('aria-label="Browser task"');
+    expect(site).toContain('Bud only looks: it opens the site');
+    expect(site).not.toContain('Task in an app');
+    expect(parseBrowserTaskList({ tasks: [notepad], browser: ready }).tasks[0].appTask).toBe(true);
+    expect(() => parseBrowserTaskList({ tasks: [{ ...notepad, appTask: 'yes' }], browser: ready })).toThrow('Bud sent task details this app cannot read.');
   });
 
   it('reads an app window on a task and refuses a damaged one', () => {

@@ -1879,7 +1879,7 @@ async function startSeatTurn(
         const open = desktopIntent.app ? await listDesktopWindows({ timeoutMs: 5_000 }).catch(() => null) : null;
         const desktop = preselectedWindow(desktopIntent.app, open);
         let reply = store.appendMessage(threadId, { role: "bot", kind: "text", text: DESKTOP_TASK_OFFER });
-        try { await browserTasks().propose({ threadId, messageId: reply.id, request: desktopIntent.request, sites: [], siteSource: "none", savedJob: null, actions: desktopIntent.actions, ...(desktop ? { desktop } : {}) }); }
+        try { await browserTasks().propose({ threadId, messageId: reply.id, request: desktopIntent.request, sites: [], siteSource: "none", savedJob: null, actions: desktopIntent.actions, appTask: true, ...(desktop ? { desktop } : {}) }); }
         catch { reply = store.patchMessage(threadId, reply.id, { text: BROWSER_TASK_UNAVAILABLE }) ?? reply; }
         broadcast({ kind: "message", threadId, message: reply });
         return;
