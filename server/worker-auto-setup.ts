@@ -342,7 +342,7 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
    * at most `AUTO_SETUP_STALE_RECHECKS_PER_HOUR` times an hour. The run
    * re-checks authority and persists its own backoff on failure.
    */
-  function noteStatus(observed: { ready: boolean; workerFingerprint?: string | null; documentTools?: HermesStatus["documentTools"] }): void {
+  function noteStatus(observed: { ready: boolean; workerFingerprint?: string | null; documentTools?: HermesStatus["documentTools"]; cli?: { installed: boolean } }): void {
     // The document check finishes after boot's first status read ("unknown"),
     // so a newly locked library is only seen here: run the reviewed Repair once,
     // then at most hourly so a failing install never loops.
@@ -351,13 +351,16 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
       if (lastDocumentsRepair === null || at - lastDocumentsRepair >= 60 * 60_000) { lastDocumentsRepair = at; void ensure("documents"); }
       return;
     }
-    if (observed.ready || current.state !== "ready" || !observed.workerFingerprint) return;
+    // A worker removed after Bud was ready leaves no fingerprint: it is set up
+    // again under the same throttle, so Bud stays removable and replaceable.
+    const setupKey = observed.workerFingerprint || (observed.cli?.installed === false ? "worker-missing" : null);
+    if (observed.ready || current.state !== "ready" || !setupKey) return;
     const at = now();
     staleRechecks = staleRechecks.filter(entry => at - entry.at < 60 * 60_000);
     const last = staleRechecks[staleRechecks.length - 1];
-    if (staleRechecks.some(entry => entry.fingerprint === observed.workerFingerprint) || staleRechecks.length >= AUTO_SETUP_STALE_RECHECKS_PER_HOUR
+    if (staleRechecks.some(entry => entry.fingerprint === setupKey) || staleRechecks.length >= AUTO_SETUP_STALE_RECHECKS_PER_HOUR
       || (last && at - last.at < AUTO_SETUP_STALE_RECHECK_MS)) return;
-    staleRechecks.push({ fingerprint: observed.workerFingerprint, at });
+    staleRechecks.push({ fingerprint: setupKey, at });
     set("verifying", 0, "checking");
     void ensure("stale");
   }

@@ -42,6 +42,9 @@ function setState(patch) {
 
 function check(manual = false) {
   if (!autoUpdater) return;
+  // A downloading or downloaded update waits for its restart: the library would
+  // announce it as "available" again and the card would ask to download twice.
+  if (state.status === "downloading" || state.status === "downloaded") return;
   userInitiated = manual;
   runUpdaterAction(() => autoUpdater.checkForUpdates(), reportError);
 }

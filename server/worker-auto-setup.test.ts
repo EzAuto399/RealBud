@@ -433,6 +433,21 @@ describe("a readiness proof that went stale on a linked office", () => {
     expect(h.deps.installOrRepair).not.toHaveBeenCalled();
   });
 
+  it("sets Bud up again when its worker is removed after it was ready, once an hour", async () => {
+    const h = harness();
+    const setup = createWorkerAutoSetup(h.deps);
+    (h.deps.status as ReturnType<typeof vi.fn>).mockImplementation(async () => status({ compatible: true, ready: true }));
+    await setup.ensure("boot");
+    expect(setup.status().state).toBe("ready");
+    // The worker folder is deleted: nothing installed, so no fingerprint to compare.
+    (h.deps.status as ReturnType<typeof vi.fn>).mockImplementation(async () => status({ installed: false, ready: false }));
+    setup.noteStatus({ ready: false, workerFingerprint: null, cli: { installed: false } });
+    expect(setup.status()).toMatchObject({ state: "verifying", code: "checking" });
+    await vi.waitFor(() => expect(h.deps.installOrRepair).toHaveBeenCalledTimes(1));
+    setup.noteStatus({ ready: false, workerFingerprint: null, cli: { installed: false } });
+    expect(h.deps.installOrRepair).toHaveBeenCalledTimes(1);
+  });
+
   it("does nothing for a computer whose office link is not active", async () => {
     const h = harness({ active: false });
     const setup = createWorkerAutoSetup(h.deps);
