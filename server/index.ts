@@ -3231,13 +3231,8 @@ const workerAutoSetup = createWorkerAutoSetup({
   log: message => oplog("boot", message),
 });
 
-/** Work an update must not cut short: a turn, a browser task, a held workspace operation. */
-/** Work a service stop (an app update) would cut off, Bud's own setup included. */
-function serviceBusy() {
-  const setup = workerAutoSetup.status().state;
-  return store.bots.some(bot => bot.busy) || workspaceActivity.active > 0 || recipeTaskStops.size > 0
-    || installInFlight() || setup === "installing" || setup === "verifying";
-}
+/** Work an update must not cut short: a turn, a browser task, a held workspace operation, Bud setup. */
+function serviceBusy() { return store.bots.some(bot => bot.busy) || workspaceActivity.active > 0 || recipeTaskStops.size > 0 || installInFlight(); }
 /** The one way a waiting card is answered (both respond routes). The request
  * must still be waiting in this process: a persisted card from another client
  * or an earlier process is never a grant. Client scope, rules and read grants

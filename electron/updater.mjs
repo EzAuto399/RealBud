@@ -73,6 +73,7 @@ export function registerUpdaterIpc(ipc) {
 const DEFER_RETRY_MS = 30_000;
 let installing = null;
 let deferTimer = null;
+let cannotStopTries = 0;
 const DEFERRED = {
   busy: "Bud is still working. RealBud will restart to update when the work finishes.",
   "cannot-stop": "RealBud could not stop the office service for this update. Stop it in Settings & help, then restart to update.",
@@ -86,10 +87,15 @@ function install() {
     // Same rule as realbudDataDir() in main.mjs: the service identity is its data directory.
     const dataDirectory = process.env.REALBUD_DATA_DIR || process.env.OMB_DATA_DIR || join(app.getPath("home"), ".realbud");
     const handoff = await prepareServiceForUpdate({ dataDirectory, identity: serviceIdentity(dataDirectory), verifyWindowsPrivacy: windowsKeyPrivacyAsync });
+    cannotStopTries = !handoff.ready && handoff.reason === "cannot-stop" ? cannotStopTries + 1 : 0;
     if (!handoff.ready) {
       setState({ status: "downloaded", deferred: handoff.reason, message: DEFERRED[handoff.reason] });
-      if (handoff.reason !== "cannot-stop") deferTimer = setTimeout(() => void install(), DEFER_RETRY_MS);
-      deferTimer?.unref?.();
+      // A service it could not stop gets one more try by itself; after that the
+      // person stops it, and their next "Restart to update" starts afresh.
+      if (cannotStopTries < 2) {
+        deferTimer = setTimeout(() => void install(), DEFER_RETRY_MS);
+        deferTimer.unref?.();
+      } else cannotStopTries = 0;
       return;
     }
     // isSilent, isForceRunAfter — relaunch straight into the new version
