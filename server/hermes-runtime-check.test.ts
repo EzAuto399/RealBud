@@ -1,12 +1,14 @@
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HERMES_RECOMMENDED } from "./hermes-releases.ts";
 import { runtimeCli } from "./hermes-paths.ts";
 import { applyPropertyPack } from "./hermes-pack.ts";
 import { releaseHome, resetRuntimeSelectionForTests, saveRuntimeSelection } from "./hermes-runtime-selection.ts";
-import { assertRuntimeIntegrity, checkRuntimeIntegrity, clearRuntimeIntegrity, RUNTIME_DAMAGED, runtimeIntegrity } from "./hermes-runtime-check.ts";
+import { assertRuntimeIntegrity, checkRuntimeIntegrity, clearRuntimeIntegrity, RUNTIME_DAMAGED, RUNTIME_UNCHECKED, runtimeIntegrity, verifyRuntime } from "./hermes-runtime-check.ts";
+import { resetPathCache } from "./env-path.ts";
+import * as custody from "./worker-custody.ts";
 import { applyHandsReadiness, clearHermesVersionCache, hermesStatus } from "./hermes-status.ts";
 import { workerControlDir } from "./worker-control.ts";
 import { privateFixtureRoot } from "./testing/private-profile-fixture.ts";
@@ -18,7 +20,7 @@ const version = `Hermes Agent v${HERMES_RECOMMENDED.product} (${HERMES_RECOMMEND
 function install(extra = ""): string {
   const cli = runtimeCli(releaseHome(home, id));
   mkdirSync(dirname(cli), { recursive: true });
-  writeFileSync(cli, `#!/bin/sh\necho '${version}'\n${extra}`);
+  writeFileSync(cli, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo '${version}'; exit 0; fi\n${extra}`);
   chmodSync(cli, 0o755);
   return cli;
 }
@@ -81,4 +83,52 @@ it.skipIf(process.platform === "win32")("keeps a damaged same-version replacemen
   // Status polls read the result; they never re-run the check.
   await hermesStatus({ root: home, verifyRuntime: verify });
   expect(verify).toHaveBeenCalledOnce();
+});
+
+// The real check, run against a fictional runtime: a stand-in `git` reports the
+// source state, and the runtime answers --version and the ACP handshake.
+describe.skipIf(process.platform === "win32")("verification that could not run is not damage", () => {
+  let bin: string;
+  const gitCalls = () => readFileSync(join(bin, "calls"), "utf8").trim().split("\n").filter(Boolean).length;
+  const quick = (path: string, release: typeof HERMES_RECOMMENDED) => verifyRuntime(path, release, { timeoutMs: 1_000 });
+  beforeEach(() => {
+    bin = privateFixtureRoot(join(tmpdir(), "realbud-integrity-bin-"));
+    writeFileSync(join(bin, "head"), HERMES_RECOMMENDED.commit);
+    writeFileSync(join(bin, "calls"), "");
+    writeFileSync(join(bin, "git"), `#!/bin/sh\necho "$*" >> '${join(bin, "calls")}'\ncase "$*" in *rev-parse*) cat '${join(bin, "head")}';; esac\n`);
+    chmodSync(join(bin, "git"), 0o755);
+    vi.stubEnv("OMB_EXTRA_PATH", bin); resetPathCache();
+    // Answers the handshake, after a slow start while the marker exists.
+    install(`if [ -f "$(dirname "$0")/fictional-slow-start" ]; then sleep 5; fi\nread line\necho '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}'\n`);
+  });
+  afterEach(() => { vi.restoreAllMocks(); resetPathCache(); rmSync(bin, { recursive: true, force: true }); });
+
+  it("holds turns while worker custody refuses the check, never marks the runtime damaged, and passes once custody clears", async () => {
+    vi.spyOn(custody, "workerCustodyRefusal").mockReturnValue("A fictional earlier worker is still stopping.");
+    expect(await checkRuntimeIntegrity({ verify: quick })).toBe("unavailable");
+    expect(custody.workerCustodyRefusal).toHaveBeenCalled();
+    // Status polls keep reporting it as unchecked, never as damaged.
+    expect(runtimeIntegrity({ verify: quick })).toBe("unavailable");
+    await expect(assertRuntimeIntegrity({ verify: quick })).rejects.toMatchObject({ status: 503, code: "worker_runtime_unchecked", message: RUNTIME_UNCHECKED });
+    vi.mocked(custody.workerCustodyRefusal).mockReturnValue(null);
+    await assertRuntimeIntegrity({ verify: quick });
+    expect(runtimeIntegrity({ verify: quick })).toBe("ok");
+  });
+
+  it("caches a source mismatch as damage", async () => {
+    writeFileSync(join(bin, "head"), "f".repeat(40));
+    expect(await checkRuntimeIntegrity({ verify: quick })).toBe("damaged");
+    const calls = gitCalls();
+    expect(await checkRuntimeIntegrity({ verify: quick })).toBe("damaged");
+    await expect(assertRuntimeIntegrity({ verify: quick })).rejects.toMatchObject({ code: "worker_runtime_damaged" });
+    expect(gitCalls()).toBe(calls);
+  });
+
+  it("treats a slow first start as unavailable and a later passing check as healthy", async () => {
+    writeFileSync(join(releaseHome(home, id), "hermes-agent", "venv", "bin", "fictional-slow-start"), "");
+    expect(await checkRuntimeIntegrity({ verify: quick })).toBe("unavailable");
+    rmSync(join(releaseHome(home, id), "hermes-agent", "venv", "bin", "fictional-slow-start"));
+    await assertRuntimeIntegrity({ verify: quick });
+    expect(runtimeIntegrity({ verify: quick })).toBe("ok");
+  });
 });
