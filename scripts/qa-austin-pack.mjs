@@ -101,7 +101,8 @@ try {
     await row.waitFor();
     const text = (await row.innerText()).replace(/\s+/g, ' ');
     assert.ok(text.includes(`Off · ${timing}. Review it, then switch it on.`), `${name}: ${text}`);
-    assert.ok(text.includes('Paused'), `${name} shows Paused in its timing column: ${text}`);
+    // Never switched on: Off, not Paused (live Kevin run, F3).
+    assert.ok(/\bOff Never run\b/.test(text) && !text.includes('Paused'), `${name} shows Off in its timing column: ${text}`);
   }
   // The setup checklist lives only on Desk now; Schedule keeps each job's own Needs.
   assert.equal(await page.getByRole('list', { name: 'Auston setup checklist', exact: true }).count(), 0, 'no second checklist on Schedule');
@@ -137,7 +138,7 @@ try {
   await about.getByText('Property manager: senders Gmail could not verify', { exact: false }).waitFor();
   await about.getByText('Not yet: REI supplier list saved', { exact: false }).waitFor();
   await page.screenshot({ path: join(output, '06-w4-review.png') });
-  await drawer.getByRole('button', { name: 'Resume', exact: true }).click();
+  await drawer.getByRole('button', { name: /^(Resume|Switch on)$/ }).click();
   const on = await (async () => { for (let i = 0; i < 100; i++) { const loop = (await request('/api/loops')).loops.find(l => l.id === 'maintenance-review'); if (loop.enabled && loop.nextRunAt) return loop; await wait(100); } throw new Error('W4 did not turn on'); })();
   const expected = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Brisbane', hour: '2-digit', minute: '2-digit', hour12: false }).format(on.nextRunAt);
   assert.equal(expected, '08:30');

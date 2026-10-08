@@ -53,6 +53,15 @@ describe("schedule row copy (proposal section 5)", () => {
     expect(shape({ recipes: [recipe({ status: "paused" })] })).toEqual(["Paused", null, "Resume"]);
   });
 
+  it("an off job the clock never ran reads Off with Switch on; a manual run does not count", () => {
+    expect(shape({ loops: [loop({ enabled: false, nextRunAt: null })] })).toEqual(["Off", null, "Switch on"]);
+    expect(shape({ loops: [loop({ enabled: false, nextRunAt: null })], loopRuns: [loopRun({ manual: true })] })).toEqual(["Off", null, "Switch on"]);
+    expect(only({ loops: [loop({ enabled: false, nextRunAt: null })] }).action).toBe("resume");
+    // Recovery still reads Paused; a scheduled clock run makes it a pause again.
+    expect(shape({ loops: [loop({ enabled: false })], recovery: true })).toEqual(["Paused", null, "Switch on"]);
+    expect(shape({ loops: [loop({ enabled: false })], loopRuns: [loopRun({ status: "completed" })] })).toEqual(["Paused", null, "Resume"]);
+  });
+
   it.each([
     ["failed", "Failed"],
     ["missed", "Missed"],

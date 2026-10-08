@@ -45,7 +45,7 @@ async function runJob(name, id) {
   const details = page.getByRole('article', { name: `${name} details` });
   await details.waitFor();
   const before = await latestRun(id);
-  const resume = details.getByRole('button', { name: 'Resume', exact: true });
+  const resume = details.getByRole('button', { name: /^(Resume|Switch on)$/ });
   const run = details.getByRole('button', { name: 'Run now', exact: true });
   if (await run.isDisabled() && await resume.count()) { await resume.click(); await until(() => run.isDisabled(), d => !d, `${name} Run now enabled`, 100); }
   await run.click();

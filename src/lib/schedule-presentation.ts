@@ -31,9 +31,11 @@ export function scheduleRowGuidance(row: ScheduleRow): string {
     // An installed pack's job shows its office time while it is off.
     return `Off · ${scheduleSummary(row.loop.schedule)}, ${row.loop.schedule.timezone.split("/").pop()!.replace(/_/g, " ")} time. Review it, then switch it on.`;
   }
-  if (row.action === "resume") return "Resume this job when you want it to run again.";
+  if (row.action === "resume") return row.next === "Off" ? "Switch this on when you want it to run." : "Resume this job when you want it to run again.";
   if (row.action === "view-result") return "Open the saved result to see what happened.";
   if (row.next === SCHEDULE_NOT_CONFIRMED) return "Check the job's timing before relying on a scheduled run.";
+  // On with a next run: the clock runs it; Run now is only for sooner.
+  if (row.action === "run-now" && row.loop?.enabled && row.loop.nextRunAt != null) return `Runs automatically: ${scheduleSummary(row.loop.schedule)}. Run now if you need it sooner.`;
   return "Open this job when you are ready to run it.";
 }
 

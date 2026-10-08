@@ -15,6 +15,7 @@ import { DAY_NAMES, scheduleSummary, WEEKDAYS_MON_FIRST } from "@/lib/schedule-w
 import { attendedRunLabel, isAttendedMode, jobRunModeLabel, jobRunStatusChip, loopRunStatusLabel, preparedJobText, safeJobRunDetail } from "@/lib/job-run";
 import { jobRunProgress, recheckProgress } from "@/lib/task-progress";
 import type { PendingLoopRequest } from "@/lib/manual-loop-request";
+import { switchOnLabel } from "@/lib/schedule-rows";
 import { StatusLabel } from "../pm";
 import { BankReferenceReview } from "./BankReferenceReview";
 import { ExecutionHistory } from "./ExecutionHistory";
@@ -400,7 +401,7 @@ export function LoopDetail({
   const spec = evaluatorForLoop(loop.id);
   const agencyTimed = spec?.agencyTimed === true;
   const held = !loop.enabled && blocker ? blocker : null;
-  const switchLabel = loop.enabled ? "Pause" : "Resume";
+  const switchLabel = loop.enabled ? "Pause" : switchOnLabel(loop.id, runs);
   const heldId = useId();
 
   return (

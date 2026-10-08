@@ -267,7 +267,7 @@ async function runPerson(who) {
     const before = await latestRun(id);
     const dialog = page.getByRole('dialog', { name, exact: true });
     await dialog.waitFor();
-    const resume = dialog.getByRole('button', { name: 'Resume', exact: true }), run = dialog.getByRole('button', { name: 'Run now', exact: true });
+    const resume = dialog.getByRole('button', { name: /^(Resume|Switch on)$/ }), run = dialog.getByRole('button', { name: 'Run now', exact: true });
     if (await resume.count() && await run.isDisabled()) { await resume.focus(); await page.keyboard.press('Enter'); await until(async () => !(await run.isDisabled()), `${name} Run now enabled`, 10_000); }
     await run.focus(); await page.keyboard.press('Enter');
     const settled = await until(async () => { const r = await latestRun(id); return r && r.id !== before?.id && !['queued', 'running'].includes(r.status) ? r : null; }, `${id} run settles`, 90_000);
@@ -405,9 +405,11 @@ async function runPerson(who) {
       await widths('linked');
       await pressByKeyboard('Continue to Bud setup');
       const dialog = page.getByRole('dialog', { name: 'Bud status', exact: true });
-      await dialog.waitFor();
-      await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' });
-      c('Keyboard: Continue to Bud setup, Escape back to Work');
+      // Bud status closes by itself once Bud is ready; otherwise Escape closes it.
+      await dialog.waitFor({ timeout: 10_000 }).catch(() => {});
+      if (await dialog.isVisible()) await page.keyboard.press('Escape');
+      await dialog.waitFor({ state: 'hidden' });
+      c('Keyboard: Continue to Bud setup, then back (Escape, or by itself once Bud is ready)');
     });
 
     await step(2, 'Import my role pack: Get started → built-in role pack → review → import', async c => {

@@ -1,9 +1,10 @@
 import { Bookmark, Building2, CalendarDays, MessageSquare } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { hiddenAustinLoopIds, parseAustinPackView, type AustinPackView } from "@shared/austin-pack";
 import { queueCounts, type QueueFilter } from "@/lib/desk-queue";
 import { useWorkspaceTabs, WORKSPACE_VIEW_LABELS } from "@/lib/workspace-tabs";
 import { useWorkspaceViewState } from "@/lib/workspace-view-state";
-import { useStore } from "@/state/store";
+import { api, useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { isEmptyOfficeBook } from "../desk/OfficeBookNotice";
 import { useDeskNav } from "./use-desk-nav";
@@ -83,7 +84,17 @@ function WorkContext() {
 function ScheduleContext() {
   const { state, dispatch } = useStore();
   const [selected] = useWorkspaceViewState("scheduleSelected");
-  const loops = state.loops.filter(loop => loop.available);
+  // The Schedule list's rule (Windows #54): a role pack's job stays out until that pack is imported here,
+  // or it is on or has run. "unread" hides them so rows only appear; a failed read hides nothing.
+  const [austin, setAustin] = useState<AustinPackView | null | "unread">("unread");
+  useEffect(() => {
+    let alive = true;
+    void api("/api/austin-pack", undefined, { timeoutMs: 15_000 }).then(parseAustinPackView).then(
+      view => { if (alive) setAustin(view); }, () => { if (alive) setAustin(null); });
+    return () => { alive = false; };
+  }, [state.loops]);
+  const hidden = hiddenAustinLoopIds(austin, state.loops, new Set((state.loopRuns ?? []).map(run => run.loopId)));
+  const loops = state.loops.filter(loop => loop.available && !hidden.has(loop.id));
   return (
     <Group label="Loops">
       {loops.length ? loops.map(loop => (

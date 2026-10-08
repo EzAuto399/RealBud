@@ -31,7 +31,7 @@ import { SHOW_DESK_EVENT } from "@/lib/notify-desktop";
 import { WORKSPACE_SETUP_EVENT, isWorkspaceSetupTarget, type WorkspaceSetupTarget } from "@/lib/workspace-setup";
 import { ActionNotice } from "@/components/ActionNotice";
 import { DESIGN_PREVIEW_REASON } from "@/lib/design-preview";
-import { budFirstSetupCover, parseBudStatus } from "@/lib/bud-setup";
+import { budFirstSetupCover, budSetupSheetDone, parseBudStatus } from "@/lib/bud-setup";
 
 const ChatView = lazy(() => import('@/components/ChatView').then(module => ({ default: module.ChatView })));
 const RoutinesPage = lazy(() => import('@/components/RoutinesPage').then(module => ({ default: module.RoutinesPage })));
@@ -78,6 +78,8 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
   const workspaceTabs = useWorkspaceTabs();
   const savedView = workspaceTabs.data?.state?.tabs.find(tab => tab.id === state.workspaceTabId && tab.visible);
   const [setup, setSetup] = useState<WorkspaceSetupTarget | null>(initialSetup);
+  // First run's "Continue to Bud setup" opened Bud status: it closes by itself once Bud is ready.
+  const setupFromFlow = useRef(initialSetup === "bud");
   // Capture before inert and the lazy loading dialog move focus away. The
   // concrete sheet cannot recover an opener from an unmounted fallback.
   const setupOpener = useRef<{ element: HTMLElement; view: string } | null>(null);
@@ -88,6 +90,8 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
         if (document.activeElement instanceof HTMLElement && !document.activeElement.closest('[role="dialog"]')) {
           setupOpener.current = { element: document.activeElement, view: state.activeView };
         }
+        // The person opened it: theirs to close.
+        setupFromFlow.current = false;
         setSetup(target);
       }
     };
@@ -115,6 +119,16 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
   const [leftSetup, setLeftSetup] = useState(false);
   const setupCover = budFirstSetupCover(state.hermes, { connected: state.connected, statusError: Boolean(budStatusRead.error), recovering: Boolean(state.desk?.recovery?.active) });
   const settingUp = Boolean(setupCover) && !leftSetup;
+  const recovering = Boolean(state.desk?.recovery?.active);
+  const setupSheetDone = budSetupSheetDone(state.hermes, { connected: state.connected, recovering, openedBySetup: setupFromFlow.current });
+  useEffect(() => {
+    // Once the person moves to another section or closes it, the sheet is theirs.
+    if (setup !== "bud") { setupFromFlow.current = false; return; }
+    if (settingUp || !setupSheetDone) return;
+    // Everything is Ready: land on Desk, where Get started shows the next step.
+    setupFromFlow.current = false;
+    setSetup(null);
+  }, [setup, settingUp, setupSheetDone]);
 
   useEffect(() => {
     const openSettings = () => {

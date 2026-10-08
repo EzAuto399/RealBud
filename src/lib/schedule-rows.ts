@@ -86,6 +86,12 @@ const FAILURE_WORDS: Record<string, AttentionWord> = {
   partial: "Incomplete",
 };
 
+/** No clock run on record: an off job was never switched on, so it reads Off /
+ * Switch on, not Paused / Resume. Manual runs (Run now) don't count. */
+export const neverClockRun = (loopId: string, runs: readonly LoopRun[]) => !runs.some((run) => run.loopId === loopId && !run.manual);
+/** The off job's switch, matching the row, the drawer and the pause notice. */
+export const switchOnLabel = (loopId: string, runs: readonly LoopRun[]) => (neverClockRun(loopId, runs) ? "Switch on" : "Resume");
+
 /** Secondary text under the next run, so a fresh result reads differently from an old one. */
 export const lastRunText = (lastRunAt: number | null, nowMs: number) => (lastRunAt == null ? "Never run" : `Last run ${relativeAgo(lastRunAt, nowMs)}`);
 
@@ -180,7 +186,8 @@ function buildRow(input: ScheduleRowInput, loop: Loop | undefined, recipe: Recip
     : recipe && !loop
       ? recipe.schedule ? SCHEDULE_NOT_CONFIRMED : "Only when you run it"
       : SCHEDULE_NOT_CONFIRMED;
-  const baseNext = input.recovery ? "Paused" : needsPlan ? "Not scheduled" : paused ? "Paused" : scheduled;
+  const neverOn = Boolean(loop && !recipe && paused && neverClockRun(loop.id, loopRuns));
+  const baseNext = input.recovery ? "Paused" : needsPlan ? "Not scheduled" : neverOn ? "Off" : paused ? "Paused" : scheduled;
 
   let next = baseNext;
   let attention: AttentionWord | null = null;
@@ -226,7 +233,7 @@ function buildRow(input: ScheduleRowInput, loop: Loop | undefined, recipe: Recip
     attention,
     ...(issue && attention === issue.word ? { attentionRun: { kind: issue.kind, id: issue.id } } : {}),
     action,
-    actionLabel: ROW_ACTION_LABELS[action],
+    actionLabel: action === "resume" && neverOn ? "Switch on" : ROW_ACTION_LABELS[action],
     actionDisabled: Boolean(input.recovery) && MUTATING_ACTIONS.has(action),
     ...(manualOnly ? { manualOnly } : {}),
     group,

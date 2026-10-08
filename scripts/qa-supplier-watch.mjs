@@ -100,7 +100,7 @@ try {
   await page.getByRole('button', { name: 'Open job: Supplier list check', exact: true }).click();
   const drawer = page.getByRole('article', { name: 'Supplier list check details', exact: true });
   await drawer.getByText("Checks REI's supplier list for added or removed suppliers and shows changes for you to approve.", { exact: true }).waitFor({ state: 'attached' });
-  await drawer.getByRole('button', { name: 'Resume', exact: true }).click();
+  await drawer.getByRole('button', { name: /^(Resume|Switch on)$/ }).click();
   loop = await until(async () => (await request('/api/loops')).loops.find(l => l.id === 'rei-supplier-check'), l => l.enabled && l.nextRunAt, 'loop turned on');
   await drawer.getByRole('button', { name: 'Run now', exact: true }).click();
   const first = await until(latestRun, r => r?.status === 'running' && /^Sign in to REI Cloud so Bud can check the supplier list/.test(r.detail ?? ''), 'check waits for sign-in');

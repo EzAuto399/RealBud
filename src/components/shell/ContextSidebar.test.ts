@@ -78,6 +78,17 @@ describe('queue shortcut navigation', () => {
 });
 
 describe('Schedule and Work context', () => {
+  it('keeps a role pack\'s jobs out of Loops until that pack is imported, as the Schedule list does', () => {
+    const loop = (id: string, name: string, fields: Record<string, unknown> = {}) => ({ id, name, available: true, enabled: false, nextRunAt: null, ...fields });
+    store.state = { activeView: 'schedule', desk: null, connected: true, bots: [], activityLoad: {}, loopRuns: [{ loopId: 'weekly-bills' }], loops: [
+      loop('morning-arrears', 'Morning money check'), loop('inbound-triage', 'Morning priorities'), loop('bank-references', 'Bank reference review'),
+      loop('maintenance-review', 'Maintenance checks', { enabled: true, nextRunAt: now + 3_600_000 }), loop('weekly-bills', 'Weekly bills review'), loop('inspection-draft', 'Inspection draft'),
+    ] };
+    const html = render();
+    for (const name of ['Morning money check', 'Morning priorities', 'Maintenance checks', 'Weekly bills review']) expect(html).toContain(`>${name}<`);
+    for (const name of ['Bank reference review', 'Inspection draft']) expect(html).not.toContain(name);
+  });
+
   it('lists loops and threads as buttons', () => {
     store.state = { activeView: 'schedule', desk: null, connected: true, bots: [], activityLoad: {}, loops: [{ id: 'morning-arrears', name: 'Morning money check', available: true, enabled: true, nextRunAt: now + 3_600_000 }] };
     expect(render()).toMatch(/<button[^>]*class="rb-context-item"[^>]*><span[^>]*><span[^>]*>Morning money check</);

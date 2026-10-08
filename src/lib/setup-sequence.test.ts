@@ -4,6 +4,7 @@ import type { AustinChecklistItem, AustinPackView } from "../../shared/austin-pa
 import {
   SETUP_STEP_COUNT,
   currentSetupStep,
+  gmailReadyHere,
   officeAppsToConnect,
   readAgencySetupFacts,
   readWebsiteLinkState,
@@ -220,6 +221,39 @@ describe("step 4: the office Gmail", () => {
     expect(step({ ...linked, austinPack: pack(), sharedGmailBlocked: true }, "gmail")).toMatchObject(ask);
     expect(step({ ...linked, austinPack: pack({}, false), sharedGmailBlocked: true }, "gmail")).toMatchObject(ask);
     expect(step({ ...linked, austinPack: pack({ gmail: true }), sharedGmailBlocked: true }, "gmail").state).toBe("done");
+  });
+
+  it("follows the office's Gmail mode and the live connection, not the workflow's account check", () => {
+    const active = { connected: true, status: "ACTIVE", accountSelectionRequired: false, accounts: [{ id: "fictional-1", status: "ACTIVE" }] };
+    const missing = { connected: false, status: "NOT_CONNECTED", accountSelectionRequired: false, accounts: [] };
+    const read = { configured: true, checkedAt: new Date().toISOString(), tools: { available: true, names: ["GMAIL_FETCH_EMAILS"] } };
+    // Personal: the person's own Gmail, connected and readable.
+    const personal = { ...read, sourceKind: "personal" as const, mailboxMode: "personal" as const, services: { gmail: active } };
+    expect(gmailReadyHere(personal, true)).toBe("own");
+    expect(gmailReadyHere(personal, false)).toBeNull();
+    expect(gmailReadyHere({ ...personal, error: "unreachable" }, true)).toBeNull();
+    expect(gmailReadyHere({ ...personal, checkedAt: "2020-01-01T00:00:00.000Z" }, true)).toBeNull();
+    expect(gmailReadyHere({ ...personal, tools: { available: false, names: [] } }, true)).toBeNull();
+    expect(gmailReadyHere({ ...personal, services: { gmail: missing } }, true)).toBeNull();
+    // Shared: the office mailbox, connected only where the owner allowed this computer.
+    const shared = { ...read, sourceKind: "office_shared" as const, mailboxMode: "shared" as const, services: { gmail: active } };
+    expect(gmailReadyHere(shared, true)).toBe("office");
+    expect(gmailReadyHere({ ...shared, services: { gmail: missing } }, true)).toBeNull();
+    // Both: either mailbox counts.
+    const both = { ...read, sourceKind: "personal" as const, mailboxMode: "both" as const, services: { gmail: missing }, officeShared: active };
+    expect(gmailReadyHere(both, true)).toBe("office");
+    expect(gmailReadyHere({ ...both, services: { gmail: active }, officeShared: missing }, true)).toBe("own");
+    expect(gmailReadyHere({ ...both, officeShared: missing }, true)).toBeNull();
+    // An officeShared outside `both` is not this computer's mailbox.
+    expect(gmailReadyHere({ ...both, mailboxMode: "personal" }, true)).toBeNull();
+
+    // Kevin's live run: no pack yet, the agency check still wants an account chosen, own Gmail connected.
+    const none = pack({}, false);
+    expect(step({ ...linked, austinPack: none, gmailReady: "own" }, "gmail")).toMatchObject({ state: "done", status: "Your Gmail is connected." });
+    expect(step({ ...linked, austinPack: pack(), gmailReady: "office" }, "gmail")).toMatchObject({ state: "done", status: "The office Gmail is allowed on this computer." });
+    // Not connected: unchanged, a sign-in or the owner.
+    expect(step({ ...linked, austinPack: none, appsToConnect: ["gmail"], gmailReady: null }, "gmail")).toMatchObject({ state: "current", status: "Sign in to Gmail in your browser." });
+    expect(step({ ...linked, austinPack: none, sharedGmailBlocked: true, gmailReady: null }, "gmail")).toMatchObject({ ownerRequest: "sharedGmail" });
   });
 });
 

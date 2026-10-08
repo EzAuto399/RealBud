@@ -136,6 +136,8 @@ export interface SetupSequenceInput {
   appsToConnect?: readonly string[];
   /** The office shared Gmail is this computer's mailbox, but the owner hasn't allowed this computer (`sharedGmailNotAllowed`). */
   sharedGmailBlocked?: boolean;
+  /** The Gmail the office's mode asks for is connected and readable here (`gmailReadyHere`). */
+  gmailReady?: GmailReady;
   /** Steps the person skipped for now on this computer. Bud's own step can't be skipped. */
   skipped?: readonly SetupStepId[];
 }
@@ -157,6 +159,21 @@ export function officeAppsToConnect(access: ConnectedAppsStatus | null | undefin
  */
 export function sharedGmailNotAllowed(access: ConnectedAppsStatus | null | undefined, managed: boolean): boolean {
   return managed && access?.sourceKind === "office_shared" && officeSourceState(access, "gmail") === "connect";
+}
+
+/** Which mailbox this computer can read: the person's own, or the office's. */
+export type GmailReady = "own" | "office" | null;
+
+/**
+ * The Gmail the office's mode asks for, connected and readable on this
+ * computer, from a fresh, error-free read: `personal` the person's own mailbox,
+ * `shared` the office mailbox the owner allowed here, `both` either one.
+ */
+export function gmailReadyHere(access: ConnectedAppsStatus | null | undefined, managed: boolean): GmailReady {
+  if (!managed || !access) return null;
+  if (officeSourceState(access, "gmail") === "ready") return access.sourceKind === "office_shared" || access.mailboxMode === "shared" ? "office" : "own";
+  const office = access.mailboxMode === "both" && access.officeShared;
+  return office && officeSourceState({ ...access, services: { gmail: office } }, "gmail") === "ready" ? "office" : null;
 }
 
 /** One named loop as the host reports it on the RealBud clock. */
@@ -322,7 +339,10 @@ const REVIEW_EACH = "Open each workflow, read what it does, then switch it on.";
  * check; without one, the agency setup's Gmail check, after any app the linked
  * service offers that has no account yet. Signing in is the person's own.
  */
-function gmailFact(pack: AustinPackRead, setup: AgencySetupRead, appsToConnect: readonly string[], sharedBlocked: boolean): Fact {
+function gmailFact(pack: AustinPackRead, setup: AgencySetupRead, appsToConnect: readonly string[], sharedBlocked: boolean, ready: GmailReady): Fact {
+  // The connection itself is the fact. Choosing and checking the account a
+  // workflow reads is part of approving that workflow (step 5).
+  if (ready) return { fact: "done", status: ready === "own" ? "Your Gmail is connected." : "The office Gmail is allowed on this computer." };
   // A shared mailbox is the owner's to allow; signing in here would not help.
   const signIn: Fact = sharedBlocked ? ASK_OWNER : { fact: "todo", status: SIGN_IN_GMAIL };
   if (pack && pack !== "unavailable" && pack.installed) {
@@ -486,7 +506,7 @@ export function setupSequence(input: SetupSequenceInput): SetupStep[] {
   const facts: Record<Exclude<SetupStepId, "bud">, Fact> = {
     link: linkFact(input.websiteLink),
     pack: packFact(input.austinPack, input.agencySetup, input.officeAgencyName ?? ""),
-    gmail: gmailFact(input.austinPack, input.agencySetup, input.appsToConnect ?? [], input.sharedGmailBlocked === true),
+    gmail: gmailFact(input.austinPack, input.agencySetup, input.appsToConnect ?? [], input.sharedGmailBlocked === true, input.gmailReady ?? null),
     workflows: workflowsFact(input.austinPack, input.agencySetup, input.schedule),
   };
 

@@ -45,14 +45,16 @@ export function ConnectOfficeView(props: ConnectOfficeViewProps) {
   const request = pendingRequest(phase);
   const codePending = status?.state === "pending" && !status.browser;
   const problem = phase.kind === "unreachable" || phase.kind === "failed" ? phase.message : "";
-  const announce = office ? `Connected to ${office}.` : browserLinkMessage(phase);
-  const access = office ? modelAccessMessage(status, { passive: true }) : null;
-  const recovery = officeLinkRecoveryMessage(status);
-  const failure = error || (office ? recovery !== access ? recovery : "" : status?.error !== problem ? status?.error : "");
   const expiresAt = request ? Date.parse(request.expiresAt) : null;
   const now = useApprovalClock(expiresAt, props.now);
   // The page expired while this computer waited: say so and start again here.
   const lapsed = request !== null && expiresAt !== null && now >= expiresAt && phase.kind !== "cancelling";
+  // Declined or expired is said once, in its own alert below; the live region doesn't repeat it.
+  const ended = phase.kind === "declined" || phase.kind === "expired";
+  const announce = office ? `Connected to ${office}.` : lapsed || ended ? "" : browserLinkMessage(phase);
+  const access = office ? modelAccessMessage(status, { passive: true }) : null;
+  const recovery = officeLinkRecoveryMessage(status);
+  const failure = error || (office ? recovery !== access ? recovery : "" : status?.error !== problem ? status?.error : "");
 
   return <div className="space-y-3 text-[13.5px] text-ink" data-connect-office="">
     <p role="status" aria-live="polite" className="sr-only">{[announce, access ?? ""].filter(Boolean).join(" ")}</p>
@@ -80,7 +82,7 @@ export function ConnectOfficeView(props: ConnectOfficeViewProps) {
         <button type="button" className={secondary} disabled={phase.kind === "cancelling"} aria-busy={phase.kind === "cancelling" || undefined} onClick={() => props.onCancel(request)}>{phase.kind === "cancelling" ? "Cancelling…" : "Cancel"}</button>
       </div>
     </> : <>
-      {phase.kind === "declined" || phase.kind === "expired" ? <p>{browserLinkMessage(phase)}</p> : null}
+      {ended ? <p role="alert">{browserLinkMessage(phase)}</p> : null}
       {status?.state === "revoked" ? <p>This computer was removed from your office. Connect it again to continue.</p> : null}
       {problem ? <p role="alert" className="text-danger">{problem}</p> : null}
       {codePending ? <p>Connecting with a code was interrupted. Paste the same code below to finish safely.</p> : null}
@@ -95,7 +97,7 @@ export function ConnectOfficeView(props: ConnectOfficeViewProps) {
       {codePending ? null : <div className="border-t border-line pt-2 text-[12.5px] text-ink-muted">
         <button type="button" className={quiet} disabled={!status || phase.kind === "starting"} aria-busy={phase.kind === "starting" || undefined} onClick={props.onStart}>
           {phase.kind === "starting" ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <ExternalLink size={14} aria-hidden="true" />}
-          {phase.kind === "declined" || phase.kind === "expired" ? "Start a new request" : "I’m the office owner: approve in my browser"}
+          {ended ? "Start a new request" : "I’m the office owner: approve in my browser"}
         </button>
         <p>{phase.kind === "starting" ? "Opening your browser…" : "Owners: realbud.app → Computers → Pair a new computer."}</p>
       </div>}
