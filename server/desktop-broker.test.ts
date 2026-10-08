@@ -156,6 +156,19 @@ describe("desktop broker: cards and Stop", () => {
     expect(actions(rows)).toEqual([]);
   });
 
+  it("presses nothing when the window changes while the card waits, so the same step now means another control", async () => {
+    // A point click on an unlabelled button asks; while the person decides, the window moves so the same pixel
+    // now lands on "Delete". The approval covered the first decision only.
+    const windowsFile = join(dir(), "windows.json");
+    const at = (y: number) => writeFileSync(windowsFile, JSON.stringify([{ window_id: 2001, pid: 1001, app_name: "Calculator", title: "Calculator", bounds: { x: 1270, y, width: 230, height: 408 }, is_on_screen: true }]));
+    at(719);
+    const { approve, calls } = await start({ env: { FAKE_CUA_WINDOWS_FILE: windowsFile, FAKE_CUA_PNG_SIZE: PNG_SIZE }, approve: async () => { at(844); return true; } });
+    await call("get_window_state", { include_screenshot: true });
+    expect(await call("click", { x: 52, y: 52 })).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("approval no longer matches") }] });
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(actions(calls())).toEqual([]);
+  });
+
   it("ends the task when its step budget is spent", async () => {
     const { calls } = await start({ grant: grant({ budget: 2 }) });
     const tokens = body(await call("get_window_state")).elements;
