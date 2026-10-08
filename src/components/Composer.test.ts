@@ -5,7 +5,9 @@ import type { Bot } from "@/state/store";
 import type { DeskSnapshot } from "@/lib/desk";
 import { buildDeskQueue } from "@/lib/desk-queue";
 import { deskCaseInstruction } from "@/lib/desk-ask-context";
+import { NO_OFFICE_FACTS, setupState, type SetupGate, type SetupSequenceInput } from "@/lib/setup-sequence";
 import { Composer } from "./Composer";
+import { AskReadiness } from "./AskReadiness";
 
 const fixture = vi.hoisted(() => ({ api: vi.fn(), dispatch: vi.fn(), stateUpdates: [] as unknown[], preview: null as string | null, store: {} as Record<string, unknown> }));
 vi.mock('@/lib/design-preview', () => ({ get DESIGN_PREVIEW_REASON() { return fixture.preview; } }));
@@ -99,13 +101,11 @@ describe("Ask when model access is withdrawn", () => {
     return renderToStaticMarkup(createElement(Composer, { bot, productAsk: true, askReady: false, readiness: createElement("span") }));
   };
 
-  it("names the terminal hold and keeps drafting open instead of promising a reconnect", () => {
+  it("no longer offers a draft to keep: a withdrawn grant is setup's hold, not a drafting state", () => {
     fixture.store = { connected: true, hermes: { modelAccess: { managed: true, withdrawn: true, attached: false, detail: "Fictional withdrawn grant." } } };
     const html = blocked();
-    expect(html).toContain("Disconnected from your office. You can still write a draft to keep.");
-    expect(html).toContain("Reconnect in Workspace → Website account · Shift + Enter for a new line");
-    expect(html).not.toMatch(/draft while we connect|Connect Bud to start/);
-    expect(html).not.toMatch(/<textarea[^>]*disabled=""/);
+    expect(html).not.toContain("write a draft to keep");
+    expect(html).not.toContain("Reconnect in Workspace");
   });
 
   it("keeps the connecting copy while the local service is reconnecting", () => {
@@ -114,6 +114,53 @@ describe("Ask when model access is withdrawn", () => {
     expect(html).toContain("You can draft while we connect.");
     expect(html).toContain("Connect Bud to start");
     expect(html).not.toContain("Reconnect in Workspace");
+  });
+});
+
+describe("Ask held by setup", () => {
+  const bot: Bot = { id: "bud", threadId: "task-1", name: "Bud", title: "Assistant", description: "", notifications: false,
+    color: "green", unread: false, busy: false, messages: [], modelSelection: { instanceId: "fixture", model: "fixture" } };
+  const budNotReady = { ready: false, working: false, detail: null };
+  const gateFor = (input: Partial<SetupSequenceInput>) => setupState({ agencySetup: undefined, ...input }).gates.ask;
+  const held = (askGate: SetupGate, readiness: ReactNode = createElement("span")) =>
+    renderToStaticMarkup(createElement(Composer, { bot, productAsk: true, askReady: false, askGate, showAskGate: true, onAskGateAction: vi.fn(), readiness }));
+
+  it("locks the composer on a computer that isn't linked, with the fix and the owner request right there", () => {
+    const gate = gateFor({ websiteLink: "not-linked", bud: budNotReady });
+    expect(gate.on).toBe(false);
+    const html = held(gate);
+    expect(html).toMatch(/<textarea[^>]*disabled=""/);
+    expect(html).toContain("Connect this computer to your office first.");
+    expect(html).toMatch(/<button[^>]*>Enter link code<\/button>/);
+    expect(html).toContain("Copy request for your owner");
+    expect(html).not.toMatch(/draft/i);
+    // Attach and Speak stay shut too, so nothing edits the saved draft.
+    caps.dictation.available = true;
+    expect(controls({ askReady: false, askGate: gate, showAskGate: true }).disabled).toBe(true);
+  });
+
+  it("names the disconnect, not an old timed-out check, on a revoked computer", () => {
+    const oldTimeout = "Bud took too long to answer. Review AI usage on your linked website before checking again.";
+    fixture.store = { connected: true, desk: null, config: null, hermes: {
+      pin: { product: "fixture", tag: "fixture", commit: "fixture", profile: "property" },
+      cli: { installed: true, versionText: "fixture", matchesPin: true, probeState: "ok" },
+      pack: { installed: true, approvalsManual: true, workroomReady: true },
+      model: { attached: false, provider: null, model: null },
+      modelAccess: { managed: false, withdrawn: true, attached: false, detail: "Fictional withdrawn grant." },
+      lastPing: { kind: "ping", at: 1, ok: false, detail: oldTimeout },
+      ready: false, detail: "", homeDir: "/fixture", profileDir: "/fixture", installCommand: null, signInCommand: "",
+    } };
+    const gate = gateFor({ websiteLink: "not-linked", office: { ...NO_OFFICE_FACTS, link: "not-linked", revoked: true }, bud: { ...budNotReady, withdrawn: true } });
+    const html = held(gate, createElement(AskReadiness, { onSetup: vi.fn(), officeLink: "not-linked", hold: gate }));
+    expect(html).toContain("Connect this computer to your office first.");
+    expect(html).not.toMatch(/usage|Connection needs another look/i);
+    expect(html).toMatch(/<textarea[^>]*disabled=""/);
+  });
+
+  it("keeps an open gate's composer as it was", () => {
+    const html = renderToStaticMarkup(createElement(Composer, { bot, productAsk: true, askGate: { on: true }, showAskGate: false }));
+    expect(html).not.toMatch(/<textarea[^>]*disabled=""/);
+    expect(html).not.toContain("Copy request for your owner");
   });
 });
 

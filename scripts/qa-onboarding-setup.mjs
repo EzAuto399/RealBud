@@ -185,7 +185,7 @@ try {
     if (await collapsed.count()) await collapsed.click();
     await card.getByRole('list', { name: 'Get started steps', exact: true }).waitFor();
     // Wait for the card's own reads to answer: the link and the packs.
-    await card.getByText('Your office owner sends this code. Ask them if you don’t have one yet.', { exact: true }).waitFor();
+    await card.getByText('Connect this computer to your office first. Paste the link code your office owner sent you.', { exact: true }).waitFor();
     await card.getByText(/Reading packs from your office/).waitFor({ state: 'detached' });
     return card;
   };
@@ -220,7 +220,7 @@ try {
   let cardText = await cardTextOf(card);
   observations.freshSetupCard = cardText;
   // Five steps in Kevin's order, exactly one current step, nothing done.
-  for (const title of ['1. Paste the link code your office sent you', '2. Bud is setting itself up', '3. Import your office’s pack', '4. Connect the office Gmail', '5. Review and switch on your workflows']) {
+  for (const title of ['1. Paste the link code your office sent you', '2. Bud is setting itself up', '3. Import your office’s pack', '4. Connect what your workflows read', '5. Review and switch on your workflows']) {
     assert.ok(cardText.includes(title), `${title} missing: ${cardText}`);
   }
   assert.equal(cardText.match(/· Now\b/g)?.length, 1, cardText);
@@ -322,7 +322,7 @@ try {
   assert.equal(cardText.match(/· Now\b/g)?.length, 1, cardText);
   assert.match(cardText, /3\. Import your office’s pack · Done/);
   // No account is connected in this harness, so Gmail may never read as done.
-  assert.doesNotMatch(cardText, /4\. Connect the office Gmail · Done/);
+  assert.doesNotMatch(cardText, /4\. Connect what your workflows read · Done/);
   // This harness never links, so step 1 stays the single current action.
   assert.equal((await request('/api/office-link')).state, 'unlinked');
   assert.match(cardText, /1\. Paste the link code your office sent you · Now/);

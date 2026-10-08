@@ -8,6 +8,8 @@ import {
 } from "./browser-link";
 import { useApprovalClock } from "../BrowserApprovalCard";
 import { OwnerRequestButton } from "../OwnerRequestButton";
+import { noteLinkAttempt } from "@/lib/use-setup-state";
+import type { LinkAttempt } from "@/lib/setup-sequence";
 
 // The protocol lives in ./browser-link; these re-exports keep existing imports working.
 export { browserLinkMessage, modelAccessMessage, modelAccessState, readBrowserLinkView, savedBrowserRequest } from "./browser-link";
@@ -146,9 +148,20 @@ export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
   </SettingsCard>;
 }
 
+/** A pasted code the website refused (409 from server/office-link.ts), in its own words; setup's link step shows it. */
+export function refusedLinkAttempt(cause: unknown): LinkAttempt | null {
+  const code = (cause as { code?: unknown } | null)?.code;
+  return cause instanceof Error && (code === "installation_limit" || code === "link_code_refused") ? { outcome: code, message: cause.message } : null;
+}
+
 export function WebsiteLinkCard() {
   const link = useBrowserLink();
   const { status, phase, error, setError } = link;
+  // Setup's link step says what the last attempt here came to; a new request clears it.
+  useEffect(() => {
+    if (phase.kind === "expired" || phase.kind === "declined") noteLinkAttempt({ outcome: phase.kind });
+    else if (phase.kind === "starting") noteLinkAttempt(null);
+  }, [phase.kind]);
   const [code, setCode] = useState(""); const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
   const [action, setAction] = useState<WebsiteLinkCardViewProps["action"]>(undefined);
@@ -160,7 +173,15 @@ export function WebsiteLinkCard() {
   const act = async (action: "link" | "report" | "disconnect") => {
     setBusy(true); setAction(action); setError("");
     try {
-      if (action === "link") { await link.linkCode(code, label); setCode(""); }
+      if (action === "link") {
+        try { await link.linkCode(code, label); } catch (cause) {
+          const refused = refusedLinkAttempt(cause);
+          if (refused) noteLinkAttempt(refused);
+          throw cause;
+        }
+        noteLinkAttempt(null);
+        setCode("");
+      }
       else {
         // The service waits up to 60 s on the website to report, so this budget
         // sits above its own or a slow account would read as a local outage.

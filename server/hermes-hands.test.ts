@@ -263,6 +263,14 @@ describe("tryHermesPing (fake pinned CLI)", () => {
     });
   });
 
+  it.skipIf(process.platform === "win32")("says a timed-out check took too long and points at support, never at AI usage", async () => {
+    const { dir, script } = stubHermes("OK");
+    writeFileSync(script, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Hermes Agent v0.20.3 (2026.8.16.2)"; exit 0; fi\nexec sleep 5\n`);
+    const ping = await tryHermesPing({ cli: script, root: dir, timeoutMs: 200 });
+    expect(ping).toMatchObject({ ok: false, detail: "Bud took more than a minute to answer. Try the check again; if it keeps happening, save a support file for hello@realbud.app." });
+    expect(ping.detail).not.toMatch(/usage/i);
+  });
+
   it("accepts the supported worker's exact startup notice before its confirmation", async () => {
     const notice = "  ⚠ tirith security scanner enabled but not available — command scanning will use pattern matching only\r\n";
     const { dir, script } = stubHermes(`${notice}OK.\n`);

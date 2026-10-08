@@ -6,9 +6,14 @@ import { budReadinessCheck } from "@/lib/bud-readiness";
 import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
 import { useBudStatusMonitor } from "@/lib/bud-status-monitor";
 import { api, useStore } from "@/state/store";
-import type { WebsiteLinkRead } from "@/lib/setup-sequence";
+import type { SetupGate, WebsiteLinkRead } from "@/lib/setup-sequence";
 
-export function AskReadiness({ onSetup, officeLink }: { onSetup: () => void; officeLink?: WebsiteLinkRead }) {
+/**
+ * Bud's own readiness above Work's composer. `hold` is setup's closed Ask gate
+ * for a cause outside Bud (link, access, restart, AI allowance): the composer
+ * shows that hold, so nothing here, least of all an old failed check, competes with it.
+ */
+export function AskReadiness({ onSetup, officeLink, hold }: { onSetup: () => void; officeLink?: WebsiteLinkRead; hold?: SetupGate | null }) {
   const { state, dispatch } = useStore();
   const canAdminister = useServiceAdminAccess(state.serviceAdmin ?? state.config?.serviceAdmin);
   const refreshStatus = useCallback(async (isCurrent: () => boolean) => {
@@ -28,7 +33,7 @@ export function AskReadiness({ onSetup, officeLink }: { onSetup: () => void; off
   const availability = budAvailability(state.hermes, state.connected, Boolean(state.desk?.recovery?.active), { canAdminister, officeLink });
   // Automatic setup after an approved office link: progress, no action needed.
   const automatic = Boolean(budAutoSetupView(state.hermes)?.working) && !statusRead.error;
-  const failure = error || (automatic ? null : budReadinessFailure(state.hermes));
+  const failure = error || budReadinessFailure(state.hermes, officeLink);
   const pinDrift = Boolean(
     state.hermes?.cli.installed && !(state.hermes.cli.compatible ?? state.hermes.cli.matchesPin) && !state.hermes.restartRequired,
   );
@@ -119,6 +124,7 @@ export function AskReadiness({ onSetup, officeLink }: { onSetup: () => void; off
     });
   }, [availability.canVerify, canAdminister, checking, dispatch, pinDrift, restoring, state.connected, state.desk?.recovery?.active, state.hermes, statusRead.error]);
 
+  if (hold && !hold.on) return null;
   if (availability.ready && !checking && !restoring && !statusRead.error) return null;
   const activeCheck = checking || restoring;
   return (
