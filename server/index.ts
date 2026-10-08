@@ -330,6 +330,11 @@ function csvDigest(csv: string): string {
 
 ensureDirs();
 seedVault();
+// Boot profile hook: the pack below is the first worker-profile mutation of a
+// boot, so the worker-state import (importLegacyProfileFacts) belongs right
+// here, before it. Kept before listen: ~0.2 s on a new Mac profile, ~2 ms on
+// an existing one; the "listening" log line records the cost on each device.
+const profilePackStarted = performance.now();
 try {
   // A new desktop gets a new private profile. Importing a legacy profile is
   // a separate migration decision, never an automatic copy of personal keys,
@@ -338,6 +343,7 @@ try {
 } catch {
   /* hermes home missing or not writable — Desk stays on the training book */
 }
+const profilePackMs = Math.round(performance.now() - profilePackStarted);
 const cfg = loadConfig();
 const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
 await registry.load(instanceConfigs(cfg));
@@ -1618,21 +1624,25 @@ bus.subscribe((raw: RuntimeEvent) => {
       }
       break;
     }
-    case "runtime.error":
+    case "runtime.error": {
       if (expectedStoppedThreads.has(event.threadId)) break;
+      // Worker text can carry its install path or raw process output; chat
+      // keeps only the product sentence (plain text: the error row is not Markdown).
+      const detail = productAskFailure(event.message);
       if (bot && isProductBud(bot.id)) {
         publishWorkerIssue({
           source: "runtime",
           summary: "Bud hit a worker error",
-          detail: productAskFailure(event.message),
+          detail,
         });
       }
       pushMessage({
         role: "bot",
         kind: "activity",
-        tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false, setup: event.setup },
+        tool: { name: `error: ${detail.replace(/\*\*/g, "")}`, ok: false, setup: event.setup },
       });
       break;
+    }
     case "turn.completed": {
       // "Allow for this task" read grants end with the task.
       taskReadGrants.clear(event.threadId);
@@ -2781,7 +2791,7 @@ async function runGroupMemberTurn(
           role: "bot",
           kind: "activity",
           from: { botId: bot.id, name: bot.name, color: bot.color },
-          tool: { name: `error: ${err instanceof Error ? err.message.slice(0, 140) : "turn failed"}`, ok: false },
+          tool: { name: `error: ${productAskFailure(err instanceof Error ? err.message : String(err)).replace(/\*\*/g, "")}`, ok: false },
         });
         broadcast({ kind: "message", threadId: group.threadId, message: failure });
         finish();
@@ -6532,7 +6542,8 @@ server.listen(PORT, "127.0.0.1", () => {
   if (!privateRestoreLocked) void mailWorkspace.resumeHistoryIfPending().catch(() => {});
   if (!privateRestoreLocked) void resumeReiSignInWaits().catch(() => {});
   console.log(`realbud server on http://127.0.0.1:${PORT}`);
-  oplog("boot", `listening on 127.0.0.1:${PORT}`);
+  // Startup cost before listen (issue 62): whole process and the profile pack.
+  oplog("boot", `listening on 127.0.0.1:${PORT}`, { startupMs: Math.round(process.uptime() * 1000), profilePackMs });
   // Say in the service's own log when it could not answer at all: on a busy
   // Windows PC synchronous work froze it for ~30 s and only the window noticed.
   let stallTick = Date.now();

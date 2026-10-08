@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { NEVER_ACTIONS, type DeskSnapshot } from "../shared/contracts.ts";
 import { answerAskFromDesk, askBookIntent, polishProductAskReply, productAskFailure, productBudSystemPrompt, productWorkerDump } from "./ask-book.ts";
+import { describeSpawnFailure } from "./procs.ts";
 import { PM_TASK_STARTERS } from "../src/lib/pm-task-starters.ts";
 
 function property(id: string, address: string): DeskSnapshot["properties"][number] {
@@ -233,6 +234,19 @@ describe("ask book", () => {
     const unknown = productAskFailure("RPC exploded at /Users/example/.hermes with sk-secret-value");
     expect(unknown).toMatch(/couldn't finish/i);
     expect(unknown).not.toMatch(/RPC|\.hermes|sk-secret-value/i);
+  });
+
+  it("maps a missing, unexecutable or crashed worker to Set up Bud without its path", () => {
+    const worker = "/synthetic/realbud/hermes/bin/hermes";
+    for (const raw of [
+      describeSpawnFailure(Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }), worker).message,
+      describeSpawnFailure(Object.assign(new Error("spawn EACCES"), { code: "EACCES" }), worker).message,
+      `hermesAgent exited 1 before the prompt result: ${worker}: No module named fictional`,
+    ]) {
+      const answer = productAskFailure(raw);
+      expect(answer).toMatch(/Set up Bud/);
+      expect(answer).not.toMatch(/synthetic|hermes|PATH|exited|`/);
+    }
   });
 
   it("does not claim rollback when a worker failure may follow a completed app operation", () => {
