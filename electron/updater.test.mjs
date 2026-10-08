@@ -31,7 +31,7 @@ describe("restart to update when the office service could not be stopped", () =>
   it("tries once more by itself and installs when the service then stops", async () => {
     fixture.results.push({ ready: false, reason: "cannot-stop" }, { ready: true });
     await ipc["update:install"]();
-    expect(await ipc["update:get-state"]()).toMatchObject({ status: "downloaded", deferred: "cannot-stop" });
+    expect(await ipc["update:get-state"]()).toMatchObject({ status: "downloaded", deferred: "cannot-stop", message: expect.stringMatching(/try the update again shortly/) });
     expect(fixture.installs).toBe(0);
     await vi.advanceTimersByTimeAsync(30_000);
     expect(fixture.prepares).toBe(2);

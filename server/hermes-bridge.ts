@@ -103,6 +103,13 @@ export function installInFlight(): boolean {
   return installJob.state === "running" || installJob.state === "verifying" || installJob.state === "preflight";
 }
 
+/** Setup an app update must wait for: in flight and not yet told to stop. A
+ * stopped setup whose child still holds its output pipe stays in flight until
+ * the service restarts, and must not hold every update back meanwhile. */
+export function installBlocksUpdate(): boolean {
+  return installInFlight() && !bootstrapAbort?.signal.aborted;
+}
+
 // ── managed model choice ─────────────────────────────────────────────────
 //
 // RealBud is managed-only (owner decision 29 Sep 2026). The provider, endpoint

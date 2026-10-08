@@ -79,6 +79,7 @@ const DEFERRED = {
   "cannot-stop": "RealBud could not stop the office service for this update. Stop it in Settings & help, then restart to update.",
   "still-running": "The office service is still stopping. RealBud will try the update again shortly.",
 };
+const CANNOT_STOP_RETRYING = "RealBud could not stop the office service yet. It will try the update again shortly.";
 function install() {
   if (installing) return installing;
   installing = (async () => {
@@ -89,7 +90,8 @@ function install() {
     const handoff = await prepareServiceForUpdate({ dataDirectory, identity: serviceIdentity(dataDirectory), verifyWindowsPrivacy: windowsKeyPrivacyAsync });
     cannotStopTries = !handoff.ready && handoff.reason === "cannot-stop" ? cannotStopTries + 1 : 0;
     if (!handoff.ready) {
-      setState({ status: "downloaded", deferred: handoff.reason, message: DEFERRED[handoff.reason] });
+      const retrying = handoff.reason === "cannot-stop" && cannotStopTries < 2;
+      setState({ status: "downloaded", deferred: handoff.reason, message: retrying ? CANNOT_STOP_RETRYING : DEFERRED[handoff.reason] });
       // A service it could not stop gets one more try by itself; after that the
       // person stops it, and their next "Restart to update" starts afresh.
       if (cannotStopTries < 2) {
