@@ -1,7 +1,7 @@
 /** Bud's learning across a private backup restored into a different installation key. Synthetic data only. */
 import { afterEach, describe, expect, it } from 'vitest';
 import { readFile } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
@@ -18,7 +18,8 @@ import { stagePrivateRestoreV2, applyStagedPrivateRestoreV2 } from './private-ba
 import { plantPrivateFile, privateTempRoot, removeFixture, privateDir } from './testing/private-fixture.ts';
 import { createHermesMemoryReviewService, type MemoryReviewContext } from './hermes-memory-review.ts';
 import { OWNED_MEMORY_RUNTIME } from './hermes-memory-owned.ts';
-import { importLegacyProfileFacts, workerScope } from './worker-state.ts';
+import { importLegacyProfileFacts, workerFactsHeld, workerScope } from './worker-state.ts';
+import { ensureWorkspaceMemorySigning } from './hermes-memory-signing.ts';
 import { MEMORY_LEARNING_API, MEMORY_REVIEW_API as api, type MemoryLearningState, type MemoryReviewPage, type MemoryReviewPreview } from '../shared/hermes-memory-review.ts';
 import { MEMORY_RECOVERY_API } from '../shared/hermes-memory-recovery.ts';
 
@@ -148,5 +149,25 @@ describe('learning restored into another installation key', () => {
     const signing = await readFile(join(target.directory, 'company-installation/private/memory-signing.json'), 'utf8');
     expect(JSON.parse(signing)).not.toHaveProperty('keys');
   }, 60_000);
+});
+
+describe('a fresh install stays fresh for restore', () => {
+  it('saves no signing key and holds no learning until Bud has something to sign', async () => {
+    const at = await installation(), profile = 'hermes/profiles/property', signingFile = join(at.directory, 'company-installation/private/memory-signing.json');
+    // A fresh boot imports only the pack's shipped-file record, then saves keys for what it learned.
+    at.plant(`${profile}/.realbud-shipped.json`, JSON.stringify({ pack: 'fictional-pack', files: {} }));
+    await importLegacyProfileFacts([workerScope(at.workspaceId, 'property', join(at.directory, profile))], { dataDir: at.directory,
+      afterImport: async () => { await ensureWorkspaceMemorySigning(at.key, at.workspaceId, at.directory); } });
+    const s = service(at, at.workspaceId);
+    expect(await s.list()).toEqual([]);
+    expect(existsSync(signingFile)).toBe(false);
+    expect(workerFactsHeld(at.directory)).toBe(false);
+    // The first staged proposal is learning: restore readiness holds it and a backup carries its key.
+    at.plant(`${profile}/pending/memory/0000000a.json`, staged('0000000a', 'Prefers weekly summaries.'));
+    expect(await s.list()).toEqual([['0000000a', 'pending']]);
+    expect(workerFactsHeld(at.directory)).toBe(true);
+    expect(await ensureWorkspaceMemorySigning(at.key, at.workspaceId, at.directory)).toEqual(['property']);
+    expect(existsSync(signingFile)).toBe(true);
+  });
 });
 

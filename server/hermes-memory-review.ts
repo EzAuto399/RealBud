@@ -242,7 +242,9 @@ export function createHermesMemoryReviewService(options: {
       if (JSON.stringify(options.context()) !== identity) fail('stale-review');
       const sourceKey = options.key(); if (!Buffer.isBuffer(sourceKey) || sourceKey.length !== 32) fail('unavailable');
       // Carried by private backups, so restored decisions and journals keep verifying.
-      const signingKey = await memorySigningKey(sourceKey, context.workspaceId, context.profileId, dataDirectory).catch(() => fail('unavailable'));
+      // Listing signs nothing, so opening the review list keeps a fresh install fresh.
+      const save = input.command !== 'list' && input.command !== 'interrupted-list';
+      const signingKey = await memorySigningKey(sourceKey, context.workspaceId, context.profileId, dataDirectory, { save }).catch(() => fail('unavailable'));
       if (controller.signal.aborted) { signingKey.fill(0); fail('unavailable', 503); }
       if (JSON.stringify(options.context()) !== identity) { signingKey.fill(0); fail('stale-review'); }
       const { python: _python, ...binding } = context;

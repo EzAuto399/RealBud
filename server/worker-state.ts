@@ -12,9 +12,9 @@
  * credential-shaped or over-cap bytes are never stored, only a digest, size and
  * reason; every scope shares one byte and entry cap. */
 import { createHash, randomBytes } from 'node:crypto';
-import { lstatSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { lstat, readdir, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { DATA_DIR } from './config.ts';
 import { privateDirectory, readPrivateJsonWithFallback, writePrivateJson } from './private-json.ts';
 import { ensureProfileDirectories, readProfileFiles, writeProfileFiles, type ProfileFileWrite } from './hermes-profile-storage.ts';
@@ -96,6 +96,30 @@ export function validateWorkerState(v: unknown, scope?: Pick<WorkerScope, 'works
 
 const emptyState = (scope: WorkerScope): WorkerState => ({ version: 1, purpose: 'worker-facts', workspaceId: scope.workspaceId, scopeId: scope.scopeId,
   profileId: scope.profileId, revision: 0, artifacts: {}, projected: {}, preserved: [], held: [], migration: { sourceDigest: null, complete: false, at: null } });
+
+/** Whether saved worker state holds anything beyond the pack's shipped-file record that
+ * every fresh install imports: Bud's memory, proposals, signed review records, office
+ * edits or withheld copies. Anything unreadable counts as held. */
+export function workerStateHoldsLearning(value: unknown): boolean {
+  try { const state = validateWorkerState(value); return Object.keys(state.artifacts).some(key => key !== '.realbud-shipped.json') || state.preserved.length > 0 || state.held.length > 0; }
+  catch { return true; }
+}
+/** Sync, for restore readiness: whether D/worker-state or D/memory-learning hold anything a
+ * restore would replace. A fresh install has only each scope's state.json (and its .prev)
+ * with the shipped-file record; any other file, link or unreadable entry counts. */
+export function workerFactsHeld(dataDir = DATA_DIR): boolean {
+  const files = (root: string) => {
+    try { return readdirSync(join(dataDir, root), { recursive: true, withFileTypes: true }).filter(entry => !entry.isDirectory()); }
+    catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? [] : null; }
+  };
+  const learning = files('memory-learning'), workers = files('worker-state');
+  if (!learning || !workers || learning.length) return true;
+  return workers.some(entry => {
+    const path = join(entry.parentPath, entry.name), parts = relative(join(dataDir, 'worker-state'), path).split(sep);
+    if (!entry.isFile() || parts.length !== 3 || !WORKSPACE.test(parts[0]) || !SCOPE.test(parts[1]) || parts[2] !== 'state.json' && parts[2] !== 'state.json.prev') return true;
+    try { return workerStateHoldsLearning(JSON.parse(readFileSync(path, 'utf8'))); } catch { return true; }
+  });
+}
 
 export async function readWorkerState(scope: WorkerScope, dataDir = DATA_DIR): Promise<WorkerState> {
   let raw: unknown;
