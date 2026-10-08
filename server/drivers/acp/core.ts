@@ -37,6 +37,7 @@ import { newEventId, newId } from "../../contracts.ts";
 import { computerProxyEnv } from "../../container-computer.ts";
 import { augmentedPath } from "../../env-path.ts";
 import { readCuaConnection } from "../../local-computer.ts";
+import { CUA_NEVER_TOOLS } from "../../cua-bounded.ts";
 import { BROWSER_SERVER, startBrowserBroker, type BrowserBroker } from "../../browser-broker.ts";
 import { browserRuntime } from "../../browser-runtime.ts";
 import { askBrowserRuntime, askPortalPackLoader } from "../../ask-browser-lab.ts";
@@ -56,6 +57,7 @@ import { REMINDERS_SERVER, startRemindersBroker } from "../../reminders-broker.t
 import { WORKSPACE_VIEWS_SERVER, startWorkspaceViewsBroker } from "../../workspace-views-broker.ts";
 import { WORKFLOW_SETTINGS_SERVER, startWorkflowSettingsBroker } from "../../workflow-settings-broker.ts";
 import { BANK_SOURCE_SERVER, startBankSourceBroker } from "../../bank-source-broker.ts";
+import { DECIDE_SERVER, startDecideBroker } from "../../decide-broker.ts";
 import { MCP_CONNECTORS_SERVER, startMcpConnectorBroker } from "../../mcp-connector-broker.ts";
 import { toolFingerprint } from "../../tool-fingerprint.ts";
 import { HERMES_MEMORY_APPROVAL, hermesMemoryPermission } from "./hermes-memory-approval.ts";
@@ -211,6 +213,31 @@ export function hermesNativeBrowserTool(...values: unknown[]): string | null {
   }
   return null;
 }
+
+/** A Cua tool Bud never runs (`CUA_NEVER_TOOLS`), named by the leading tool
+ * name in a title or an explicit name field, bare or behind an MCP server
+ * prefix (`mcp_computer_…`, `mcp__computer__…`, `computer.…`), also after a
+ * spaced label (`Tool: computer/install_extension`). Checked for
+ * every engine and every turn, fenced or not, before any auto-approval. */
+// Linear on purpose: a title is model-influenced text, so no nested repeats.
+// A name counts at the start of the leading tool token or right after one of
+// `_./:`, and must not run on into `[a-z0-9_-]`.
+export function cuaNeverTool(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const head = value.trimStart().replace(/^[a-z][a-z ]{0,30}:\s+/i, "");
+    const token = (/^[a-z0-9_./:-]+/i.exec(head)?.[0] ?? "").toLowerCase();
+    for (let i = 0; i < token.length; i++) {
+      if (i > 0 && !"_./:".includes(token[i - 1])) continue;
+      for (const name of CUA_NEVER_TOOLS) {
+        if (token.startsWith(name, i) && !/[a-z0-9_-]/.test(token[i + name.length] ?? "")) return name;
+      }
+    }
+  }
+  return null;
+}
+export const CUA_EXTENSION_REFUSED =
+  "Bud tried to install, update or reconfigure the desktop helper, or use its screen-reading extension, which RealBud does not allow, so this request was stopped.";
 
 /** Model-visible wrap-up note for a Hermes Ask turn nearing RealBud's hard
  * call/time ceiling. Delivered through Hermes ACP's own `/steer` command,
@@ -378,6 +405,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (typeof bank.listBankAccounts !== "function" || typeof bank.listBankTransactions !== "function") throw new Error("Bud’s bank feed is unavailable. Start a new request.");
           servers.push({ type: "http", name: BANK_SOURCE_SERVER, url: "http://127.0.0.1/realbud-bank-source", headers: [] });
         }
+        const decisions = turn.integrations?.decisions;
+        if (decisions) {
+          if (typeof decisions.decide !== "function" || typeof decisions.ready !== "function" || typeof decisions.sameMember !== "function") throw new Error("Bud’s typed decisions are unavailable. Start a new request.");
+          servers.push({ type: "http", name: DECIDE_SERVER, url: "http://127.0.0.1/realbud-decisions", headers: [] });
+        }
         const officeConnectors = turn.integrations?.mcpConnectors;
         if (officeConnectors) {
           // The broker lists at most 100; a larger list is cut there, never a reason to stop Ask.
@@ -509,6 +541,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let viewsBroker: LoopbackToolServer | undefined;
         let settingsBroker: LoopbackToolServer | undefined;
         let bankBroker: LoopbackToolServer | undefined;
+        let decideBroker: LoopbackToolServer | undefined;
         let connectorsBroker: LoopbackToolServer | undefined;
         const brokerMounts: Array<() => void> = [];
         // The CRM mount is pinned to the first turn's member scope and generation;
@@ -576,6 +609,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           viewsBroker?.close();
           settingsBroker?.close();
           bankBroker?.close();
+          decideBroker?.close();
           connectorsBroker?.close();
           for (const release of brokerMounts.splice(0)) release();
           if (idleTimer) clearTimeout(idleTimer);
@@ -627,6 +661,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           viewsBroker?.cancelPending();
           settingsBroker?.cancelPending();
           bankBroker?.cancelPending();
+          decideBroker?.cancelPending();
           connectorsBroker?.cancelPending();
           if (run.interruptTimer) clearTimeout(run.interruptTimer);
           if (run.wrapUpTimer) clearTimeout(run.wrapUpTimer);
@@ -654,9 +689,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
         // Stop the whole turn: the call may already be running inside Hermes,
         // and later calls in the same turn would follow the same plan.
-        const refuseHermesBrowser = (run: RunningTurn) => {
+        const refuseHermesBrowser = (run: RunningTurn, message = HERMES_BROWSER_REFUSED) => {
           if (run.settled || run.cancellationRequested) return;
-          emit({ ...eventBase(run), type: "runtime.error", message: HERMES_BROWSER_REFUSED });
+          emit({ ...eventBase(run), type: "runtime.error", message });
           void interrupt(run);
         };
 
@@ -713,6 +748,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             });
 
           const toolCall = params.toolCall ?? {};
+          if (cuaNeverTool(toolCall.rawInput?.name, toolCall.rawInput?.tool, toolCall.title)) {
+            refuseHermesBrowser(run, CUA_EXTENSION_REFUSED);
+            return send({ jsonrpc: "2.0", id: message.id, result: cancelled });
+          }
           if (DRIVER_KIND === "hermesAgent" &&
             hermesNativeBrowserTool(toolCall.rawInput?.name, toolCall.rawInput?.tool, toolCall.title, toolCall.kind)) {
             refuseHermesBrowser(run);
@@ -875,6 +914,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 title: tool !== null ? pageToolLabel(tool) : String(update.rawInput?.command ?? update.title ?? "tool").slice(0, 80),
                 toolFingerprint: toolFingerprint(String(update.title ?? "tool"), update.rawInput ?? update.content),
               });
+              if (cuaNeverTool(update.rawInput?.name, update.rawInput?.tool, update.title)) {
+                refuseHermesBrowser(run, CUA_EXTENSION_REFUSED);
+                break;
+              }
               if (DRIVER_KIND === "hermesAgent" && hermesNativeBrowserTool(update.rawInput?.name, update.rawInput?.tool, update.title)) {
                 refuseHermesBrowser(run);
                 break;
@@ -1164,6 +1207,16 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (closed) { bankBroker.close(); throw new Error("Bud’s bank feed session stopped."); }
             mcpServers = mcpServers.map(server => server.name === BANK_SOURCE_SERVER ? bankBroker!.descriptor : server);
           }
+          if (mcpServers.some(server => server.name === DECIDE_SERVER)) {
+            // Typed Jev questions; no card, answers are suggestions. The current turn's binding is used.
+            decideBroker = await startDecideBroker({
+              turnId: () => actingTurn()?.turnId ?? null,
+              decisions: () => actingTurn()?.turn.integrations?.decisions,
+              receipt: receipt => appendNative(threadId, { dir: "in", source: `${SOURCE}.realbud`, msg: { decisions: receipt } }),
+            });
+            if (closed) { decideBroker.close(); throw new Error("Bud’s typed decisions session stopped."); }
+            mcpServers = mcpServers.map(server => server.name === DECIDE_SERVER ? decideBroker!.descriptor : server);
+          }
           if (firstTurn.integrations?.mcpConnectors && mcpServers.some(server => server.name === MCP_CONNECTORS_SERVER)) {
             // Office connectors: reads with no card, writes with the one-time card; tools fixed at mount, re-checked per call.
             connectorsBroker = await startMcpConnectorBroker({
@@ -1308,6 +1361,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           viewsBroker?.cancelPending();
           settingsBroker?.cancelPending();
           bankBroker?.cancelPending();
+          decideBroker?.cancelPending();
           connectorsBroker?.cancelPending();
           for (const finish of [...run.asks.values()]) finish({ behavior: "cancel" });
           if (sessionId && run.promptSent) {

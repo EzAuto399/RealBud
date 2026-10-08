@@ -35,6 +35,8 @@ export function readBillDuplicateCheck(value: unknown, sourceDigest: string): Bi
   return { version: 1, sourceDigest: value.sourceDigest, reviewDigest: value.reviewDigest as string | null, complete: value.complete,
     candidates: value.candidates.map(candidate => ({ billId: candidate.billId, revision: candidate.revision, matchedRevision: candidate.matchedRevision,
       ...(candidate.match !== undefined ? { match: candidate.match } : {}),
+      // An ordering hint only: an unknown value is dropped, never trusted or treated as a failure.
+      ...(candidate.likely === 'same' || candidate.likely === 'different' ? { likely: candidate.likely } : {}),
       sourceDigest: candidate.sourceDigest, subject: candidate.subject, receivedAt: candidate.receivedAt,
       facts: { propertyId: candidate.facts.propertyId, kind: candidate.facts.kind, vendor: candidate.facts.vendor, amountCents: candidate.facts.amountCents,
         ...(candidate.facts.invoiceNumber !== undefined ? { invoiceNumber: candidate.facts.invoiceNumber } : {}),

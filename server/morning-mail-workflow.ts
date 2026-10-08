@@ -13,6 +13,7 @@ const NOISE_QUESTION: JevQuestion = { type: 'noul', instructions: 'Is this threa
 export const NOISE_THRESHOLD = 0.97;
 /** Under jev-client's 16 KiB state cap, so a batch is never refused for size. */
 const SCREEN_STATE_BYTES = 15_000;
+const SCREEN_CALLS_IN_FLIGHT = 3;
 
 /** Addresses on the office's lists: supplier emails and approved aliases (from
  * REI's Suppliers list) and owner contacts in Desk. Tenants have no email on file. */
@@ -26,7 +27,8 @@ export function knownMailSenders(suppliers: SupplierDirectory, properties: reado
  * sender unambiguous and not on a known list are asked about. Jev sees the
  * sender domain, the subject and the first 600 characters of the latest
  * message, redacted; never addresses, recipients, attachments or full bodies.
- * Any failed call screens nothing. */
+ * Up to 3 calls run at a time; a failed call leaves its own threads unscreened
+ * (sent to Bud), and only when every call failed is nothing screened (null). */
 export async function screenMailNoise(threads: MailThread[], options: {
   decide: (request: JevRequest) => Promise<JevResult>; known: (address: string) => boolean;
 }): Promise<{ noise: string[]; model: string } | null> {
@@ -41,9 +43,7 @@ export async function screenMailNoise(threads: MailThread[], options: {
       snippet: redactSecretsInText(latest.body).replace(/\s+/g, ' ').trim().slice(0, 600) } }];
   });
   if (!rows.length) return null;
-  const noise: string[] = [];
-  let model = '';
-  // ponytail: sequential calls, stopping at the first failure; parallelise if screen latency matters.
+  const batches: { state: Record<string, unknown>; questions: Record<string, JevQuestion>; ids: string[] }[] = [];
   for (let at = 0; at < rows.length;) {
     const state: Record<string, unknown> = {}, questions: Record<string, JevQuestion> = {}, ids: string[] = [];
     while (at < rows.length && ids.length < 8) {
@@ -53,12 +53,24 @@ export async function screenMailNoise(threads: MailThread[], options: {
       questions[key] = { ...NOISE_QUESTION, instructions: `Thread ${key} in the state. ${NOISE_QUESTION.instructions}` };
       ids.push(rows[at++]!.id);
     }
-    const result = await options.decide({ state, questions });
-    if (!result.ok) return null;
-    model = /^[\w.:/-]{1,100}$/.test(result.model) ? result.model : 'unrecognised';
-    ids.forEach((id, n) => { const answer = result.answers[`t${n}`]; if (answer?.type === 'noul' && answer.noul >= NOISE_THRESHOLD) noise.push(id); });
+    batches.push({ state, questions, ids });
   }
-  return { noise, model };
+  const noise = new Set<string>();
+  let model = '', next = 0, answered = false;
+  const worker = async () => {
+    while (next < batches.length) {
+      const { state, questions, ids } = batches[next++]!;
+      let result: JevResult | null = null;
+      try { result = await options.decide({ state, questions }); } catch { /* this call's threads stay unscreened */ }
+      if (!result?.ok) continue;
+      answered = true;
+      model = /^[\w.:/-]{1,100}$/.test(result.model) ? result.model : 'unrecognised';
+      const { answers } = result;
+      ids.forEach((id, n) => { const answer = answers[`t${n}`]; if (answer?.type === 'noul' && answer.noul >= NOISE_THRESHOLD) noise.add(id); });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(SCREEN_CALLS_IN_FLIGHT, batches.length) }, worker));
+  return answered ? { noise: rows.map(row => row.id).filter(id => noise.has(id)), model } : null;
 }
 
 interface Dependencies {

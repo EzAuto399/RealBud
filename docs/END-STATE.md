@@ -1,6 +1,8 @@
 # RealBud end state
 
-Latest continuation, 8 October: [Platform gaps build](PLATFORM-GAPS-BUILD-2026-10-08.md) shipped per-run AI cost, golden evals, the workflow handler registry with pack schedules, Composio new-mail triggers, Bud schedule cards, private-chat phone decisions, per-department approval settings everywhere Bud acts (with the Workspace → Approvals screen and phone approvals), and Electron 44; release 0.1.37. Local tests and fictional QA; no real-model eval, live webhook or installed 0.1.37 yet.
+Latest continuation, 8 October: [cua-driver 0.34 and Jev tuning](CUA-034-JEV-2026-10-08.md) merged after 0.1.40: driver upgrade, Jev batching, Ask pre-route, duplicate-bill ranking, Bud `decide` tool and the Jev eval. Local tests only; live Jev eval and live REI run pending.
+
+Earlier, 8 October: [Platform gaps build](PLATFORM-GAPS-BUILD-2026-10-08.md) shipped per-run AI cost, golden evals, the workflow handler registry with pack schedules, Composio new-mail triggers, Bud schedule cards, private-chat phone decisions, per-department approval settings everywhere Bud acts (with the Workspace → Approvals screen and phone approvals), and Electron 44; release 0.1.37. Local tests and fictional QA; no real-model eval, live webhook or installed 0.1.37 yet.
 
 Platform gaps plan, 7 October: [Platform gaps plan](PLATFORM-GAPS-2026-10-07.md) turns the Gumloop/bops comparison into five workstreams with owner direction: per-run AI cost from Modelvia receipts, golden-task evals that gate every Hermes or model bump, packs declaring their own workflows, Composio event triggers through the gateway, and approval settings (owner decisions first). Plan and source surveys only; nothing merged.
 

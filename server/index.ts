@@ -72,6 +72,7 @@ import { scanGmailReadOnly, readGmailPdfAttachment } from './composio-gmail.ts';
 import { scanManagedMail, readManagedMailAttachment } from './managed-connectors.ts';
 import { ConnectorEvents } from './connector-events.ts';
 import { askControlReply, parseAskControlIntent } from "./ask-control-intent.ts";
+import { askJevRoute, personAskTurn } from "./ask-jev-route.ts";
 import { createPairingCode } from "./channel-pairing.ts";
 // RealBud server — the harness host. Clients hold no transports
 // (upstream rule): the React app dispatches typed commands over HTTP and
@@ -1069,6 +1070,9 @@ function stopTurnDispatch(threadId: string) {
   if (pending || runtimeTurnIds.has(threadId)) expectedStoppedThreads.add(threadId);
 }
 const steeringBots = new Set<string>();
+/** Bots whose person Ask is waiting on the Jev pre-route (before `busy` is set).
+ * The message, queued-message and steer routes treat them as busy and queue. */
+const routingBots = new Set<string>();
 const connectionOperations = new Map<string, string>();
 const connectedAppAccess = new ConnectedAppAccessCache();
 async function refreshOfficeSources() {
@@ -1721,10 +1725,19 @@ async function finalScreenFrame(botId: string): Promise<Frame | null> {
 
 // ── turn dispatch (upstream ProviderCommandReactor, miniature) ──────────
 async function startTurn(...args: Parameters<typeof startSeatTurn>) {
-  return workspaceActivity.run(() => {
-    if (privateRestoreLocked || shuttingDown) throw Object.assign(new Error('The service is held for restore or shutdown. Restart RealBud before starting work.'), {status:409});
-    return withWorkerProfile(desk.memberKeyForWorker(), () => startSeatTurn(...args));
-  });
+  try {
+    return await workspaceActivity.run(() => {
+      if (privateRestoreLocked || shuttingDown) throw Object.assign(new Error('The service is held for restore or shutdown. Restart RealBud before starting work.'), {status:409});
+      return withWorkerProfile(desk.memberKeyForWorker(), () => startSeatTurn(...args));
+    });
+  } finally {
+    // A follow-up queued while Jev routed has no turn end to drain it when the route answered directly.
+    const bot = store.bot(args[0]);
+    if (bot && !bot.busy && !routingBots.has(bot.id) && bot.queuedMessage && !privateRestoreLocked && !shuttingDown) {
+      const queued = store.takeQueuedMessage(bot.id, bot.queuedMessage.threadId);
+      if (queued) void dispatchQueuedMessage(bot.id, queued);
+    }
+  }
 }
 async function startSeatTurn(
   botId: string,
@@ -1746,6 +1759,8 @@ async function startSeatTurn(
     /** The office member session the renderer sent with the person's own message (`personTurn`).
      * Bud's approval_policy acts as that person for this turn only; never persisted. */
     memberSession?: string;
+    /** Set only by the Ask message routes: the person typed this message. Gates the Jev pre-route. */
+    personAsk?: boolean;
   },
 ) {
   const bot = store.bot(botId);
@@ -1757,7 +1772,7 @@ async function startSeatTurn(
       { status: 400 },
     );
   }
-  if (bot.busy) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
+  if (bot.busy || routingBots.has(bot.id)) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
   const threadId = opts?.threadId ?? bot.threadId;
   const task = store.taskByThread(bot.id, threadId);
   if (!task) throw Object.assign(new Error("no such task"), { status: 404 });
@@ -1832,7 +1847,14 @@ async function startSeatTurn(
     } catch {
       /* no intercept — continue to the model turn */
     }
-    const control = parseAskControlIntent(text);
+    // Every regex control missed: one Jev choice may pick a read-only control (server/ask-jev-route.ts).
+    // While it waits the bot counts as busy (`routingBots`), so a second message queues instead of racing this one.
+    let routed: Awaited<ReturnType<typeof askJevRoute>>;
+    routingBots.add(bot.id);
+    try { routed = await askJevRoute(text, { person: personAskTurn(opts), ready: jevReady, decide: jevDecide }); }
+    finally { routingBots.delete(bot.id); }
+    if (store.bot(bot.id)?.busy) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
+    const control = parseAskControlIntent(text) ?? (routed && routed !== "connected-status" ? routed : null);
     const scheduleReply = control ? askControlReply(control, loops?.listLoops() ?? []) : scheduleIntentReply(text);
     if (scheduleReply) {
       let userMessage = opts?.userMessage;
@@ -1844,7 +1866,7 @@ async function startSeatTurn(
       broadcast({ kind: "message", threadId, message: reply });
       return;
     }
-    if (parseConnectedStatusIntent(text)) {
+    if (parseConnectedStatusIntent(text) || routed === "connected-status") {
       let userMessage = opts?.userMessage;
       if (!userMessage) {
         userMessage = store.appendMessage(threadId, { role: "user", kind: "text", text });
@@ -2165,6 +2187,9 @@ async function startSeatTurn(
           listBankAccounts: async () => { if (desk.memberKeyForWorker() !== reminderMember) throw memberChanged(); return redbark.listBankAccounts(); },
           listBankTransactions: async query => { if (desk.memberKeyForWorker() !== reminderMember) throw memberChanged(); return redbark.listBankTransactions(query); },
         };
+        // Typed Jev questions (`decide`, server/decide-broker.ts) for a person's own message only, never a channel relay; suggestions, never approvals.
+        if (personAskTurn(opts) && jevReady()) integrations.decisions = {
+          sameMember: () => desk.memberKeyForWorker() === reminderMember, ready: jevReady, decide: jevDecide };
         // Reviewed tools from active MCP connectors (reads run; writes get the once-only card).
         integrations.mcpConnectors = await connectorRegistry.askBinding({ attended: true });
       }
@@ -5257,7 +5282,14 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       if (!text) return json(res, 400, { error: "text required" });
       const sizeError = askMessageSizeError(text);
       if (sizeError) return json(res, 413, { error: sizeError });
-      await startTurn(m[1], text, personTurn(req));
+      if (routingBots.has(m[1])) {
+        if (containsCredential(text)) return json(res, 400, { error: "Use the private key field in Set up Bud. Keep keys out of the conversation." });
+        const queued = store.setQueuedMessage(m[1], text);
+        if (!queued) return json(res, 409, { error: "that task is no longer available" });
+        broadcast({ kind: "bot", bot: store.bot(m[1]) });
+        return json(res, 202, { ok: true, queued });
+      }
+      await startTurn(m[1], text, { ...personTurn(req), personAsk: true });
       return json(res, 202, { ok: true });
     }
 
@@ -5276,8 +5308,8 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       if (containsCredential(text)) {
         return json(res, 400, { error: "Use the private key field in Set up Bud. Keep keys out of the conversation." });
       }
-      if (!bot.busy) {
-        await startTurn(bot.id, text, personTurn(req));
+      if (!bot.busy && !routingBots.has(bot.id)) {
+        await startTurn(bot.id, text, { ...personTurn(req), personAsk: true });
         return json(res, 202, { ok: true, started: true });
       }
       const queued = store.setQueuedMessage(bot.id, text, bot.threadId);
@@ -5313,8 +5345,15 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       if (containsCredential(text)) {
         return json(res, 400, { error: "Use the private key field in Set up Bud. Keep keys out of the conversation." });
       }
+      if (routingBots.has(bot.id)) {
+        // Nothing to steer yet: the earlier message is still being routed, so this one queues behind it.
+        const queued = store.setQueuedMessage(bot.id, text, bot.threadId);
+        if (!queued) return json(res, 409, { error: "that task is no longer available" });
+        broadcast({ kind: "bot", bot: store.bot(bot.id) });
+        return json(res, 200, { ok: true, queued });
+      }
       if (!bot.busy) {
-        await startTurn(bot.id, text, personTurn(req));
+        await startTurn(bot.id, text, { ...personTurn(req), personAsk: true });
         return json(res, 202, { ok: true, started: true });
       }
       if (steeringBots.has(bot.id)) return json(res, 409, { error: "Bud is already applying another steer" });
@@ -5327,7 +5366,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         if (connectionOperations.has(bot.id)) {
           connectionOperations.delete(bot.id);
           store.patchBot(bot.id, { busy: false });
-          await startTurn(bot.id, text, { threadId, ...personTurn(req) });
+          await startTurn(bot.id, text, { threadId, ...personTurn(req), personAsk: true });
           return json(res, 202, { ok: true, steered: true });
         }
         const instance = registry.get(bot.modelSelection.instanceId);
@@ -5345,7 +5384,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         const current = store.bot(bot.id);
         if (!current) return json(res, 404, { error: "no such bot" });
         store.patchBot(current.id, { busy: false });
-        await startTurn(current.id, text, { threadId, ...personTurn(req) });
+        await startTurn(current.id, text, { threadId, ...personTurn(req), personAsk: true });
         return json(res, 202, { ok: true, steered: true });
       } finally {
         steeringBots.delete(bot.id);
@@ -5382,7 +5421,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       store.patchBot(bot.id, { rewound: true });
       broadcast({ kind: "message", threadId: bot.threadId, message });
       broadcast({ kind: "thread", threadId: bot.threadId, activeLeafId: message.id });
-      await startTurn(bot.id, text, { userMessage: message, ...personTurn(req) });
+      await startTurn(bot.id, text, { userMessage: message, ...personTurn(req), personAsk: true });
       return json(res, 202, { ok: true });
     }
 

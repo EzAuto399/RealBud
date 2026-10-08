@@ -48,6 +48,15 @@ describe('duplicate check boundary', () => {
     expect(() => readBillDuplicateCheck({ ...check(), candidates: [{ ...candidate, match: 'auto-approved' }] }, digest)).toThrow();
     expect(() => readBillDuplicateCheck({ ...check(), candidates: [{ ...candidate, facts: { ...candidate.facts, invoiceNumber: null } }] }, digest)).toThrow();
   });
+  it('keeps a known likely hint in server order and drops anything else', () => {
+    const [first] = check().candidates, second = { ...first, billId: `source-bill:${'f'.repeat(64)}` };
+    const result = readBillDuplicateCheck({ ...check(), candidates: [{ ...second, likely: 'same' }, { ...first, likely: 'different' }] }, digest);
+    expect(result.candidates.map(c => [c.billId, c.likely])).toEqual([[second.billId, 'same'], [first.billId, 'different']]);
+    for (const likely of ['duplicate', 'SAME', 1, true, null, { same: true }]) {
+      const read = readBillDuplicateCheck({ ...check(), candidates: [{ ...first, likely }] }, digest);
+      expect(read.candidates[0]).not.toHaveProperty('likely');
+    }
+  });
 });
 
 describe('explicit separate-invoice review', () => {

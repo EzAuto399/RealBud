@@ -6,7 +6,8 @@ import { WorkflowDatabase } from './workflow-database.ts';
 import { SourceBillRegister, previewBillSource } from './source-bills.ts';
 import { createSourceBillsApi, type BillApiHost } from './source-bills-api.ts';
 import { expectedBillsPage } from './expected-bills-page.ts';
-import type { BillFacts, BillMailSource } from '../shared/source-bills.ts';
+import type { BillDuplicateCheck, BillFacts, BillMailSource } from '../shared/source-bills.ts';
+import type { JevRequest, JevResult } from './jev-client.ts';
 import { removeFixture } from './testing/private-fixture.ts';
 
 const resources: { dir: string; db: WorkflowDatabase }[] = [];
@@ -15,7 +16,7 @@ const itemId = 'a'.repeat(64), messageId = 'ab';
 const now = Date.parse('2026-09-21T01:00:00Z');
 const range = { from: '2026-09-01', to: '2026-12-31' };
 const facts: BillFacts = { propertyId: 'private-property', kind: 'Water', vendor: 'Fictional utility', amountCents: 12345, currency: 'AUD', invoiceDate: '2026-09-20', dueDate: '2026-10-10', note: 'Synthetic review' };
-function fixture() {
+function fixture(jev?: BillApiHost['jev']) {
   const dir = mkdtempSync(join(tmpdir(), 'rb-bill-api-test-')), db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 9) });
   resources.push({ dir, db });
   const store = new SourceBillRegister(db, { dataDir: dir, now: () => now });
@@ -31,7 +32,7 @@ function fixture() {
     savedThread: vi.fn(async (accountId: string, threadId: string) => ({ itemId, accountId, receiptId: source.receiptId,
       thread: { id: threadId, historyComplete: true, messages: [{ ...source.message, threadId, to: 'office@example.test', direction: 'incoming' as const, bodyTruncated: false }] } })),
     propertyIds: vi.fn(() => propertyIds), actorId: vi.fn(() => 'private-local-reviewer'), recovery: vi.fn(() => recovering),
-    collect: vi.fn(async () => ({ latestScan: { status: 'complete' } })), now: () => now,
+    collect: vi.fn(async () => ({ latestScan: { status: 'complete' } })), now: () => now, ...(jev ? { jev } : {}),
   } satisfies BillApiHost;
   const handle = createSourceBillsApi(host);
   const call = (path: string, method = 'GET', body?: unknown) => handle(new URL(path, 'http://127.0.0.1'), method, body);
@@ -54,6 +55,98 @@ describe('private source-bill host API', () => {
     const saved = await f.call('/api/bill-occurrences', 'POST', { ...accepted, duplicateReview: { reviewDigest: check.reviewDigest } });
     expect(saved).toMatchObject({ status: 200, body: { duplicateReview: { reviewedBy: 'private-local-reviewer', reason: accepted.reviewReason } } });
     expect(f.store.counts().occurrences).toBe(2);
+  });
+
+  describe('Jev ordering of duplicate candidates', () => {
+    const route = '/api/bill-occurrences/duplicate-candidates';
+    /** Two saved bills from the same fictional evidence, then a third message to review against both. */
+    async function third(answer: (request: JevRequest, options?: { signal?: AbortSignal }) => JevResult | Promise<JevResult>) {
+      let ready = false;
+      const decide = vi.fn(async (request: JevRequest, options?: { signal?: AbortSignal }) => answer(request, options));
+      const f = fixture({ ready: () => ready, decide });
+      await f.call('/api/bill-occurrences', 'POST', f.acceptance());
+      const use = (id: string, thread: string) => {
+        f.source.message.id = id; f.source.threadId = thread; f.host.source.mockImplementation(async () => structuredClone(f.source));
+        return { itemId, messageId: id, expectedSourceDigest: previewBillSource(f.source).digest, facts };
+      };
+      const second = use('ac', 'def'), check = (await f.call(route, 'POST', second))!.body as BillDuplicateCheck;
+      await f.call('/api/bill-occurrences', 'POST', { ...second, sourceReviewed: true, reviewReason: 'Two separately checked fictional invoice originals.', duplicateReview: { reviewDigest: check.reviewDigest } });
+      const input = use('ad', 'fed'); ready = true;
+      return { f, decide, input, ready: (value: boolean) => { ready = value; }, read: async (body: object = input, rank = true) => (await f.call(route, 'POST', rank ? { ...body, rank } : body))!.body as BillDuplicateCheck };
+    }
+    const noul = (values: number[]) => (request: JevRequest): JevResult => ({ ok: true, model: 'fictional-jev', ms: 1,
+      answers: Object.fromEntries(Object.keys(request.questions).map((key, n) => [key, { type: 'noul' as const, noul: values[n]! }])) });
+
+    it('ranks once per review digest, keeps the digest and still holds the save', async () => {
+      const { f, decide, read, input } = await third(noul([0.2, 0.95]));
+      const first = await read(), again = await read();
+      expect(decide).toHaveBeenCalledTimes(1);
+      expect(again).toEqual(first);
+      expect(first.candidates).toHaveLength(2);
+      const plain = [...first.candidates].map(c => c.billId).sort();
+      expect(first.candidates.map(c => c.billId)).toEqual([plain[1], plain[0]]);
+      expect(first.candidates.map(c => c.likely)).toEqual(['same', undefined]);
+      expect(await f.call('/api/bill-occurrences', 'POST', { ...input, sourceReviewed: true, reviewReason: 'Checked fictional originals.' })).toMatchObject({ status: 409, body: { code: 'bill_duplicate_review_required' } });
+      const saved = await f.call('/api/bill-occurrences', 'POST', { ...input, sourceReviewed: true, reviewReason: 'Checked fictional originals.', duplicateReview: { reviewDigest: first.reviewDigest } });
+      expect(saved).toMatchObject({ status: 200 });
+    });
+
+    it.each(['refused', 'budget', 'invalid'] as const)('keeps today\'s order after a hard %s and does not ask again for that review', async reason => {
+      const { decide, read } = await third(() => ({ ok: false, reason }));
+      const first = await read();
+      expect(first.candidates.map(c => c.billId)).toEqual(first.candidates.map(c => c.billId).sort());
+      expect(first.candidates.every(c => c.likely === undefined)).toBe(true);
+      await read(); expect(decide).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['timeout', 'unavailable', 'http'] as const)('retries once after a transient %s, then keeps today\'s order', async reason => {
+      const { decide, read } = await third(() => ({ ok: false, reason }));
+      for (let n = 0; n < 4; n++) expect((await read()).candidates.every(c => c.likely === undefined)).toBe(true);
+      expect(decide).toHaveBeenCalledTimes(2);
+    });
+
+    it('ranks on the retry when the transient failure clears', async () => {
+      let calls = 0;
+      const { decide, read } = await third(request => ++calls === 1 ? { ok: false, reason: 'unavailable' } : noul([0.95, 0.05])(request));
+      expect((await read()).candidates.some(c => c.likely)).toBe(false);
+      expect((await read()).candidates.map(c => c.likely)).toEqual(['same', 'different']);
+      await read(); expect(decide).toHaveBeenCalledTimes(2);
+    });
+
+    it('never calls Jev for the pre-save check: kept order if ranked, otherwise today\'s order', async () => {
+      const { decide, read } = await third(noul([0.2, 0.95]));
+      const before = await read(undefined, false);
+      expect(decide).not.toHaveBeenCalled();
+      expect(before.candidates.map(c => c.billId)).toEqual(before.candidates.map(c => c.billId).sort());
+      const reviewed = await read();
+      expect(await read(undefined, false)).toEqual(reviewed);
+      expect(decide).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops ranking at the 3 s budget with today\'s order, and the pre-save check does not wait for it', async () => {
+      const { decide, read } = await third((_request, options) => new Promise<JevResult>(resolve => options?.signal?.addEventListener('abort', () => resolve({ ok: false, reason: 'aborted' }))));
+      const started = Date.now(), reviewing = read();
+      await vi.waitFor(() => expect(decide).toHaveBeenCalledTimes(1));
+      const saving = await read(undefined, false);
+      expect(Date.now() - started).toBeLessThan(1_000);
+      expect(saving.candidates.every(c => c.likely === undefined)).toBe(true);
+      const ranked = await reviewing;
+      expect(Date.now() - started).toBeGreaterThanOrEqual(2_900); expect(Date.now() - started).toBeLessThan(4_500);
+      expect(ranked.candidates.map(c => c.billId)).toEqual(ranked.candidates.map(c => c.billId).sort());
+      expect(ranked.candidates.every(c => c.likely === undefined)).toBe(true);
+    }, 10_000);
+
+    it('refuses a rank flag other than true', async () => {
+      const { f, input } = await third(noul([0.5, 0.5]));
+      await expect(f.call(route, 'POST', { ...input, rank: 'yes' })).rejects.toMatchObject({ status: 400 });
+    });
+
+    it('asks nothing when Jev is not ready and ranks afresh when the reviewed facts change', async () => {
+      const { decide, read, input, ready } = await third(noul([0.95, 0.05]));
+      ready(false); expect((await read()).candidates.every(c => c.likely === undefined)).toBe(true); expect(decide).not.toHaveBeenCalled();
+      ready(true); await read(); await read({ ...input, facts: { ...facts, note: 'Changed fictional note' } });
+      expect(decide).toHaveBeenCalledTimes(2);
+    });
   });
 
   it.each(['source', 'actorId', 'accountId', 'candidateIds', 'reviewDigest'])('rejects caller-controlled duplicate preview %s', field => {

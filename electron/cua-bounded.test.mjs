@@ -19,7 +19,7 @@ describe("bounded Cua persistence", () => {
       });
       store.persist({ mode: "standalone", mcpCommand: "cua-driver", mcpArgs: ["mcp"] });
       const bounded = {
-        version: "0.19.3",
+        version: "0.34.0",
         mode: "bounded",
         profile: path.join(userData, "chrome-profile"),
         origins: ["http://127.0.0.1:9"],
@@ -32,7 +32,7 @@ describe("bounded Cua persistence", () => {
         recipeVersion: 1,
       };
       const next = store.persist({ ...store.get(), bounded });
-      expect(next.bounded.version).toBe("0.19.3");
+      expect(next.bounded.version).toBe("0.34.0");
       expect(next.bounded.tools).not.toContain("click_xy");
       expect(JSON.parse(fs.readFileSync(path.join(userData, "cua-connection.json"), "utf8")).bounded.workItemId).toBe(
         "work-1",

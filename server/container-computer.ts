@@ -23,7 +23,7 @@ export type CommandRunner = (
   timeout?: number,
 ) => Promise<{ stdout: string }>;
 
-export const CUA_DRIVER_VERSION = "0.19.3";
+export const CUA_DRIVER_VERSION = "0.34.0";
 export const BASE_IMAGE_REPOSITORY = "docker.io/trycua/xfce-cua";
 // Official multi-architecture Cua XFCE 0.1.0 manifest (amd64 + arm64).
 export const BASE_IMAGE_DIGEST = "sha256:274eb636f5cf3fc58f705916ee72b7a701270b3877369d08533a385c5325be9b";
@@ -52,12 +52,12 @@ const PIDS_LIMIT = 512;
 
 const LINUX_WHEELS = {
   x86_64: {
-    url: "https://files.pythonhosted.org/packages/88/26/1b372765b192a2f4f7ee7e1474d1e39be9ab3bd637765f632e30e7ee6e18/cua_driver-0.19.3-py3-none-manylinux_2_31_x86_64.whl",
-    sha256: "3f327a444f5b666037dee5e7c15c98990abbfb4fe83669ef708cb34c2cafef14",
+    url: "https://files.pythonhosted.org/packages/71/c8/ddfee7ec0d48026e07e7a615c9268d232c88774b38a66d5280572a595bb0/cua_driver-0.34.0-py3-none-manylinux_2_31_x86_64.whl",
+    sha256: "d918b9e37195e2822c2011ddbbe965c0c013a078508a3c668d95afd02502378a",
   },
   aarch64: {
-    url: "https://files.pythonhosted.org/packages/8f/ca/9b1b9e2fba756b5a6db710db4789d63682d6bdf8dc92280c10bdffeb9e77/cua_driver-0.19.3-py3-none-manylinux_2_31_aarch64.whl",
-    sha256: "99cdaaaaf78def68236558b645c799034ac0b6fe5bb37abdf5fc7abc3afeff67",
+    url: "https://files.pythonhosted.org/packages/1f/10/acb96bde4395f6a7ed75f8578a2706ce98bdfc8fc484bed4399f58e9040c/cua_driver-0.34.0-py3-none-manylinux_2_31_aarch64.whl",
+    sha256: "e4519f6e933759ee1beb27c66d0093a2f80319c2d6c3fae5f2b80a182a63bd06",
   },
 } as const;
 
@@ -620,7 +620,7 @@ export function setupCommands(
     install,
     runtimeStart,
     // This is the inspectable base download. The normal Prepare button also
-    // builds the checksum-pinned 0.19.3 derivative automatically.
+    // builds the checksum-pinned derivative automatically.
     pull: command(["pull", BASE_IMAGE]),
     run: command(containerRunArgs(runtime)),
     start: command(["start", CONTAINER]),

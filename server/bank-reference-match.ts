@@ -1,5 +1,5 @@
 import { parseBankCsv, type BankReferenceBatch, type BankReferenceRule, type BankRowDisposition, type BankTable } from "./bank-reference.ts";
-import type { JevRequest, JevResult } from "./jev-client.ts";
+import type { JevAnswer, JevQuestion, JevRequest, JevResult } from "./jev-client.ts";
 
 /** First-pass reference matching for the ANZ export and bank-feed (Redbark)
  * batches (Austin Realty W1). A bank-feed row has a description and a
@@ -201,6 +201,8 @@ export function bankFirstPass(batch: BankReferenceBatch): FirstPass | null {
 const NO_REFERENCE = "No reference found.";
 /** Options for one Jev question; "none" is always offered too. */
 const MAX_TENANT_OPTIONS = 63;
+/** Rows per call (jev-client's 8-question cap), calls in flight, and a state size under its 16 KiB cap. */
+const HINT_ROWS_PER_CALL = 8, HINT_CALLS_IN_FLIGHT = 3, HINT_STATE_BYTES = 15_000;
 
 /**
  * Optional second pass after `bankFirstPass`: for rows still unmatched with no
@@ -210,15 +212,17 @@ const MAX_TENANT_OPTIONS = 63;
  * the row stays an exception on hold, the summary is untouched, and nothing
  * is imported on a hint. Jev sees the payer name, the amount and each
  * candidate's tenant names/aliases (no addresses), nothing else; a payer
- * that is blank or holds a digit is never sent.
+ * that is blank or holds a digit is never sent. Up to 8 rows go in one call
+ * (questions p0..p7 over one state), at most 3 calls at a time; a call that
+ * fails or throws leaves only its own rows unhinted.
  */
 export async function jevPayerHints(batch: BankReferenceBatch, pass: FirstPass,
   decide: (request: JevRequest, options?: { signal?: AbortSignal }) => Promise<JevResult>, options: { signal?: AbortSignal } = {}): Promise<FirstPass> {
   const table = parseBankCsv(batch.input.csv), rules = batch.input.rules;
   const named = (rule: BankReferenceRule) => [...new Set([rule.tenant ?? "", ...rule.aliases].map(text => text.trim()).filter(text => text && !/\d/.test(text)))];
-  // ponytail: sequential, one call per unmatched row; batch questions (max 8) if offices see long holds.
+  type Ask = { row: FirstPassRow; payer: string; candidates: BankReferenceRule[] };
+  const asks: Ask[] = [];
   for (const row of pass.rows) {
-    if (options.signal?.aborted) break;
     if (row.class !== "exception" || row.reason !== NO_REFERENCE || row.propertyId || row.suggestion) continue;
     const index = batch.rows.findIndex(item => item.id === row.rowId);
     if (index < 0) continue;
@@ -230,21 +234,37 @@ export async function jevPayerHints(batch: BankReferenceBatch, pass: FirstPass,
     const candidates = rules.filter(rule => rentFits(cents, rule) && named(rule).length);
     // ponytail: more fitting tenants than options means no hint rather than a truncated, biased list.
     if (!candidates.length || candidates.length > MAX_TENANT_OPTIONS) continue;
-    const criteria: Record<string, string> = Object.fromEntries(candidates.map((rule, at) => [`t${at + 1}`, named(rule).join("; ")]));
-    criteria.none = "None of these tenants, or not sure.";
-    const result = await decide({
-      state: { payer, amount: row.amount },
-      questions: { tenant: { type: "choice", instructions: "Which tenant most likely made this rent payment, judged by the payer name? Choose none unless one tenant clearly fits.", criteria } },
-    }, { signal: options.signal });
-    if (!result.ok) continue;
-    const answer = result.answers.tenant;
-    // Missing confidence or probabilities count as below the threshold.
-    if (answer?.type !== "choice" || answer.choice === "none" || !answer.probabilities || (answer.confidence ?? 0) < 0.9) continue;
-    const [top = 0, second = 0] = Object.values(answer.probabilities).sort((a, b) => b - a);
-    if (answer.probabilities[answer.choice] !== top || top - second < 0.3) continue;
-    const rule = candidates[Number(answer.choice.slice(1)) - 1];
-    if (!rule) continue;
-    Object.assign(row, { propertyId: rule.propertyId, suggestion: `Possibly ${label(rule)} (AI reading of the payer name: check it)`, hintSource: "jev" });
+    asks.push({ row, payer, candidates });
   }
+  const stateOf = (group: Ask[]) => Object.fromEntries(group.map((ask, n) => [`p${n}`, { payer: ask.payer, amount: ask.row.amount }]));
+  const groups: Ask[][] = [];
+  for (const ask of asks) {
+    const last = groups.at(-1);
+    if (last && last.length < HINT_ROWS_PER_CALL && Buffer.byteLength(JSON.stringify(stateOf([...last, ask]))) <= HINT_STATE_BYTES) last.push(ask);
+    else groups.push([ask]);
+  }
+  const hint = ({ row, candidates }: Ask, answer: JevAnswer | undefined) => {
+    // Missing confidence or probabilities count as below the threshold.
+    if (answer?.type !== "choice" || answer.choice === "none" || !answer.probabilities || (answer.confidence ?? 0) < 0.9) return;
+    const [top = 0, second = 0] = Object.values(answer.probabilities).sort((a, b) => b - a);
+    if (answer.probabilities[answer.choice] !== top || top - second < 0.3) return;
+    const rule = candidates[Number(answer.choice.slice(1)) - 1];
+    if (rule) Object.assign(row, { propertyId: rule.propertyId, suggestion: `Possibly ${label(rule)} (AI reading of the payer name: check it)`, hintSource: "jev" });
+  };
+  let next = 0;
+  const worker = async () => {
+    while (next < groups.length && !options.signal?.aborted) {
+      const group = groups[next++];
+      const questions = Object.fromEntries(group.map((ask, n): [string, JevQuestion] => {
+        const criteria: Record<string, string> = Object.fromEntries(ask.candidates.map((rule, at) => [`t${at + 1}`, named(rule).join("; ")]));
+        criteria.none = "None of these tenants, or not sure.";
+        return [`p${n}`, { type: "choice", instructions: `Payment p${n} in the state: which tenant most likely made this rent payment, judged by the payer name? Choose none unless one tenant clearly fits.`, criteria }];
+      }));
+      let result: JevResult | null = null;
+      try { result = await decide({ state: stateOf(group), questions }, { signal: options.signal }); } catch { /* this call's rows stay unhinted */ }
+      if (result?.ok) group.forEach((ask, n) => hint(ask, result.answers[`p${n}`]));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(HINT_CALLS_IN_FLIGHT, groups.length) }, worker));
   return pass;
 }
