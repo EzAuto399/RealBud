@@ -358,7 +358,7 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
         <div className="mt-4 space-y-4">
           {snapshot?.mailboxMode === "both" ? <p className="text-sm text-ink-secondary">Your own Gmail, plus the office shared Gmail when the owner allows this computer. Say which mailbox you mean; Bud asks when it isn't clear.</p>
             : snapshot?.sourceKind === "personal" && <p className="text-sm text-ink-secondary">Personal Gmail for this desktop.</p>}
-          {sharedMail && <p className="text-sm text-ink-secondary">{snapshot?.services.gmail?.connected ? 'Office shared Gmail is connected for this desktop. No additional sign-in is needed.' : 'The office shared Gmail is not available. Ask the office owner to connect it, then check access again.'}</p>}
+          {sharedMail && <p className="text-sm text-ink-secondary">{snapshot?.services.gmail?.connected ? 'Office shared Gmail is connected for this desktop. No additional sign-in is needed.' : 'The office shared Gmail is not available yet. The office owner connects it on realbud.app → Computers → Gmail for this office and allows this computer; then select Check access.'}</p>}
 
           {!readOnly ? (
             <section aria-labelledby={`${id}-any`}>
