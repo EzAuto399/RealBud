@@ -136,18 +136,19 @@ describe("inspectLedgerColumns", () => {
     const sure = (choice: string): JevAnswer => ({ type: "choice", choice, confidence: 0.95, probabilities: { [choice]: 0.95, none: 0.05 } });
     const all = { identity: sure("h0"), daysSinceDue: sure("h1"), rentLanded: sure("h2"), levyPaid: sure("h3") };
     const jev = (answers: Record<string, JevAnswer> | (() => Promise<JevResult>), ready = true) => {
-      const asked: JevRequest[] = [];
-      const decide = async (request: JevRequest): Promise<JevResult> => {
-        asked.push(request);
+      const asked: JevRequest[] = [], prefers: unknown[] = [];
+      const decide = async (request: JevRequest, options?: { prefer?: string }): Promise<JevResult> => {
+        asked.push(request); prefers.push(options?.prefer);
         return typeof answers === "function" ? answers() : { ok: true, id: "dec-fictional", model: "fictional-decider", ms: 1, answers };
       };
-      return { asked, jev: { decide, ready: () => ready } };
+      return { asked, prefers, jev: { decide, ready: () => ready } };
     };
     const BUD = `{"mapping":{"identity":"Property","daysSinceDue":"Days in arrears"},"confidence":"high"}`;
 
     it("names every role from the header names alone, without running Bud", async () => {
-      const { asked, jev: injected } = jev(all);
+      const { asked, prefers, jev: injected } = jev(all);
       const result = await inspectLedgerColumns(CSV, { jev: injected });
+      expect(prefers).toEqual(["luna"]); // Luna first: more safe coverage than Jev in the 8 Oct eval
       expect(result).toEqual({ mapping: { identity: "Property", daysSinceDue: "Days in arrears", rentLanded: "Rent received", levyPaid: "Levies" }, detail: "Bud read the columns." });
       expect(asked).toHaveLength(1);
       expect(asked[0].state).toEqual({ headers: ["Property", "Days in arrears", "Rent received", "Levies"] });

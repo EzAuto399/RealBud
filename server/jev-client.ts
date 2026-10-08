@@ -14,9 +14,9 @@
  * Contract agreed with Modelvia (mirrors OpenRouter decisions):
  * - POST `${grant.baseUrl}/decisions` (the base ends in /v1), `Authorization:
  *   Bearer <office key>`, `Idempotency-Key: <fresh UUID per decision>`.
- * - Request `{model, state, questions}`; `model` is "jev-1.13-decisions" unless
- *   REALBUD_JEV_MODEL overrides it; REALBUD_JEV_MODEL="off" means refused with
- *   no call. No session_id or user. `toWire` mirrors Modelvia's request schema
+ * - Request `{model, state, questions}`; `model` is the use's primary (below);
+ *   REALBUD_JEV_MODEL="off" means refused with no call. No session_id or user.
+ *   `toWire` mirrors Modelvia's request schema
  *   so a bad request is "invalid" before any (billable) call: state a non-empty
  *   string, object or array; question and option keys /^[A-Za-z0-9_.:-]{1,64}$/
  *   and never __proto__/constructor/prototype; instructions non-blank and at
@@ -31,9 +31,17 @@
  *   dropped connection: the first call may have been charged.
  * - 401/403 refused · 402 budget · 409 no answer (http) · those two 503s
  *   (after the retry) unavailable · 502 invalid_provider_answers and 400 invalid.
- * - Fallback: for a text decision, when the primary model differs from the fallback
- *   (GPT-6 Luna Decisions, or REALBUD_JEV_FALLBACK_MODEL; "off" disables it), the
- *   fallback is asked once, under `<primary key>:fallback`, only after a 502, a 503 model_route_unavailable (free),
+ * - Primary per use, from RealBud's decisions eval of 8 Oct 2026 (190 labelled
+ *   cases; Modelvia docs/DECISIONS-EVAL-2026-10-08.md): the model that auto-accepts
+ *   the most cases with zero wrong-accepts. Jev (the default: cheapest, ZDR) for
+ *   ask, recipe, mail noise and bills; `prefer: "luna"` (GPT-6 Luna Decisions,
+ *   unless REALBUD_LUNA_MODEL is off) for payer → tenant hints (Jev made 2 wrong
+ *   accepts) and ledger columns (58.6% vs 51.7%). REALBUD_JEV_MODEL, when set, is
+ *   the primary for every use, so an eval can force one model; `options.model`
+ *   is the primary for that one call.
+ * - Fallback: for a text decision, the other of Jev and Luna (or
+ *   REALBUD_JEV_FALLBACK_MODEL for every use; "off" disables it; never the primary) is
+ *   asked once, under `<primary key>:fallback`, only after a 502, a 503 model_route_unavailable (free),
  *   a dropped connection before any response, or the primary's own timeout when
  *   the caller set no timeoutMs. Never after 400, 402, 409 or any other status:
  *   a 409 request_already_processed was already charged. The result names the
@@ -76,26 +84,30 @@ export type JevResult = ({ ok: true; id: string; answers: Record<string, JevAnsw
 
 const MAX_QUESTIONS = 8, MAX_OPTIONS = 64, MAX_STATE_BYTES = 16 * 1024, MAX_RESPONSE_BYTES = 256 * 1024;
 const DEFAULT_TIMEOUT_MS = 10_000;
-// Jev answers in about 70–500 ms (vendor figure), so 8 s without a reply means
-// it is broken: ask the fallback instead. This is deliberately below Modelvia's 120 s decisions bound,
-// which keeps running after the client leaves, so an abandoned Luna call may
+// Jev and Luna both answer in about 0.5 s at the gateway (eval p95 under 0.7 s), so 8 s without a
+// reply means the primary is broken: ask the fallback instead. This is deliberately below Modelvia's 120 s
+// decisions bound, which keeps running after the client leaves, so an abandoned primary call may
 // still be billed (a fraction of a cent each). The owner accepts that as the price of speed.
 const PRIMARY_TIMEOUT_MS = 8_000;
 const DECISIONS_PATH = "/decisions";
 const RETRYABLE_503 = ["serving_temporarily_unavailable"];
 // Installed apps set no env, so the Modelvia catalogue ids are the defaults. Until the
 // operator enables a route Modelvia refuses before dispatch (403/503, never charged).
-// Owner, 2026-10-08: Jev first for every text decision; GPT-6 Luna Decisions only
-// reads images (desktop control picks) and is the text fallback when Jev's route fails.
-const PRIMARY_DEFAULT_MODEL = "jev-1.13-decisions";
+// Owner, 2026-10-08: the primary is chosen per use from eval data (header); GPT-6 Luna
+// Decisions alone reads images (desktop control picks).
+const JEV_DECISIONS_MODEL = "jev-1.13-decisions";
 /** GPT-6 Luna Decisions (`openai/gpt-6-luna-decisions` upstream). REALBUD_LUNA_MODEL
  * overrides the Modelvia id; "off" disables it. */
 export const LUNA_DECISIONS_MODEL = "gpt-6-luna-decisions";
 export const lunaModel = (): string | null => { const set = process.env.REALBUD_LUNA_MODEL?.trim(); return set === "off" ? null : set || LUNA_DECISIONS_MODEL; };
-const jevModel = () => { const set = process.env.REALBUD_JEV_MODEL?.trim(); return set === "off" ? null : set || PRIMARY_DEFAULT_MODEL; };
-/** The text fallback (REALBUD_JEV_FALLBACK_MODEL, default Luna; "off" disables it). */
+/** A use's primary: REALBUD_JEV_MODEL for every use when set ("off": none), else Luna when preferred and on, else Jev. */
+const primaryModel = (prefer?: "jev" | "luna") => {
+  const set = process.env.REALBUD_JEV_MODEL?.trim();
+  return set === "off" ? null : set || prefer === "luna" && lunaModel() || JEV_DECISIONS_MODEL;
+};
+/** The text fallback: REALBUD_JEV_FALLBACK_MODEL ("off" disables it), else the other of Jev and Luna. */
 const fallbackModel = (primary: string) => {
-  const set = process.env.REALBUD_JEV_FALLBACK_MODEL?.trim() || lunaModel() || "off";
+  const set = process.env.REALBUD_JEV_FALLBACK_MODEL?.trim() || (primary === lunaModel() ? JEV_DECISIONS_MODEL : lunaModel()) || "off";
   return set === "off" || set === primary ? null : set;
 };
 /** Modelvia's /v1/decisions refuses a state over 256,000 bytes
@@ -188,7 +200,7 @@ function fromWire(body: unknown, request: JevRequest): { id: string; answers: Re
 /** Whether `decide` could call out at all: a Jev model is configured and the
  * office has an active grant with its key. Callers skip silently otherwise. */
 export function jevReady(): boolean {
-  return !!jevModel() && grantReady();
+  return !!primaryModel() && grantReady();
 }
 const grantReady = () => workerModelGrant().state === "active" && !!workerModelAccessSnapshot()[MANAGED_MODEL_KEY_ENV]?.trim();
 
@@ -204,10 +216,10 @@ export function lunaReady(): boolean {
   return !!lunaModel() && grantReady();
 }
 
-/** Ask Jev (or `model`, e.g. `lunaModel()`). Refused without a configured model, an active grant, its key,
+/** Ask the use's primary (`prefer`, default Jev; or `model`, e.g. `lunaModel()`). Refused without a configured model, an active grant, its key,
  * the managed service's reasoning entitlement, or an https (or loopback http)
  * gateway. `image` (base64 PNG, at most MAX_IMAGE_BYTES) needs an object state; it is never logged. */
-export async function decide(request: JevRequest, options: { signal?: AbortSignal; timeoutMs?: number; model?: string; image?: string } = {}): Promise<JevResult> {
+export async function decide(request: JevRequest, options: { signal?: AbortSignal; timeoutMs?: number; model?: string; image?: string; prefer?: "jev" | "luna" } = {}): Promise<JevResult> {
   const started = Date.now();
   let fellBack: JevFallback = {}, note = "";
   const done = (result: JevResult, code: string | null = null): JevResult => {
@@ -215,7 +227,7 @@ export async function decide(request: JevRequest, options: { signal?: AbortSigna
     return { ...result, ...fellBack };
   };
   if (options.signal?.aborted) return done({ ok: false, reason: "aborted" });
-  const model = options.model === undefined ? jevModel() : options.model.trim();
+  const model = options.model === undefined ? primaryModel(options.prefer) : options.model.trim();
   if (!model) return done({ ok: false, reason: "refused" });
   const grant = workerModelGrant();
   const key = workerModelAccessSnapshot()[MANAGED_MODEL_KEY_ENV]?.trim();
