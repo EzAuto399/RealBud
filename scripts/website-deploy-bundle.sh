@@ -22,6 +22,21 @@ git -C "$WEBSITE" fetch -q origin main
 root_ref="$(git -C "$ROOT" rev-parse origin/main)"
 site_ref="$(git -C "$WEBSITE" rev-parse origin/main)"
 
+# Code ahead of the database shows customers "Computer links are not ready"
+# (8 Oct). List migrations added since the live build; refuse until confirmed.
+live_ref="$(curl -fsS --max-time 10 https://realbud.app/deploy-source.json 2>/dev/null | sed -n 's/.*"websiteCommit":"\([0-9a-f]\{40\}\)".*/\1/p')"
+if [[ -z "$live_ref" ]] || ! git -C "$WEBSITE" cat-file -e "$live_ref^{commit}" 2>/dev/null; then
+  pending="$(git -C "$WEBSITE" ls-tree --name-only "$site_ref" supabase/migrations/ | tail -3)"
+  echo "Could not read the live website commit; the newest migrations in main are:" >&2
+else
+  pending="$(git -C "$WEBSITE" diff --name-only --diff-filter=A "$live_ref" "$site_ref" -- supabase/migrations/)"
+  [[ -n "$pending" ]] && echo "Migrations added since the live build (${live_ref:0:8}):" >&2
+fi
+if [[ -n "$pending" && "${MIGRATIONS_APPLIED:-}" != "1" ]]; then
+  printf '  %s\n' $pending >&2
+  fail "Apply them to the production database first, then rerun with MIGRATIONS_APPLIED=1."
+fi
+
 bundle="$(mktemp -d "${TMPDIR:-/tmp}/realbud-website-bundle.XXXXXX")"
 mkdir -p "$bundle/website" "$bundle/.vercel"
 git -C "$WEBSITE" archive "$site_ref" | tar -x -C "$bundle/website"
