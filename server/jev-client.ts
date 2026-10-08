@@ -14,7 +14,7 @@
  * Contract agreed with Modelvia (mirrors OpenRouter decisions):
  * - POST `${grant.baseUrl}/decisions` (the base ends in /v1), `Authorization:
  *   Bearer <office key>`, `Idempotency-Key: <fresh UUID per decision>`.
- * - Request `{model, state, questions}`; `model` is "jev-1.13-decisions" unless
+ * - Request `{model, state, questions}`; `model` is "gpt-6-luna-decisions" unless
  *   REALBUD_JEV_MODEL overrides it; REALBUD_JEV_MODEL="off" means refused with
  *   no call. No session_id or user. `toWire` mirrors Modelvia's request schema
  *   so a bad request is "invalid" before any (billable) call: state a non-empty
@@ -29,6 +29,14 @@
  *   dropped connection: the first call may have been charged.
  * - 401/403 refused · 402 budget · 409 no answer (http) · those two 503s
  *   (after the retry) unavailable · 502 invalid_provider_answers and 400 invalid.
+ * - Fallback: when the primary model differs from the fallback ("jev-1.13-decisions",
+ *   or REALBUD_JEV_FALLBACK_MODEL; "off" disables it), Jev is asked once, under
+ *   `<primary key>:jev`, only after a 502, a 503 model_route_unavailable (free),
+ *   a dropped connection before any response, or the primary's own timeout when
+ *   the caller set no timeoutMs. Never after 400, 402, 409 or any other status:
+ *   a 409 request_already_processed was already charged. The result names the
+ *   primary in `fallbackFrom`, and when the primary got no response, its key in
+ *   `abandonedIdempotencyKey` so its receipt can be reconciled.
  */
 import { randomUUID } from "node:crypto";
 import { workerModelGrant } from "./worker-model-access.ts";
@@ -56,16 +64,31 @@ export type JevAnswer =
 export type JevFailure = "refused" | "budget" | "unavailable" | "timeout" | "http" | "invalid" | "aborted";
 /** `usage`, when Modelvia sent a well-formed one, is for counting run cost: never logged or shown. */
 export type JevUsage = { input_tokens: number; output_tokens: number };
-export type JevResult = { ok: true; answers: Record<string, JevAnswer>; model: string; ms: number; usage?: JevUsage } | { ok: false; reason: JevFailure };
+/** Set only when the fallback was asked: the primary model, and the primary's
+ * Idempotency-Key when it got no response (it may still have been billed). */
+export type JevFallback = { fallbackFrom?: string; abandonedIdempotencyKey?: string };
+/** `model` is the model that answered, as Modelvia names it. */
+export type JevResult = ({ ok: true; answers: Record<string, JevAnswer>; model: string; ms: number; usage?: JevUsage } | { ok: false; reason: JevFailure }) & JevFallback;
 
 const MAX_QUESTIONS = 8, MAX_OPTIONS = 64, MAX_STATE_BYTES = 16 * 1024, MAX_RESPONSE_BYTES = 256 * 1024;
 const DEFAULT_TIMEOUT_MS = 10_000;
+// Luna answers in about 150 ms, so 8 s without a reply means it is broken: ask
+// Jev instead. This is deliberately below Modelvia's 120 s decisions bound,
+// which keeps running after the client leaves, so an abandoned Luna call may
+// still be billed (about A$0.0001 each). The owner accepts that as the price of speed.
+const PRIMARY_TIMEOUT_MS = 8_000;
 const DECISIONS_PATH = "/decisions";
 const RETRYABLE_503 = ["serving_temporarily_unavailable"];
-// Installed apps set no env, so the Modelvia catalogue id is the default. Until the
-// operator enables the route Modelvia refuses before dispatch (403/503, never charged).
-const JEV_DEFAULT_MODEL = "jev-1.13-decisions";
-const jevModel = () => { const set = process.env.REALBUD_JEV_MODEL?.trim(); return set === "off" ? null : set || JEV_DEFAULT_MODEL; };
+// Installed apps set no env, so the Modelvia catalogue ids are the defaults. Until the
+// operator enables a route Modelvia refuses before dispatch (403/503, never charged);
+// a 503 model_route_unavailable from Luna falls back to Jev.
+const PRIMARY_DEFAULT_MODEL = "gpt-6-luna-decisions";
+const FALLBACK_DEFAULT_MODEL = "jev-1.13-decisions";
+const jevModel = () => { const set = process.env.REALBUD_JEV_MODEL?.trim(); return set === "off" ? null : set || PRIMARY_DEFAULT_MODEL; };
+const fallbackModel = (primary: string) => {
+  const set = process.env.REALBUD_JEV_FALLBACK_MODEL?.trim() || FALLBACK_DEFAULT_MODEL;
+  return set === "off" || set === primary ? null : set;
+};
 
 const MAX_INSTRUCTIONS = 8_000, MAX_CRITERION = 4_000;
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
@@ -148,9 +171,10 @@ function errorCode(body: unknown): string | null {
  * gateway. */
 export async function decide(request: JevRequest, options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<JevResult> {
   const started = Date.now();
+  let fellBack: JevFallback = {}, note = "";
   const done = (result: JevResult, code: string | null = null): JevResult => {
-    console.info(`[jev] ${result.ok ? "ok" : result.reason} ${Date.now() - started}ms${code ? ` code=${code}` : ""}`);
-    return result;
+    console.info(`[jev] ${result.ok ? "ok" : result.reason} ${Date.now() - started}ms${code ? ` code=${code}` : ""}${note}`);
+    return { ...result, ...fellBack };
   };
   if (options.signal?.aborted) return done({ ok: false, reason: "aborted" });
   const model = jevModel();
@@ -173,42 +197,62 @@ export async function decide(request: JevRequest, options: { signal?: AbortSigna
     const now = workerModelGrant();
     if (now.state !== "active" || now.keyId !== grant.keyId || workerModelAccessSnapshot()[MANAGED_MODEL_KEY_ENV]?.trim() !== key) withdrawn.abort();
   });
-  const timeout = AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-  const signal = AbortSignal.any([timeout, withdrawn.signal, ...(options.signal ? [options.signal] : [])]);
-  const idempotencyKey = randomUUID();
-  /** One exchange: status and parsed body (undefined when unreadable). */
-  const exchange = async (): Promise<{ status: number; body: unknown }> => {
-    const response = await fetch(`${normalizedGatewayUrl(grant.baseUrl)}${DECISIONS_PATH}`, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json", authorization: `Bearer ${key}`, "idempotency-key": idempotencyKey },
-      body, redirect: "error", signal,
-    });
-    // 403 is a mode or model refusal, not a rejected key; only 401 and success inform the check-in.
-    if (response.status !== 403) noteKeyAnswer(grant.keyId, response.status);
-    const chunks: Uint8Array[] = []; let size = 0;
-    if (response.body) for await (const part of response.body) {
-      size += part.length;
-      if (size > MAX_RESPONSE_BYTES) return { status: response.status, body: undefined };
-      chunks.push(part);
+  type Outcome = { status: number; body: unknown } | { failed: "timeout" | "aborted" | "http"; early: boolean };
+  /** One model under one Idempotency-Key and its own timeout; only an uncharged
+   * 503 is retried, with the same key. `early`: the failure came before any response. */
+  const attempt = async (payload: string, idempotencyKey: string, timeoutMs: number): Promise<Outcome> => {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    const signal = AbortSignal.any([timeout, withdrawn.signal, ...(options.signal ? [options.signal] : [])]);
+    let early = true;
+    /** One exchange: status and parsed body (undefined when unreadable). */
+    const exchange = async (): Promise<{ status: number; body: unknown }> => {
+      early = true;
+      const response = await fetch(`${normalizedGatewayUrl(grant.baseUrl)}${DECISIONS_PATH}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json", authorization: `Bearer ${key}`, "idempotency-key": idempotencyKey },
+        body: payload, redirect: "error", signal,
+      });
+      early = false;
+      // 403 is a mode or model refusal, not a rejected key; only 401 and success inform the check-in.
+      if (response.status !== 403) noteKeyAnswer(grant.keyId, response.status);
+      const chunks: Uint8Array[] = []; let size = 0;
+      if (response.body) for await (const part of response.body) {
+        size += part.length;
+        if (size > MAX_RESPONSE_BYTES) return { status: response.status, body: undefined };
+        chunks.push(part);
+      }
+      try { return { status: response.status, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) }; }
+      catch { return { status: response.status, body: undefined }; }
+    };
+    try {
+      const answer = await exchange();
+      return answer.status === 503 && RETRYABLE_503.includes(errorCode(answer.body) ?? "") ? await exchange() : answer;
+    } catch {
+      return { failed: timeout.aborted ? "timeout" : signal.aborted ? "aborted" : "http", early };
     }
-    try { return { status: response.status, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) }; }
-    catch { return { status: response.status, body: undefined }; }
   };
+  const fallback = fallbackModel(model), primaryKey = randomUUID();
   try {
-    let answer = await exchange();
-    if (answer.status === 503 && RETRYABLE_503.includes(errorCode(answer.body) ?? "")) answer = await exchange();
-    const { status } = answer, code = errorCode(answer.body);
+    let outcome = await attempt(body, primaryKey, options.timeoutMs ?? (fallback ? PRIMARY_TIMEOUT_MS : DEFAULT_TIMEOUT_MS));
+    if (fallback) {
+      // A caller's own timeoutMs is its latency budget: no second call after it runs out.
+      const unanswered = "failed" in outcome && outcome.early && (outcome.failed === "http" || outcome.failed === "timeout" && options.timeoutMs === undefined);
+      const routeFailed = "status" in outcome && (outcome.status === 502 || outcome.status === 503 && errorCode(outcome.body) === "model_route_unavailable");
+      if (unanswered || routeFailed) {
+        fellBack = { fallbackFrom: model, ...(unanswered ? { abandonedIdempotencyKey: primaryKey } : {}) };
+        note = ` fallback=${"failed" in outcome ? outcome.failed : outcome.status}${unanswered ? ` abandoned=${primaryKey}` : ""}`;
+        outcome = await attempt(toWire(request, fallback)!, `${primaryKey}:jev`, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+      }
+    }
+    if ("failed" in outcome) return done({ ok: false, reason: outcome.failed });
+    const { status } = outcome, code = errorCode(outcome.body);
     if (status === 401 || status === 403) return done({ ok: false, reason: "refused" });
     if (status === 402) return done({ ok: false, reason: "budget" });
     if (status === 503 && (RETRYABLE_503.includes(code ?? "") || code === "model_route_unavailable")) return done({ ok: false, reason: "unavailable" });
     if (status === 502 && code === "invalid_provider_answers") return done({ ok: false, reason: "invalid" });
     if (status === 400) return done({ ok: false, reason: "invalid" }, code);
     if (status < 200 || status >= 300) return done({ ok: false, reason: "http" });
-    const read = fromWire(answer.body, request);
+    const read = fromWire(outcome.body, request);
     return done(read ? { ok: true, ...read, ms: Date.now() - started } : { ok: false, reason: "invalid" });
-  } catch {
-    if (timeout.aborted) return done({ ok: false, reason: "timeout" });
-    if (signal.aborted) return done({ ok: false, reason: "aborted" });
-    return done({ ok: false, reason: "http" });
-  } finally { stopWatch(); }
+  } catch { return done({ ok: false, reason: "http" }); } finally { stopWatch(); }
 }
