@@ -10,7 +10,8 @@ afterEach(() => { store.state = {}; officeFixture.snapshot = null; vi.unstubAllG
 const officeFixture = vi.hoisted(() => ({ snapshot: null as unknown }));
 vi.mock('@/lib/connected-apps-refresh', () => ({ useOfficeSources: () => ({ snapshot: officeFixture.snapshot, loading: false, error: '' }) }));
 
-import { GoLiveCard, READ_RETRY_DELAYS_MS, boundedRead, dismissSetUp } from './GoLiveCard';
+import { GoLiveCard, dismissSetUp } from './GoLiveCard';
+import { READ_RETRY_DELAYS_MS, boundedRead } from '@/lib/use-setup-state';
 import { readGetStartedLocal, saveGetStartedLocal } from '@/lib/first-day';
 
 const plan = { reads: 'r', waitsFor: 'w', notifies: 'n', approval: 'a' };
@@ -45,7 +46,7 @@ describe('Get started card', () => {
     expect(html).toContain('aria-label="Get started"');
     expect(html).toContain('>Get started</h2>');
     expect(html).toContain('0 of 5 done');
-    for (const title of ['1. Paste the link code your office sent you', '2. Bud is setting itself up', '3. Import your office’s pack', '4. Connect the office Gmail', '5. Review and switch on your workflows']) expect(html).toContain(title);
+    for (const title of ['1. Paste the link code your office sent you', '2. Bud is setting itself up', '3. Import your office’s pack', '4. Connect what your workflows read', '5. Review and switch on your workflows']) expect(html).toContain(title);
     expect(html).toContain('Not checked yet');
     expect(html).not.toContain('· Done');
     // One action for the current step, plus Bud's progress.
@@ -59,7 +60,7 @@ describe('Get started card', () => {
     const html = render(linked);
     expect(html).toContain('2 of 5 done');
     expect(html).toContain('· Working');
-    expect(html).toContain('This usually takes about 10 minutes and you don’t need to do anything.');
+    expect(html).toContain('Bud is setting itself up — step 1 of 4, usually about 10 minutes. Nothing to do; you can look around the sample desk meanwhile.');
     expect(html).toContain('animate-spin');
     expect(html).toContain('motion-reduce:animate-none');
     // Pack imported (done); Gmail is now the one current action.
@@ -127,12 +128,12 @@ describe('Get started card', () => {
     const before = render(linked);
     expect(before).toContain('role="progressbar" aria-label="Get started progress" aria-valuemin="0" aria-valuemax="5" aria-valuenow="3"');
     expect(before.match(/>Skip for now</g)).toHaveLength(1);
-    expect(before).toContain('aria-label="Skip for now: Connect the office Gmail"');
+    expect(before).toContain('aria-label="Skip for now: Connect what your workflows read"');
     saveGetStartedLocal({ ...readGetStartedLocal(), skipped: ['gmail'] });
     const after = render(linked);
     expect(after).toContain('3 of 5 done · 1 skipped');
-    expect(after).toContain('4. Connect the office Gmail<span class="text-[12px] text-ink-muted"> · Skipped</span>');
-    expect(after).toContain('aria-label="Back to this step: Connect the office Gmail"');
+    expect(after).toContain('4. Connect what your workflows read<span class="text-[12px] text-ink-muted"> · Skipped</span>');
+    expect(after).toContain('aria-label="Back to this step: Connect what your workflows read"');
     // The next open step is now the one current action.
     expect(after).toContain('aria-label="Skip for now: Review and switch on your workflows"');
     expect(after).not.toContain('You’re set up.');
@@ -193,10 +194,39 @@ describe('Get started card', () => {
       gmail: { connected: false, status: 'NOT_CONNECTED', accountSelectionRequired: false, accounts: [] },
     } };
     const blocked = render(linked);
-    expect(blocked).toContain('Ask the office owner to allow this computer on realbud.app.');
+    expect(blocked).toContain('Only your office owner can allow this computer to read the office Gmail.');
     expect(blocked.match(/aria-label="Copy request for your owner"/g)).toHaveLength(1);
     expect(blocked).not.toContain('aria-label="Connect Gmail"');
     expect(blocked).not.toContain('Open connected apps');
+  });
+});
+
+describe('Get started at every stage', () => {
+  const held = { ready: false, autoSetup: { state: 'held', code: 'held_failed', step: 3, total: 4, detail: '' }, modelAccess: { managed: true, withdrawn: false, attached: false, detail: '' } };
+  const withRei = (rei: boolean): AustinPackView => ({ ...pack(true), checklist: [...pack(true).checklist, { id: 'rei', label: 'REI', done: rei, detail: 'Sign in on REI’s own page.' }] });
+  /** The one `· Now` step's list item, which must carry a working control. */
+  const currentItem = (html: string) => html.split('<li').find(item => item.includes(' · Now</span>')) ?? '';
+  const cases: Array<{ name: string; hermes: unknown; props: Parameters<typeof GoLiveCard>[0]; control: string }> = [
+    { name: 'not linked', hermes: null, props: { agencyName: '', websiteLink: 'not-linked' }, control: 'Enter link code' },
+    { name: 'link not read yet', hermes: null, props: { agencyName: '' }, control: 'Enter link code' },
+    { name: 'no pack yet', hermes: { ready: true }, props: { ...linked, agencySetup: { ...agency, packSelected: false }, austinPack: { ...pack(), installed: null } }, control: 'Open packs from your office' },
+    { name: 'Gmail to connect', hermes: { ready: true }, props: linked, control: 'Connect Gmail' },
+    { name: 'REI never signed in', hermes: { ready: true }, props: { ...linked, austinPack: withRei(false) }, control: 'Sign in to REI' },
+    { name: 'workflows off', hermes: { ready: true }, props: { ...linked, austinPack: withRei(true) }, control: 'Review Bank reference review' },
+  ];
+  it.each(cases)('$name: the current step has a working control', ({ hermes, props, control }) => {
+    storeWith([], hermes);
+    const item = currentItem(render(props));
+    expect(item).toContain(`aria-label="${control}"`);
+    expect(item).not.toContain('disabled=""');
+  });
+
+  it('offers Try setup again on Bud\'s own step when its setup stopped, and says where', () => {
+    storeWith([], held);
+    const html = render(linked);
+    expect(html).toContain('Bud’s setup stopped while connecting your office’s AI. Nothing was lost.');
+    expect(html.match(/aria-label="Try setup again"/g)).toHaveLength(1);
+    expect(html).not.toContain('aria-label="See progress"');
   });
 });
 
