@@ -226,8 +226,11 @@ import { seedVault, DEFAULT_VAULT_DOCUMENTS } from "./vault.ts";
 import { openTerminalAndRun, setupCommandFor } from "./engine-setup.ts";
 import { installBlocksUpdate, installInFlight, installStatus, modelStatus, reconcileManagedModelProfile, setManagedModelChoice, cancelBootstrapInstall, waitForBootstrapStop } from "./hermes-bridge.ts";
 import { productSelectionApproved, rebindProductBud } from "./product-bud-selection.ts";
-import { uninstallWorker, WorkerCleanupUnprovenError } from "./hermes-lifecycle.ts";
+import { WorkerCleanupUnprovenError } from "./hermes-lifecycle.ts";
 import { checkUpstreamRelease, installOrRepairWorker, recommendedUpdateAwaitingRestart, restorePreviousRuntime, runtimeUpdateStatus, startRuntimeUpdate } from "./hermes-update.ts";
+import { assertRuntimeIntegrity, checkRuntimeIntegrity } from "./hermes-runtime-check.ts";
+import { importRuntimeSelection } from "./hermes-runtime-selection.ts";
+import { cancelWorkerRemoval, completeWorkerRemoval, requestWorkerRemoval, workerRemovalPending, workerRemovalStatus } from "./worker-removal.ts";
 import { createWorkerAutoSetup } from "./worker-auto-setup.ts";
 import { readPrivateJson, writePrivateJson } from "./private-json.ts";
 import { installCrashHandlers, oplog } from "./oplog.ts";
@@ -330,6 +333,11 @@ function csvDigest(csv: string): string {
 
 ensureDirs();
 seedVault();
+// Worker control facts live outside the worker home; a removal waits for a real reboot.
+try { await importRuntimeSelection(); } catch (error) { console.warn(`[worker] runtime selection import held: ${error instanceof Error ? error.message : "unreadable"}`); }
+// ponytail: migrationComplete is always true while removal keeps worker profiles (office memory); bind to the worker-state import once it deletes them.
+try { await completeWorkerRemoval({ migrationComplete: async () => true }); } catch (error) { console.warn(`[worker] removal completion held: ${error instanceof Error ? error.message : "unreadable"}`); }
+void checkRuntimeIntegrity().catch(() => {});
 // Boot profile hook: the pack below is the first worker-profile mutation of a
 // boot, so the worker-state import (importLegacyProfileFacts) belongs right
 // here, before it. Kept before listen: ~0.2 s on a new Mac profile, ~2 ms on
@@ -2099,6 +2107,7 @@ async function startSeatTurn(
     }
   }
   managedService.assertCapability("reasoning");
+  await assertRuntimeIntegrity();
   const model = bot.modelSelection.model;
 
   // an edit hands us its already-branched user message; a plain send appends
@@ -3236,7 +3245,7 @@ const workerAutoSetup = createWorkerAutoSetup({
   reconcileProfile: () => reconcileManagedModelProfile(),
   syncBud: syncProductBud,
   readinessPing: runHandsReadinessPing,
-  customRuntime: () => Boolean(process.env.REALBUD_HERMES_CLI?.trim()),
+  customRuntime: () => Boolean(process.env.REALBUD_HERMES_CLI?.trim()) || workerRemovalPending(),
   runInContext: fn => withWorkerProfile(desk.memberKeyForWorker(), fn),
   log: message => oplog("boot", message),
 });
@@ -5033,6 +5042,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         lastTest: readHandsLast(DATA_DIR),
         lastPing: readHandsPing(DATA_DIR),
         readyOnce: budReadyOnce(DATA_DIR),
+        removal: workerRemovalStatus(),
         model: {
           attached: Boolean(current.managed && current.choice),
           provider: current.provider,
@@ -5053,7 +5063,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     if ((path === "/api/hermes/update" || path === "/api/hermes/update/restore") && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
       await readBody(req);
-      return path.endsWith("/restore") ? json(res, 200, restorePreviousRuntime()) : json(res, 202, { install: startRuntimeUpdate() });
+      return path.endsWith("/restore") ? json(res, 200, await restorePreviousRuntime()) : json(res, 202, { install: startRuntimeUpdate() });
     }
     if (path === "/api/hermes/test" && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
@@ -5151,15 +5161,25 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       await readBody(req);
       return json(res, 202, { install: cancelBootstrapInstall() });
     }
+    if (path === "/api/hermes/uninstall/cancel" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      await readBody(req);
+      return json(res, 200, { removal: await cancelWorkerRemoval() });
+    }
     if (path === "/api/hermes/uninstall" && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });
       }
       await readBody(req);
       try {
-        const status = await uninstallWorker({ dataDir: DATA_DIR });
-        return json(res, 200, {
-          ...applyHandsReadiness(status, readHandsPing(DATA_DIR)),
+        // Removal waits for a verified reboot; launches and setup stay off until then.
+        const removal = await requestWorkerRemoval();
+        workerAutoSetup.halt();
+        return json(res, 202, {
+          removal,
+          ...applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR)),
           lastTest: readHandsLast(DATA_DIR),
           lastPing: readHandsPing(DATA_DIR),
         });
