@@ -227,7 +227,11 @@ if ($Mode -ne 'fresh-check') {
     foreach ($rel in 'server.log', 'office-service\stdout-stderr.log') {
       $f = Join-Path $LogDir $rel
       if (-not (Test-Path -LiteralPath $f)) { $missing += $rel; continue }
-      $m = @(Get-Content -LiteralPath $f -Tail 2000 | Select-String -CaseSensitive -Pattern 'stage failed|could not answer|runtime check|ERROR' |
+      # Only the current run: lines after the last "office service starting" marker (electron/service-lifecycle.mjs); no marker -> whole tail.
+      $tail = @(Get-Content -LiteralPath $f -Tail 2000)
+      $mark = -1; for ($i = $tail.Count - 1; $i -ge 0; $i--) { if ($tail[$i] -like '*office service starting*') { $mark = $i; break } }
+      if ($mark -ge 0) { $tail = @($tail[$mark..($tail.Count - 1)]) }
+      $m = @($tail | Select-String -CaseSensitive -Pattern 'stage failed|could not answer|runtime check|ERROR' |
         Select-Object -Last 25 | ForEach-Object { $l = Mask $_.Line; if ($l.Length -gt 300) { $l.Substring(0, 300) } else { $l } })
       $hits += $m.Count
       $d[$rel] = [ordered]@{ kb = [math]::Round((Get-Item -LiteralPath $f).Length / 1KB); lastWrite = (Get-Item -LiteralPath $f).LastWriteTime.ToString('s'); matches = $m }

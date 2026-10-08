@@ -215,7 +215,12 @@ export function admitPack(value: unknown, keys: readonly PackPublisherKey[], req
   const pack = validateCustomerPack(value);
   if (pack.signature) verifyPackSignature(pack, keys);
   else if (requireSignature || !Object.hasOwn(builtInPacks, pack.id)) fail(UNSIGNED_PACK_MESSAGE);
-  else if (hash(JSON.stringify(validateCustomerPack(builtInPacks[pack.id]()))) !== hash(JSON.stringify(pack))) fail(BUILT_IN_MISMATCH_MESSAGE);
+  else {
+    // Built-ins are LF text; an editor may have saved the copy with CRLF. Normalise skill text for this comparison only, and install the LF form that was matched.
+    const lf = { ...pack, skills: pack.skills.map(skill => ({ ...skill, instructions: skill.instructions.replace(/\r\n/g, '\n') })) };
+    if (hash(JSON.stringify(validateCustomerPack(builtInPacks[pack.id]()))) !== hash(JSON.stringify(lf))) fail(BUILT_IN_MISMATCH_MESSAGE);
+    return lf;
+  }
   return pack;
 }
 /** Per-client export: the validated installed pack (validation is itself a field

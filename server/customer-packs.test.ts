@@ -8,7 +8,8 @@ import type { Recipe } from '../shared/contracts.ts';
 import type { CustomerPack, CustomerPackChangePreview } from '../shared/customer-packs.ts';
 import { DATA_DIR } from './config.ts';
 import { austinCustomerPack } from './customer-pack-definition.ts';
-import { createCustomerPackService as createPackService, validateCustomerPack } from './customer-packs.ts';
+import { admitPack, createCustomerPackService as createPackService, validateCustomerPack } from './customer-packs.ts';
+import { BUILT_IN_MISMATCH_MESSAGE } from './pack-signing.ts';
 import { getRecipe } from './recipes.ts';
 import { workerScope } from './worker-state.ts';
 import { LoopManager } from './routines.ts';
@@ -51,6 +52,23 @@ async function revertRequest(service:ReturnType<typeof createCustomerPackService
  const review=await service.skillRevertPreview(packId,skillId,{installationRevision:page.installationRevision,head:page.head,sourceDigest:page.sourceDigest,revision:target.revision,digest:target.digest});
  return {packId,skillId,...review.selection,expectedReviewDigest:review.reviewDigest};
 }
+describe('unsigned built-in pack admission', () => {
+  const crlf = (pack: CustomerPack): CustomerPack => ({ ...pack, skills: pack.skills.map(skill => ({ ...skill, instructions: skill.instructions.replace(/\n/g, '\r\n') })) });
+  it('accepts a CRLF copy of the built-in pack and keeps its LF text', () => {
+    const builtIn = austinCustomerPack();
+    expect(builtIn.skills.some(skill => skill.instructions.includes('\n'))).toBe(true);
+    const copy = crlf(builtIn);
+    expect(copy.skills.some(skill => skill.instructions.includes('\r\n'))).toBe(true);
+    expect(admitPack(copy, []).skills).toEqual(builtIn.skills);
+  });
+  it('still refuses a changed byte, with or without CRLF', () => {
+    const builtIn = austinCustomerPack();
+    const changed = { ...builtIn, skills: builtIn.skills.map((skill, i) => i ? skill : { ...skill, instructions: `${skill.instructions}.` }) };
+    expect(() => admitPack(changed, [])).toThrow(BUILT_IN_MISMATCH_MESSAGE);
+    expect(() => admitPack(crlf(changed), [])).toThrow(BUILT_IN_MISMATCH_MESSAGE);
+  });
+});
+
 describe('portable customer pack lifecycle', () => {
   it('bundles the three Austin outcomes, existing typed recipes and actual text dependency', () => {
     const pack = validateCustomerPack(austinCustomerPack());
