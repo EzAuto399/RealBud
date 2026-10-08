@@ -61,7 +61,7 @@ import { createPropertyReferenceApi, createPropertyReferenceStore } from './prop
 import { createInspectionHistoryStore } from './inspection-history.ts';
 import { createInspectionBookingsStore, createInspectionsApi, runInspectionDraft } from './inspection-bookings.ts';
 import { createAustinPack } from './austin-pack.ts';
-import { bindApprovalPolicy, bindWorkflowSettings } from './workflow-settings-broker.ts';
+import { bindApprovalPolicy, bindRepeatJobs, bindWorkflowSettings } from './workflow-settings-broker.ts';
 import { createSupplierDirectory } from './supplier-directory.ts';
 import { createLoopChatCards } from './loop-chat-cards.ts';
 import type { LoopRun, RunUsage } from '../shared/contracts.ts';
@@ -133,7 +133,6 @@ import {
 import { releaseDesktopBrokers } from "./drivers/acp/core.ts";
 import { answerPortalRecipeAsk, portalRecipeApprovalChannel, portalRecipeTaskProposal, portalRecipeTaskReply, portalRecipeTaskRunning, holdPortalRecipeGrant, releasePortalRecipeGrant, runPortalRecipeTask, loadPortalRecipePack, loadShippedPortalRecipePack, PORTAL_RECIPE_PACKS } from "./portal-recipe-task.ts";
 import { reiDeskSyncLine, syncReiReadIntoDesk } from "./rei-desk-sync.ts";
-import { scheduleIntentReply } from "./schedule-intent.ts";
 import {
   ATTEND_ERRORS,
   attendBlocked,
@@ -165,7 +164,7 @@ import {
   submitPressSummary,
 } from "./portal-fence.ts";
 import { getSession, grantLease, listSessions, revokeLease } from "./portal-sessions.ts";
-import { executeRecipeJob } from "./job-executor.ts";
+import { executeRecipeJob, sameJobResult } from "./job-executor.ts";
 import { manualRecipeRequestKey } from "./manual-job-request.ts";
 import { BatchService } from "./batches.ts";
 import { jobRuns, READY_BESIDE_YOU } from "./job-runs.ts";
@@ -1205,6 +1204,8 @@ async function endStoppedApprovals(instance: ProviderInstance | null | undefined
 // records the active member here before dispatching its turn.
 const groupSpeakers = new Map<string, { botId: string; name: string; color: string }>();
 let loops: LoopManager | null = null;
+/** The running saved job's worker per recipe-* loop, so Stop on Schedule can abort it. */
+const recipeRunStops = new Map<string, AbortController>();
 const websiteRunContext = createWebsiteExecutionContext({
   binding: requestId => websiteRequests.executionBinding(requestId),
   check: execution => websiteWork.check(execution.descriptor, execution.binding),
@@ -1924,7 +1925,8 @@ async function startSeatTurn(
     recordUsage("ask routing", routeUsage, { threadId });
     if (store.bot(bot.id)?.busy) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
     const control = parseAskControlIntent(text) ?? (routed && routed !== "connected-status" ? routed : null);
-    const scheduleReply = control ? askControlReply(control, loops?.listLoops() ?? []) : scheduleIntentReply(text);
+    // The weekday-check pointer to Schedule is retired: those asks reach Bud, who proposes the repeat on a card (repeat_propose).
+    const scheduleReply = control ? askControlReply(control, loops?.listLoops() ?? []) : null;
     if (scheduleReply) {
       let userMessage = opts?.userMessage;
       if (!userMessage) {
@@ -2257,7 +2259,11 @@ async function startSeatTurn(
           // Without one (a phone, a loop, a queued follow-up) Bud says to change them in Workspace → Approvals.
           ...(memberSession || singleDesktop ? { approvals: bindApprovalPolicy(approvals, () => ({ headers: memberSession ? { 'x-realbud-member-session': memberSession } : {} })) } : {}),
           // The office's REI business code: Bud proposes it on the card; the person allows; the store's revision check saves it.
-          reiAccount: { read: () => readReiAccount(DATA_DIR), save: (account, expectedRevision) => saveReiAccount(DATA_DIR, account, expectedRevision) } });
+          reiAccount: { read: () => readReiAccount(DATA_DIR), save: (account, expectedRevision) => saveReiAccount(DATA_DIR, account, expectedRevision) },
+          // "Repeat this every …": Allow on Bud's card saves one approved job on RealBud's clock (never Hermes cron),
+          // through the same saves as Schedule's plan editor; new mail wakes it only when asked and Gmail is connected.
+          ...(loops ? { repeats: bindRepeatJobs({ recipes: { get: getRecipe, save: saveRecipe, approve: (id, expectedRevision) => patchRecipe(id, { planApproved: true, expectedRevision }) },
+            loops, newMail: { available: () => connectorEvents.available(), set: (loopId, enabled) => connectorEvents.setNewMail(loopId, enabled) } }) } : {}) });
         // Read-only bank feed for Ask (Redbark connection); no writes exist.
         const memberChanged = () => Object.assign(new Error('The RealBud member changed.'), { code: 'unavailable' });
         integrations.bankSource = {
@@ -2604,17 +2610,32 @@ loops = new LoopManager({
         return { ok: false, detail: "Waiting for plan approval" };
       }
       const mode = recipeClockRunnable(recipe) ? "prepare" : "shadow";
-      const executed = await executeRecipeJob(recipe, {
-        mode,
-        trigger: run.manual ? "manual" : "schedule",
-        scheduledFor: run.scheduledFor,
-        loopRunId: run.id,
-        idempotencyKey: `${recipe.id}:${recipe.revision}:${run.manual ? `manual:${run.id}` : `schedule:${run.scheduledFor}`}`,
-      }, { readBookSnapshot: () => desk.snapshot(), instructionContext: id => customerPacks.instructionContext(id) });
+      // A mail repeat reads the newest saved collection (read only); while mail is being collected it waits for its next slot.
+      if (mode === "prepare" && recipe.capabilities.includes("read-mail") && mailWorkspace.busy) {
+        return { ok: true, detail: "Mail was being collected, so this run waits for the next one.", quiet: true };
+      }
+      const previous = jobRuns.list(recipe.id)[0];
+      // Stop on Schedule (POST /api/loops/:id/stop) aborts this run's worker.
+      const stop = new AbortController();
+      recipeRunStops.set(loop.id, stop);
+      let executed: Awaited<ReturnType<typeof executeRecipeJob>>;
+      try {
+        executed = await executeRecipeJob(recipe, {
+          mode,
+          trigger: run.manual ? "manual" : "schedule",
+          scheduledFor: run.scheduledFor,
+          loopRunId: run.id,
+          idempotencyKey: `${recipe.id}:${recipe.revision}:${run.manual ? `manual:${run.id}` : `schedule:${run.scheduledFor}`}`,
+        }, { readBookSnapshot: () => desk.snapshot(), readMail: () => mailWorkspace.headlines(30), instructionContext: id => customerPacks.instructionContext(id), worker: { signal: stop.signal } });
+      } finally { if (recipeRunStops.get(loop.id) === stop) recipeRunStops.delete(loop.id); }
+      if (stop.signal.aborted) return { ok: false, detail: "Stopped on Schedule. Nothing more ran.", jobRunId: executed.run.id, quiet: true };
       const ok = executed.run.status === "completed" || executed.run.status === "awaiting-approval";
       const status = executed.run.status === "awaiting-approval" ? "awaiting-approval"
         : executed.run.status === "partial" ? "partial" : ok ? "completed" : "failed";
-      return { ok, status, detail: executed.run.detail, jobRunId: executed.run.id };
+      // The same result as last time posts no second card or notification.
+      const quiet = ok && !executed.reused && sameJobResult(executed.run, previous);
+      if (quiet) jobRuns.markSeen(executed.run.id);
+      return { ok, status, detail: executed.run.detail, jobRunId: executed.run.id, ...(quiet ? { quiet: true } : {}) };
     },
     'owner-letter': async () => desk.withRoutineOrigin(origin, async () => {
       const before = desk.snapshot().drafts.filter((d) => d.kind === "owner-letter").length;
@@ -3644,6 +3665,23 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       try { return json(res, 200, method === 'GET' ? await connectorEvents.status(newMail[1]) : await connectorEvents.setNewMail(newMail[1], (await readBody(req)).enabled)); }
       catch (error) { return json(res, (error as { status?: number }).status ?? 500, { error: error instanceof Error ? error.message : 'New-mail checks could not be changed.' }); }
     }
+    // Stop a saved job: pause it first, so the clock starts nothing new, then abort its running worker.
+    const loopStop = path.match(/^\/api\/loops\/(recipe-[\w-]+)\/stop$/);
+    if (loopStop && method === 'POST') {
+      if (!String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { error: 'content-type must be application/json' });
+      try {
+        await readBody(req, 1_000);
+        const id = loopStop[1] as LoopId, active = loops!.activeRun(id);
+        const loop = loops!.setEnabled(id, false);
+        recipeRunStops.get(id)?.abort();
+        // An aborted worker settles within moments: wait briefly so Schedule shows the stopped run straight away.
+        for (let waited = 0; active && loops!.activeRun(id)?.id === active.id && waited < 3_000; waited += 50) await new Promise(resolve => setTimeout(resolve, 50));
+        const run = active ? loops!.listRuns().find(item => item.id === active.id) ?? active : null;
+        return json(res, 200, { loop, ...(run ? { run } : {}) });
+      } catch (error) {
+        return json(res, (error as { status?: number }).status ?? 500, { error: error instanceof Error ? error.message : 'This job could not be stopped.' });
+      }
+    }
     loopMatch = path.match(/^\/api\/loops\/([\w-]+)$/);
     if (loopMatch && method === "PATCH") {
       if (loopMatch[1] === 'inbound-triage') return json(res,409,{error:'Use Morning priorities to adopt the reviewed agency schedule.'});
@@ -3652,10 +3690,12 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         const authority = await authorizeBillWorkflow();
         body.timezone = authority.settings.timeZone;
       }
-      if (body.enabled === undefined && body.time === undefined && body.weekdays === undefined && body.intervalDays === undefined && body.anchorDate === undefined) {
+      if (body.enabled === undefined && body.time === undefined && body.weekdays === undefined && body.intervalDays === undefined && body.anchorDate === undefined &&
+        body.everyMinutes === undefined && body.until === undefined) {
         return json(res, 400, { error: "nothing to change — send enabled, time, or weekdays" });
       }
       try {
+        // everyMinutes/until (null clears) are checked by the clock itself (shared/routine-clock.ts).
         const loop = loops!.patchClock(loopMatch[1] as LoopId, {
           enabled: body.enabled,
           time: body.time,
@@ -3663,6 +3703,8 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
           timezone: body.timezone,
           intervalDays: body.intervalDays,
           anchorDate: body.anchorDate,
+          everyMinutes: body.everyMinutes,
+          until: body.until,
         });
         return json(res, 200, { loop });
       } catch (error) {

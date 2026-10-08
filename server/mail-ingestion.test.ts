@@ -26,7 +26,7 @@ function createMailIngestionService(options: Parameters<typeof createNormalizedM
     collect: async (...args: Parameters<typeof service.collect>) => { await service.collect(...args); return service.getLegacySnapshot(); },
     update: async (...args: Parameters<typeof service.update>) => { await service.update(...args); return service.getLegacySnapshot(); },
     applyReview: async (...args: Parameters<typeof service.applyReview>) => { await service.applyReview(...args); return service.getLegacySnapshot(); },
-    page: service.page, screenNoise: service.screenNoise,
+    page: service.page, screenNoise: service.screenNoise, headlines: service.headlines,
   };
 }
 vi.mock('./recipes.ts', () => ({ getRecipe: (id: string) => ({ id, capabilities: ['read-files'] }) }));
@@ -212,6 +212,25 @@ describe('durable private mail acquisition and work list', () => {
     await expect(f.service.collect('bills-calendar')).rejects.toMatchObject({status:409});
     expect(f.authorize.mock.calls).toEqual([['bills-calendar']]);
     expect(f.scan).toHaveBeenCalledTimes(1);
+  });
+  it('gives a repeat the saved headlines, latest first, writing nothing and creating no work items', async () => {
+    const f = await fixture();
+    expect(await f.service.headlines()).toBeNull();
+    const later = thread('abd', 'ab');
+    later.messages[0]!.at = initialTime - 500; later.messages[0]!.subject = 'Fictional\nleak quote'; later.messages[0]!.body = 'x'.repeat(400);
+    f.data.threads = [thread(), later];
+    const saved = await f.service.collect();
+    const recordBytes = () => { const raw = new DatabaseSync(f.workspaceFile); try { return raw.prepare('SELECT id,revision,payload FROM workflow_records ORDER BY id').all(); } finally { raw.close(); } };
+    const before = recordBytes();
+    const read = await f.service.headlines(1);
+    expect(read).toEqual({ receiptId: saved.latestScan!.id, collectedAt: saved.latestScan!.completedAt, lines: [`2026-09-20T23:59:59.500Z | incoming | from tenant@example.test | Fictional leak quote | ${'x'.repeat(300)}`] });
+    expect((await f.service.headlines(30))!.lines).toHaveLength(2);
+    expect(recordBytes()).toEqual(before);
+    expect(f.scan).toHaveBeenCalledTimes(1);
+    expect(f.authorize).toHaveBeenLastCalledWith('morning-priorities');
+    // A collection made under another source or scope review is never read.
+    f.authorize.mockResolvedValueOnce({ ...structuredClone(f.authority), bindingRevision: 'b'.repeat(64) });
+    expect(await f.service.headlines()).toBeNull();
   });
   it('persists encrypted evidence across restart without crossing workspace identity or encryption keys', async () => {
     const f = await fixture(), saved = await f.service.collect();

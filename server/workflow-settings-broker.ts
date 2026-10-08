@@ -10,7 +10,10 @@
 // server/approval-settings.ts: Bud may propose anything stricter, but may only
 // stop asking for tools it names that only read. The office's REI business code
 // (rei_account) saves through server/rei-account.ts; no earlier versions are
-// kept. Mounted per ACP session as a loopback MCP server.
+// kept. A request to repeat work (repeat_propose) shows the same card and, on
+// Allow, saves one approved job on RealBud's clock (bindRepeatJobs); its runs
+// only prepare. Mounted per ACP session as a loopback MCP server.
+import { randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { defaultAgencySettings, validateAgencySettings } from "./agency-setup.ts";
 import { APPROVAL_DENIED, APPROVAL_TIMED_OUT, approvalAnswer, type ApprovalAnswer } from "./approval-answer.ts";
@@ -18,12 +21,12 @@ import { validateInspectionRules, type InspectionRulesStore } from "./inspection
 import { isMaintenanceWindowRule, MAINTENANCE_RULE_MESSAGE, type MaintenanceReviewStore } from "./maintenance-review.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { validReiRef } from "./rei-account.ts";
-import { parseClockTime, parseWeekdays } from "./routines.ts";
+import { nextOccurrence, parseClockTime, parseWeekdays } from "./routines.ts";
 import { startLoopbackToolServer, toolError, type LoopbackToolResult, type LoopbackToolServer } from "./web-research-broker.ts";
 import type { AgencySetupSettings } from "../shared/agency-setup.ts";
 import { officeAppLabel } from "../shared/office-sources.ts";
 import { APPROVAL_CHOICES, approvalGroupKey, normalizeApprovalSettings, PER_INSTANCE_CLASSES, SITE_READ_TOOLS, type ApprovalChoice, type ApprovalSettings } from "../shared/approval-settings.ts";
-import type { Loop, LoopId, LoopSchedule } from "../shared/contracts.ts";
+import type { JobCapability, Loop, LoopId, LoopSchedule, Recipe } from "../shared/contracts.ts";
 import { validCalendarCadence } from "../shared/routine-clock.ts";
 import { evaluatorForLoop } from "../shared/workflow-catalog.ts";
 
@@ -50,8 +53,26 @@ export interface ApprovalPolicyBinding {
   save(view: ApprovalPolicyView, next: ApprovalSettings): Promise<void>;
 }
 type Values = Record<string, unknown>;
-/** A workflow's clock as Bud reads and proposes it: no timezone, no on/off. */
-export interface LoopClock { time: string; weekdays: number[]; intervalDays?: number; anchorDate?: string; monthly?: "first-weekday" }
+/** A workflow's clock as Bud reads and proposes it: no timezone, no on/off. A repeat
+ * (`everyMinutes` from `time` up to `until`) is shown and kept, not changed, by loop_schedule. */
+export interface LoopClock { time: string; weekdays: number[]; intervalDays?: number; anchorDate?: string; monthly?: "first-weekday"; everyMinutes?: number; until?: string }
+/** What a repeat Bud proposes may do. Website and portal work repeats only from Schedule, beside the person. */
+export const REPEAT_ABILITIES = ["read-book", "read-mail", "read-files", "analyse", "draft"] as const satisfies readonly JobCapability[];
+type RepeatAbility = typeof REPEAT_ABILITIES[number];
+/** The card's words: the plan editor's JOB_ABILITY_LABELS (src/lib/job-plan.ts), which the server cannot import. */
+const ABILITY_WORDS: Record<RepeatAbility, string> = { "read-book": "Read this office's book", "read-mail": "Read the reviewed mailbox",
+  "read-files": "Read workroom files", analyse: "Compare and analyse facts", draft: "Prepare drafts for review" };
+export interface RepeatCadence { time: string; weekdays: number[]; everyMinutes?: number; until?: string; newMail?: true }
+export interface RepeatProposal { title: string; request: string; steps: string[]; abilities: RepeatAbility[]; cadence: RepeatCadence }
+/** Saved repeats on RealBud's clock (bindRepeatJobs). */
+export interface RepeatJobs {
+  /** The office clock's zone and time, for the card's next runs. */
+  clock(): { timeZone: string; now: number };
+  /** Whether new mail can wake a job on this computer now, with the plain reason when not. */
+  newMail(): Promise<{ available: boolean; reason?: string }>;
+  /** Saves one approved job under `id`; the same id returns the job already saved. */
+  create(id: string, proposal: RepeatProposal): Promise<{ loopId: string; nextRunAt: number | null; newMail?: { enabled: boolean; reason?: string } }>;
+}
 export interface LoopScheduleSnapshot { loopId: string; name: string; enabled: boolean; revision: number; schedule: LoopClock; waitingForPlan: boolean; agencyTimed: boolean }
 export interface WorkflowSettingsSnapshot {
   revision: number; values: Values;
@@ -73,6 +94,8 @@ export interface BudWorkflowSettings {
   saveLoop(loopId: string, next: LoopClock, expectedRevision: number): Promise<void>;
   /** Approval settings, when this turn's host binds them. */
   approvals?: ApprovalPolicyBinding;
+  /** Repeats Bud proposes, when this turn's host binds them. */
+  repeats?: RepeatJobs;
 }
 export interface WorkflowSettingsReceipt { tool: string; target?: WorkflowSettingsTarget; outcome: "succeeded" | "failed" | "refused" | "declined" | "conflict" }
 
@@ -125,10 +148,15 @@ export function friendly(field: string, value: unknown): string {
 }
 const DAY_NAMES = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
 const andList = (items: string[]) => items.length > 1 ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}` : items.join("");
-/** A workflow clock as an office worker reads it: "Mondays and Thursdays 8:00 am". */
+/** A workflow clock as an office worker reads it: "Mondays and Thursdays 8:00 am",
+ * or for a repeat "Every 2 minutes, 9:00 am–5:00 pm, weekdays". */
 export function scheduleWords(clock: LoopClock): string {
   const days = clock.weekdays.length === 7 ? "Every day" : clock.weekdays.join() === "1,2,3,4,5" ? "Weekdays" : andList(clock.weekdays.map(day => DAY_NAMES[day] ?? String(day)));
   const only = clock.weekdays.length === 7 ? "" : ` (${days} only)`, time = clockLabel(clock.time);
+  if (clock.everyMinutes) {
+    const step = clock.everyMinutes, every = step === 1 ? "Every minute" : step === 60 ? "Every hour" : step % 60 === 0 ? `Every ${step / 60} hours` : `Every ${step} minutes`;
+    return `${every}, ${clock.until ? `${time}–${clockLabel(clock.until)}` : `from ${time}`}, ${days === "Weekdays" || days === "Every day" ? days.toLowerCase() : days}`;
+  }
   if (clock.monthly) return `First weekday of each month${days === "Weekdays" ? "" : only}, ${time}`;
   if (clock.intervalDays === undefined) return `${days} ${time}`;
   const from = isoDay(clock.anchorDate);
@@ -136,7 +164,8 @@ export function scheduleWords(clock: LoopClock): string {
 }
 const clockOf = (schedule: LoopSchedule | LoopClock): LoopClock => ({ time: schedule.time, weekdays: [...schedule.weekdays],
   ...(schedule.intervalDays !== undefined ? { intervalDays: schedule.intervalDays } : {}), ...(schedule.anchorDate !== undefined ? { anchorDate: schedule.anchorDate } : {}),
-  ...(schedule.monthly ? { monthly: schedule.monthly } : {}) });
+  ...(schedule.monthly ? { monthly: schedule.monthly } : {}),
+  ...(schedule.everyMinutes !== undefined ? { everyMinutes: schedule.everyMinutes, ...(schedule.until !== undefined ? { until: schedule.until } : {}) } : {}) });
 /** How a workflow repeats, as Schedule's own editor offers it (JobDrawer): chosen weekdays (all seven
  * is every day), every N days from a first date where the cadence is editable, and the first weekday
  * of each month only for a workflow that already repeats that way. */
@@ -159,11 +188,21 @@ const TOOLS = [
     inputSchema: { type: "object", additionalProperties: false, required: ["target", "values", "reason"], properties: { target: TARGET, values: { type: "object" }, reason: REASON } } },
   { name: "workflow_settings_restore", description: "Propose putting back an earlier version of one working rule. previous is 1 for the version just before the current one (default), up to 10. The person approves it once on a card.",
     inputSchema: { type: "object", additionalProperties: false, required: ["target", "reason"], properties: { target: TARGET, previous: { type: "integer", minimum: 1, maximum: 10 }, reason: REASON } } },
+  { name: "repeat_propose", description: "Propose repeating work for the person on RealBud's Schedule, at any cadence: every N minutes or hours (everyMinutes 1-1440 from time, until an optional end time), once a day at time, on chosen weekdays (0=Sun..6=Sat), and optionally also when new mail arrives (newMail, which needs read-mail). title (up to 80 characters), request (the person's ask in their words, up to 1000), steps (1-12, each up to 200 characters, what every run does), abilities from read-book, read-mail (the newest saved mail from the reviewed Gmail), read-files, analyse and draft. Website and portal work cannot repeat from here. Runs only prepare: sending, replying, paying, signing and submitting always wait for the person's approval of that exact item. The person approves it once on a card; it is saved only when this tool says so.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["title", "request", "steps", "abilities", "cadence", "reason"], properties: {
+      title: { type: "string", minLength: 1, maxLength: 80 }, request: { type: "string", minLength: 1, maxLength: 1000 },
+      steps: { type: "array", minItems: 1, maxItems: 12, items: { type: "string", minLength: 1, maxLength: 200 } },
+      abilities: { type: "array", minItems: 1, items: { type: "string", enum: [...REPEAT_ABILITIES] } },
+      cadence: { type: "object", additionalProperties: false, required: ["time", "weekdays"], properties: { time: { type: "string", description: "HH:MM, the first run of each day" },
+        weekdays: { type: "array", items: { type: "integer", minimum: 0, maximum: 6 } }, everyMinutes: { type: "integer", minimum: 1, maximum: 1440 },
+        until: { type: "string", description: "HH:MM, after time; runs stop before it" }, newMail: { type: "boolean" } } },
+      reason: REASON } } },
 ];
 const ARGS: Record<string, { required: string[]; optional: string[] }> = {
   workflow_settings_read: { required: [], optional: ["target"] },
   workflow_settings_propose: { required: ["target", "values", "reason"], optional: [] },
   workflow_settings_restore: { required: ["target", "reason"], optional: ["previous"] },
+  repeat_propose: { required: ["title", "request", "steps", "abilities", "cadence", "reason"], optional: [] },
 };
 const text = (value: string, structuredContent?: Record<string, unknown>): LoopbackToolResult => ({ content: [{ type: "text", text: value }], ...(structuredContent ? { structuredContent } : {}) });
 const message = (error: unknown, fallback: string) => error instanceof Error && error.message ? error.message : fallback;
@@ -171,6 +210,71 @@ const isTarget = (value: unknown): value is WorkflowSettingsTarget => (WORKFLOW_
 const object = (value: unknown): value is Values => !!value && typeof value === "object" && !Array.isArray(value);
 /** Model text shown on a card: one plain line, no controls or direction overrides, no secrets. */
 const plainReason = (value: unknown) => typeof value === "string" ? redactSecretsInText(value.replace(/[\x00-\x1f\x7f​-‏‪-‮⁦-⁩]/g, " ").replace(/\s+/g, " ").trim()).slice(0, 300) : "";
+/** Job text Bud proposes: one plain line within `max`, or null. Credential-shaped text is refused, never saved redacted. */
+const jobLine = (value: unknown, max: number): string | null => {
+  if (typeof value !== "string") return null;
+  const line = value.replace(/[\x00-\x1f\x7f​-‏‪-‮⁦-⁩]/g, " ").replace(/\s+/g, " ").trim();
+  return line && line.length <= max && redactSecretsInText(line) === line ? line : null;
+};
+const CADENCE_FIELDS = ["time", "weekdays", "everyMinutes", "until", "newMail"];
+/** Bud's repeat request as a saved job's fields, or the plain sentence saying what to fix. */
+function repeatProposal(args: Values): RepeatProposal | string {
+  const title = jobLine(args.title, 80), request = jobLine(args.request, 1000);
+  if (!title) return "title is one line of 1 to 80 characters, with no passwords, keys or codes.";
+  if (!request) return "request is the person's ask in 1 to 1000 characters, with no passwords, keys or codes.";
+  const steps = Array.isArray(args.steps) && args.steps.length >= 1 && args.steps.length <= 12 ? args.steps.map(step => jobLine(step, 200)) : null;
+  if (!steps || steps.some(step => !step)) return "steps holds 1 to 12 steps of up to 200 characters each, with no passwords, keys or codes.";
+  if (!Array.isArray(args.abilities) || !args.abilities.length || args.abilities.some(ability => typeof ability !== "string")) return `abilities lists some of ${REPEAT_ABILITIES.join(", ")}.`;
+  if (args.abilities.some(ability => !(REPEAT_ABILITIES as readonly unknown[]).includes(ability))) {
+    return `A repeat may only ${REPEAT_ABILITIES.join(", ")}. Website and portal work repeats from Schedule, beside the person (Run beside me).`;
+  }
+  const abilities = [...new Set(args.abilities as RepeatAbility[])];
+  const cadence = args.cadence;
+  if (!object(cadence) || Object.keys(cadence).some(key => !CADENCE_FIELDS.includes(key))) return `cadence holds ${CADENCE_FIELDS.join(", ")}.`;
+  const time = parseClockTime(cadence.time), weekdays = parseWeekdays(cadence.weekdays);
+  if (!time) return "cadence.time must be HH:MM (00:00–23:59), the first run of each day.";
+  if (!weekdays) return "cadence.weekdays must be a non-empty list of numbers 0–6 (0 is Sunday).";
+  const repeat = cadence.everyMinutes === undefined && cadence.until === undefined ? {} : { everyMinutes: cadence.everyMinutes as number, ...(cadence.until === undefined ? {} : { until: cadence.until as string }) };
+  if (!validCalendarCadence({ ...repeat, time })) return "Choose everyMinutes from 1 to 1440 and an until (HH:MM) after time, or leave both out to run once at time.";
+  if (cadence.newMail !== undefined && typeof cadence.newMail !== "boolean") return "cadence.newMail is true or false.";
+  if (cadence.newMail && !abilities.includes("read-mail")) return "Only a repeat that reads mail can also run when new mail arrives: add read-mail.";
+  return { title, request, steps: steps as string[], abilities, cadence: { time, weekdays, ...repeat, ...(cadence.newMail ? { newMail: true } : {}) } };
+}
+const minuteOf = (clock: string) => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3, 5));
+/** Runs on each day a repeat runs: its slots from time up to until (or midnight). */
+const runsPerDay = (cadence: RepeatCadence) => cadence.everyMinutes ? Math.ceil(((cadence.until ? minuteOf(cadence.until) : 1440) - minuteOf(cadence.time)) / cadence.everyMinutes) : 1;
+/** "Fri 9 Oct, 9:00 am" on the office clock. */
+const runLabel = (at: number, timeZone: string) =>
+  new Intl.DateTimeFormat("en-AU", { timeZone, weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(at);
+const NEW_MAIL_UNBOUND = "New-mail checks are not available in this conversation.";
+const REPEATS_UNBOUND = "Repeating work can't be set up from this conversation. Ask again in Work on this computer. Nothing was saved.";
+
+/** Saves an Allowed repeat as one approved job on RealBud's clock (never Hermes cron) through the doors
+ * Schedule uses: save the job (active, waiting for its plan), approve its plan at revision 1, adopt the
+ * plan's clock, then new mail when asked. A crash between writes leaves at worst a job waiting for plan approval. */
+export function bindRepeatJobs(host: {
+  recipes: { get(id: string): Recipe | undefined; save(input: unknown): unknown; approve(id: string, expectedRevision: number): unknown };
+  loops: { readonly timezone: string; readonly recovery: { active: boolean; detail: string }; listLoops(): Loop[]; adoptRecipePlan(recipeId: string): void };
+  newMail?: { available(): Promise<{ available: boolean; reason?: string }>; set(loopId: string, enabled: boolean): Promise<{ enabled: boolean; reason?: string }> };
+  now?: () => number;
+}): RepeatJobs {
+  return {
+    clock: () => ({ timeZone: host.loops.timezone, now: (host.now ?? Date.now)() }),
+    newMail: async () => host.newMail ? host.newMail.available() : { available: false, reason: NEW_MAIL_UNBOUND },
+    async create(id, proposal) {
+      const loopId = `recipe-${id}`, { newMail, ...schedule } = proposal.cadence;
+      if (host.loops.recovery.active) throw Object.assign(new Error(`${host.loops.recovery.detail} Nothing was saved.`), { status: 503 });
+      if (!host.recipes.get(id)) {
+        host.recipes.save({ id, title: proposal.title, description: proposal.request, steps: proposal.steps, allowedOrigins: [], evidence: "",
+          capabilities: proposal.abilities, schedule, status: "active" });
+        host.recipes.approve(id, 1);
+        host.loops.adoptRecipePlan(id);
+      }
+      const mail = newMail ? await (host.newMail?.set(loopId, true) ?? { enabled: false, reason: NEW_MAIL_UNBOUND }) : undefined;
+      return { loopId, nextRunAt: host.loops.listLoops().find(loop => loop.id === loopId)?.nextRunAt ?? null, ...(mail ? { newMail: { enabled: mail.enabled, ...(mail.reason ? { reason: mail.reason } : {}) } } : {}) };
+    },
+  };
+}
 
 /** Binds the three stores and the workflow clock for one turn. `writable` returns a refusal sentence when
  * the book is in recovery or the member changed; it is checked again after the card. */
@@ -185,13 +289,16 @@ export function bindWorkflowSettings(host: {
   approvals?: ApprovalPolicyBinding;
   /** The office's REI account (server/rei-account.ts); without it Bud cannot change it. */
   reiAccount?: ReiAccountBinding;
+  /** Saved repeats (`bindRepeatJobs`); without it Bud cannot set one up. */
+  repeats?: RepeatJobs;
 }): BudWorkflowSettings {
   const changed = () => Object.assign(new Error(SETTINGS_CONFLICT), { code: "settings_changed" });
   const guard = () => { const refusal = host.writable(); if (refusal) throw Object.assign(new Error(refusal), { status: 503 }); };
-  const approvals = host.approvals;
+  const approvals = host.approvals, repeats = host.repeats;
   const rei = () => host.reiAccount ?? (() => { throw Object.assign(new Error(REI_ACCOUNT_UNBOUND), { unbound: true }); })();
   return {
     ...(approvals ? { approvals: { read: () => approvals.read(), save: async (view: ApprovalPolicyView, next: ApprovalSettings) => { guard(); await approvals.save(view, next); } } } : {}),
+    ...(repeats ? { repeats: { clock: () => repeats.clock(), newMail: () => repeats.newMail(), create: async (id: string, proposal: RepeatProposal) => { guard(); return repeats.create(id, proposal); } } } : {}),
     async read(target) {
       if (target === "rei_account") {
         const account = await rei().read();
@@ -258,7 +365,7 @@ export function bindWorkflowSettings(host: {
       if (!weekdays) throw new Error("weekdays must be a non-empty list of numbers 0–6.");
       const next = clockOf({ ...merged, time, weekdays });
       if (repeatOf(next) !== repeat) throw new Error(repeat === "weekdays" ? "To repeat on chosen weekdays, leave out intervalDays and anchorDate." : "To repeat every N days, give intervalDays (1–31) and anchorDate.");
-      if (!validCalendarCadence(next)) throw new Error("Choose an interval of 1–31 calendar days and a valid first date.");
+      if (!validCalendarCadence(next)) throw new Error(next.everyMinutes ? `${loop.name} repeats until ${clockLabel(next.until ?? "")}; choose a time before that.` : "Choose an interval of 1–31 calendar days and a valid first date.");
       return { loop: loopSnapshot(loop), next };
     },
     async saveLoop(loopId, next, expectedRevision) {
@@ -419,7 +526,8 @@ export async function startWorkflowSettingsBroker(options: {
       const reason = plainReason(args.reason);
       if (!reason) return toolError("Give one plain sentence saying why. Nothing was changed.");
       /** RealBud's one-time card, then the compare-and-set save on the revision read before it was shown. */
-      const review = async (card: string, save: () => Promise<void>, saved: string, result: Record<string, unknown>, label: string) => {
+      // A save that knows its outcome only afterwards (a repeat's first run) returns its own result.
+      const review = async (card: string, save: () => Promise<void | LoopbackToolResult>, saved: string, result: Record<string, unknown>, label: string) => {
         const answer = approvalAnswer(await options.approve(card, signal));
         if (!answer.allowed) {
           note({ tool: name, target, outcome: "declined" });
@@ -428,9 +536,9 @@ export async function startWorkflowSettingsBroker(options: {
         }
         if (signal.aborted || options.turnId() !== turn || options.settings() !== settings) return toolError("Bud is no longer working on this request. Nothing was changed.");
         try {
-          await save();
+          const done = await save();
           note({ tool: name, target, outcome: "succeeded" });
-          return text(saved, result);
+          return done ?? text(saved, result);
         } catch (error) {
           if ((error as { code?: unknown }).code === "settings_changed") { note({ tool: name, target, outcome: "conflict" }); return toolError(message(error, SETTINGS_CONFLICT)); }
           note({ tool: name, target, outcome: "failed" });
@@ -438,6 +546,40 @@ export async function startWorkflowSettingsBroker(options: {
           return toolError(typeof (error as { status?: unknown }).status === "number" ? message(error, "") || "Nothing was changed." : `The ${label} could not be saved. Ask again to check whether it was kept.`);
         }
       };
+      if (name === "repeat_propose") {
+        const repeats = settings.repeats;
+        if (!repeats) return toolError(REPEATS_UNBOUND);
+        const proposal = repeatProposal(args);
+        if (typeof proposal === "string") { note({ tool: name, outcome: "refused" }); return toolError(`${proposal} Nothing was saved.`); }
+        const { cadence } = proposal;
+        if (cadence.newMail) {
+          const mail = await repeats.newMail();
+          if (!mail.available) { note({ tool: name, outcome: "refused" }); return toolError(`New mail can't start this repeat yet: ${mail.reason ?? NEW_MAIL_UNBOUND} Propose it without newMail, or connect Gmail first. Nothing was saved.`); }
+        }
+        const { timeZone, now } = repeats.clock(), schedule: LoopSchedule = { type: "daily", time: cadence.time, weekdays: cadence.weekdays,
+          ...(cadence.everyMinutes ? { everyMinutes: cadence.everyMinutes, ...(cadence.until ? { until: cadence.until } : {}) } : {}) };
+        const next: number[] = [];
+        for (let at: number | null = now; next.length < 3 && (at = nextOccurrence(schedule, at, timeZone)) != null;) next.push(at);
+        const perDay = runsPerDay(cadence);
+        // One id per card: Allow saves exactly this job, never a second.
+        const id = `repeat-${randomUUID()}`;
+        const card = ["Repeat this for you", `What: ${proposal.title} — ${proposal.request}`,
+          `Steps: ${proposal.steps.map((step, index) => `${index + 1}. ${step}`).join("; ")}`,
+          `When: ${scheduleWords(clockOf(schedule))}${cadence.newMail ? ", and when new mail arrives" : ""}`,
+          `Next runs: ${next.length ? next.map(at => runLabel(at, timeZone)).join("; ") : "none in the next week"}`,
+          `About ${perDay} run${perDay === 1 ? "" : "s"} a day; each counts toward the office's monthly AI limit.`,
+          `May: ${proposal.abilities.map(ability => ABILITY_WORDS[ability]).join(", ")}`,
+          "Never on its own: send, reply, pay, sign or submit — each waits for your approval of that exact item.",
+          "Results arrive in Updates from Bud. Pause, Run now or Stop any time on Schedule.",
+          `Why: ${reason}`].join("\n");
+        return review(card, async () => {
+          const saved = await repeats.create(id, proposal);
+          const mail = saved.newMail && !saved.newMail.enabled ? ` New-mail checks did not turn on: ${saved.newMail.reason ?? "Gmail could not be checked."} The clock still runs.` : "";
+          return text(`Saved "${proposal.title}" on Schedule: ${scheduleWords(clockOf(schedule))}${saved.newMail?.enabled ? ", and when new mail arrives" : ""}. ` +
+            `${saved.nextRunAt != null ? `First run ${runLabel(saved.nextRunAt, timeZone)}.` : "It has no run in the next week."}${mail} Its results arrive in Updates from Bud; Pause, Run now or Stop it on Schedule.`,
+          { loopId: saved.loopId, recipeId: id, nextRunAt: saved.nextRunAt, ...(saved.newMail ? { newMail: saved.newMail.enabled } : {}) });
+        }, "", {}, "repeat");
+      }
       if (target === "approval_policy") {
         if (name === "workflow_settings_restore") return toolError("Earlier approval settings are listed under Changes in Workspace → Approvals. Propose the settings you want instead. Nothing was changed.");
         if (!settings.approvals) return toolError(APPROVALS_UNBOUND);

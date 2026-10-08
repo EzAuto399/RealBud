@@ -121,6 +121,18 @@ describe('new mail wakes a loop', () => {
     expect(JSON.parse(readFileSync(file, 'utf8')).cursor).toBe(0);
   });
 
+  it('wakes a saved repeat that asked for new mail, never a paused one', async () => {
+    const repeat = { id: 'recipe-fictional-repeat' as LoopId, name: 'Fictional inbox check', evaluatorId: 'recipe' };
+    for (const enabled of [true, false]) {
+      gateway({ pages: [{ events: [mail(4)], cursor: 4, gap: false, more: false }] });
+      const loops = loopManager({ ...repeat, enabled });
+      const { service } = await events(loops, { flag: false });
+      await service.setNewMail(repeat.id, true);
+      await service.tick();
+      expect(loops.started).toEqual(enabled ? [eventRequestId('fictional-workspace:recipe-fictional-repeat:4:event:4')] : []);
+    }
+  });
+
   it('does nothing without the flag or without managed connections', async () => {
     const net = gateway({ pages: [{ events: [mail(2)], cursor: 2, gap: false, more: false }] });
     const loops = loopManager();
@@ -176,6 +188,7 @@ describe('the new-mail switch', () => {
     const file = tmp();
     const off = new ConnectorEvents({ cfg: () => ({}) as never, company: () => 'w', loops: loopManager(), file });
     expect(await off.setNewMail('inbound-triage', true)).toEqual({ loopId: 'inbound-triage', enabled: false, available: false, reason: 'Available when Gmail is connected through your RealBud service.' });
+    expect(await off.available()).toEqual({ available: false, reason: 'Available when Gmail is connected through your RealBud service.' });
     expect(existsSync(file)).toBe(false);
     gateway({ status: statusBody({ services: { gmail: gmail(false) }, tools: { available: false, names: [] } }) });
     const service = new ConnectorEvents({ cfg: () => managed as never, company: () => 'w', loops: loopManager(), file });
@@ -207,10 +220,22 @@ describe('the new-mail switch', () => {
     expect(JSON.parse(readFileSync(file, 'utf8')).newMail).toEqual({ 'inbound-triage': false });
   });
 
+  it('keeps the shared Gmail trigger on while another loop still wants new mail', async () => {
+    const net = gateway();
+    const service = new ConnectorEvents({ cfg: () => managed as never, company: () => 'w', loops: loopManager(), file: tmp() });
+    await service.setNewMail('inbound-triage', true);
+    await service.setNewMail('recipe-fictional-repeat', true);
+    const toggles = () => net.calls.filter(call => call.path === '/v1/connectors/triggers').map(call => call.body!.enabled);
+    expect(await service.setNewMail('recipe-fictional-repeat', false)).toMatchObject({ enabled: false });
+    expect(toggles()).toEqual([true, true]);
+    await service.setNewMail('inbound-triage', false);
+    expect(toggles()).toEqual([true, true, false]);
+  });
+
   it('refuses every other loop id', async () => {
     const net = gateway();
     const service = new ConnectorEvents({ cfg: () => managed as never, company: () => 'w', loops: loopManager(), file: tmp() });
-    for (const id of ['weekly-bills', 'morning-arrears', 'recipe-fictional']) {
+    for (const id of ['weekly-bills', 'morning-arrears', 'recipe-', 'recipe-../x']) {
       await expect(service.setNewMail(id, true)).rejects.toMatchObject({ status: 400 });
       await expect(service.status(id)).rejects.toMatchObject({ status: 400 });
     }

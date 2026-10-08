@@ -12,8 +12,8 @@ import { readPrivateJson, writePrivateJson } from './private-json.ts';
 import { managedConnectorAccess, managedConnectorConfigured, managedConnectorSettings, managedConnectorTriggers, pullConnectorEvents, setConnectorTrigger, type ManagedTrigger } from './managed-connectors.ts';
 import type { Loop, LoopId, LoopRun } from './routines.ts';
 
-/** Only Morning priorities may be woken by new mail for now. */
-const ELIGIBLE = new Set<string>(['inbound-triage']);
+/** Morning priorities and saved jobs (recipe-*, such as a repeat Bud proposed) may be woken by new mail. */
+const eligible = (loopId: string) => loopId === 'inbound-triage' || /^recipe-[\w-]+$/.test(loopId);
 const NOT_MANAGED = 'Available when Gmail is connected through your RealBud service.';
 const CONNECT_GMAIL = 'Connect Gmail in Connected apps first.';
 const RECONNECT_GMAIL = 'Reconnect Gmail in Connected apps. The morning run still happens.';
@@ -120,7 +120,7 @@ export class ConnectorEvents {
     if (!managedConnectorConfigured(cfg)) return;
     const state = await this.load();
     // A paused loop does nothing: no pull, no run, the cursor stays for when it resumes.
-    const wake = () => this.options.loops.listLoops().filter(loop => ELIGIBLE.has(loop.id) && state.newMail[loop.id] === true && loop.enabled && loop.available);
+    const wake = () => this.options.loops.listLoops().filter(loop => eligible(loop.id) && state.newMail[loop.id] === true && loop.enabled && loop.available);
     if (!wake().length) return;
     // A cursor saved under another endpoint or credential starts over at 0, which acknowledges nothing.
     const binding = cursorBinding(cfg);
@@ -141,7 +141,7 @@ export class ConnectorEvents {
   }
 
   private assertEligible(loopId: string) {
-    if (!ELIGIBLE.has(loopId)) throw Object.assign(new Error('Only Morning priorities can also check when new mail arrives.'), { status: 400 });
+    if (!eligible(loopId)) throw Object.assign(new Error('Only Morning priorities and saved jobs can also check when new mail arrives.'), { status: 400 });
   }
 
   /** Managed Gmail, connected, and the gateway trigger's last known state. */
@@ -153,6 +153,16 @@ export class ConnectorEvents {
     // The revision travels here too: turning off an expired Gmail's trigger is still reviewed by the gateway.
     if (!access.services.gmail?.connected) return { available: false, reason: trigger?.state === 'expired' ? RECONNECT_GMAIL : CONNECT_GMAIL, policyRevision: access.policyRevision, trigger };
     return { available: true, policyRevision: access.policyRevision, trigger };
+  }
+
+  /** Whether new mail can wake a loop on this computer now (a repeat Bud proposes checks before its card). */
+  async available(): Promise<{ available: boolean; reason?: string }> {
+    try {
+      const access = await this.availability(this.options.cfg());
+      return { available: access.available, ...(access.reason ? { reason: access.reason } : {}) };
+    } catch (error) {
+      return { available: false, reason: error instanceof Error && error.message ? error.message : 'Gmail could not be checked. Try again.' };
+    }
   }
 
   async status(loopId: string): Promise<NewMailState> {
@@ -177,7 +187,9 @@ export class ConnectorEvents {
     const result = { loopId, available: access.available, ...(access.reason ? { reason: access.reason } : {}) };
     if (enabled && !access.available) return { ...result, enabled: saved };
     // Turning off always works: without managed Gmail there is no gateway trigger to stop.
-    if (managedConnectorConfigured(cfg)) await setConnectorTrigger(cfg, 'gmail', 'new-message', enabled, access.policyRevision);
+    // The gateway trigger is one per mailbox, so it stays on while another existing loop still wants new mail.
+    const wanted = (await this.load()).newMail, othersWant = this.options.loops.listLoops().some(loop => loop.id !== loopId && wanted[loop.id] === true);
+    if (managedConnectorConfigured(cfg) && (enabled || !othersWant)) await setConnectorTrigger(cfg, 'gmail', 'new-message', enabled, access.policyRevision);
     await this.update(state => { state.newMail[loopId] = enabled; });
     return { ...result, enabled };
   }

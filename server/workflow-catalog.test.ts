@@ -55,12 +55,13 @@ describe("evaluator registry", () => {
     const ids = (trait: (row: (typeof EVALUATOR_CATALOG)[number]) => boolean) => EVALUATOR_CATALOG.filter(trait).map((row) => row.loopId ?? "recipe-*").sort();
     const workflowLoops = ["inbound-triage", "weekly-bills", "bank-references", "maintenance-review", "rei-supplier-check", "rei-morning-refresh", "inspection-draft"].sort();
     expect(ids((row) => row.optIn)).toEqual(workflowLoops); // server/routines.ts OPT_IN_LOOPS
-    expect(ids((row) => !row.pulse)).toEqual(workflowLoops); // Desk digest skip list
+    expect(ids((row) => !row.pulse)).toEqual([...workflowLoops, "recipe-*"].sort()); // Desk digest skip list
     expect(ids((row) => row.requestId)).toEqual(workflowLoops); // POST /api/loops/:id/run
-    expect(ids((row) => row.notify)).toEqual(["weekly-bills", "inbound-triage", "maintenance-review", "rei-supplier-check", "inspection-draft"].sort()); // chat card + desktop notification
+    expect(ids((row) => row.notify)).toEqual(["weekly-bills", "inbound-triage", "maintenance-review", "rei-supplier-check", "inspection-draft", "recipe-*"].sort()); // chat card + desktop notification
     expect(ids((row) => row.runWhileOff)).toEqual(["inbound-triage", "weekly-bills"]);
     expect(ids((row) => row.cadenceEditable)).toEqual(["bank-references", "rei-supplier-check", "weekly-bills"]);
     expect(ids((row) => row.agencyTimed)).toEqual(["inbound-triage"]);
-    expect(evaluatorForLoop("recipe-job-1")).toMatchObject({ id: "recipe", pulse: true, optIn: false, requestId: false, notify: false });
+    // A saved job's run posts its own result in Updates from Bud, never the "Morning Recheck" rent digest.
+    expect(evaluatorForLoop("recipe-job-1")).toMatchObject({ id: "recipe", pulse: false, optIn: false, requestId: false, notify: true });
   });
 });
