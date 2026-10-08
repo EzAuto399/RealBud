@@ -529,12 +529,15 @@ describe.runIf(process.env.REALBUD_TEST_SANDBOX === "1" && process.platform === 
 
   it("lets a named folder answer access(W_OK) for its state files while nothing else in it can be made, moved or re-moded", async () => {
     const dir = scratch("rb-folder-node-");
-    const probe = `const fs=require('node:fs'),p=require('node:path'),d=${JSON.stringify(dir)};const attempt=fn=>{try{fn();return 'ok'}catch(e){return 'failed:'+e.code}};console.log(JSON.stringify({access:attempt(()=>fs.accessSync(d,fs.constants.R_OK|fs.constants.W_OK)),state:attempt(()=>fs.writeFileSync(p.join(d,'state.db-wal'),'fictional')),other:attempt(()=>fs.writeFileSync(p.join(d,'config.yaml'),'planted')),folder:attempt(()=>fs.mkdirSync(p.join(d,'backups'))),chmod:attempt(()=>fs.chmodSync(d,0o777)),rename:attempt(()=>fs.renameSync(d,d+'-moved'))}));`;
+    const probe = `const fs=require('node:fs'),p=require('node:path'),d=${JSON.stringify(dir)};const attempt=fn=>{try{fn();return 'ok'}catch(e){return 'failed:'+e.code}};console.log(JSON.stringify({access:attempt(()=>fs.accessSync(d,fs.constants.R_OK|fs.constants.W_OK)),state:attempt(()=>fs.writeFileSync(p.join(d,'state.db-wal'),'fictional')),other:attempt(()=>fs.writeFileSync(p.join(d,'config.yaml'),'planted')),folder:attempt(()=>fs.mkdirSync(p.join(d,'backups'))),chmod:attempt(()=>fs.chmodSync(d,0o777)),rename:attempt(()=>fs.renameSync(d,d+'-moved')),overwrite:attempt(()=>fs.writeFileSync(p.join(d,'SOUL.md'),'planted')),unlink:attempt(()=>fs.unlinkSync(p.join(d,'SOUL.md'))),over:attempt(()=>fs.renameSync(p.join(d,'state.db-wal'),p.join(d,'SOUL.md'))),link:attempt(()=>fs.symlinkSync('/etc/hosts',p.join(d,'linked'))),rmdir:attempt(()=>fs.rmdirSync(p.join(d,'skills'))),times:attempt(()=>fs.utimesSync(d,1,1))}));`;
+    writeFileSync(join(dir, "SOUL.md"), "fictional identity"); mkdirSync(join(dir, "skills"));
     const env = { PATH: process.env.PATH, HOME: process.env.HOME };
     const spec = { loopbackPorts: [], writable: [], writablePatterns: [`^${regexLiteral(dir)}/state\\.db[^/]*$`] };
     expect(await run(sandboxedLaunch(process.execPath, ["-e", probe], env, spec), env)).toMatchObject({ access: expect.stringMatching(/^failed:/), state: "ok" });
     expect(await run(sandboxedLaunch(process.execPath, ["-e", probe], env, { ...spec, writableFolderNodes: [dir] }), env))
-      .toEqual({ access: "ok", state: "ok", other: "failed:EPERM", folder: "failed:EPERM", chmod: "failed:EPERM", rename: "failed:EPERM" });
+      .toEqual({ access: "ok", state: "ok", other: "failed:EPERM", folder: "failed:EPERM", chmod: "failed:EPERM", rename: "failed:EPERM",
+        overwrite: "failed:EPERM", unlink: "failed:EPERM", over: "failed:EPERM", link: "failed:EPERM", rmdir: "failed:EPERM", times: "failed:EPERM" });
+    expect(readFileSync(join(dir, "SOUL.md"), "utf8")).toBe("fictional identity");
   });
 
   it("reaches only the allowed IPv4 loopback port: no public host, other port, IPv6, mapped, mDNS, Unix socket or DNS", async () => {
