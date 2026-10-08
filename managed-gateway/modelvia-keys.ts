@@ -165,8 +165,10 @@ export interface ModelviaClient {
 export const DEFAULT_OFFICE_AI_CAP_NANO_AUD = '200000000000';
 /** The largest custom cap this gateway will write: A$10,000 in nanoAUD. */
 export const MAX_OFFICE_AI_CAP_NANO_AUD = '10000000000000';
-/** Concurrency given to a customer this gateway creates. */
-export const NEW_CUSTOMER_MAX_CONCURRENT = 2;
+/** Concurrency given to a customer this gateway creates, and so to its computers' projects.
+ * Owner, 8 Oct 2026: 2 refused parallel decisions batches and overlapping Sonnet turns
+ * (429 client_concurrency_limit); Modelvia's `realbud` client now allows 16. */
+export const NEW_CUSTOMER_MAX_CONCURRENT = 8;
 /** What a RealBud operator sets for one office. `disabled` leaves the cap as it is. */
 export type OfficeAiAccess = { mode: 'default' } | { mode: 'custom'; monthlyCapNanoAud: string } | { mode: 'disabled' };
 /** Exactly one of the three shapes, or `invalid_ai_access`. A custom cap is a
