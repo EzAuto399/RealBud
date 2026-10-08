@@ -82,6 +82,8 @@ export function parseConnectedStatusIntent(text: string): boolean {
   return CONNECTED_STATUS.test(value);
 }
 
+const REPEAT_CADENCE = /\b(?:every|each|daily|hourly|weekly|fortnightly|monthly|nightly|weekdays?|mornings|evenings|(?:mon|tues|wednes|thurs|fri|satur|sun)days?|when (?:new |an? )?(?:e-?mails?|mail) (?:arrives?|comes? in|lands?))\b/i;
+
 /** Product controls are whole requests. Never interpret source text as a control. */
 export function parseAskControlIntent(text: string): "schedule-status" | "schedule-edit" | "setup" | "connections" | "bank-feed" | null {
   const value = text.trim().replace(/[?!.]+$/, "");
@@ -89,6 +91,9 @@ export function parseAskControlIntent(text: string): "schedule-status" | "schedu
   if (isBankFeedRequest(value)) return "bank-feed";
   if (/^(?:what(?:'s| is| have (?:we|i))|show(?: me)?|list)(?: (?:my|our|the))? (?:scheduled(?: jobs| work)?|schedule|routines|recurring jobs)(?: (?:for today|today|this week))?$/i.test(value)) return "schedule-status";
   // "change"/"reschedule" reach Bud, who offers a before → after schedule card (loop_schedule).
+  // A request that names when to repeat ("every Wednesday", "hourly", "when new mail
+  // arrives") also reaches Bud, who proposes it on a repeat card (repeat_propose).
+  if (REPEAT_CADENCE.test(value)) return null;
   if (/^(?:please )?(?:schedule|remind me|set up (?:a |an )?(?:schedule|reminder|recurring)|(?:can you |help me )?(?:add|create|make|pause|stop) (?:a |an |my |our |the |this )?(?:schedule|reminder|recurring job))\b/i.test(value)) return "schedule-edit";
   // Any one app, named in one or two words: "how do I connect Xero?" is the same
   // question as for Gmail. Bud itself is setup below; a longer phrase ("link the
