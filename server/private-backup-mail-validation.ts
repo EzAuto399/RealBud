@@ -3,6 +3,8 @@ import { validateMailRecords, validateMailGraph, type MailGraphReader } from './
 
 const PREFIX = 'company-installation/private/';
 const INPUT = 'vault/workflow-inputs/accounts-inbox.json';
+/** Memory-review signing keys share the private vault folder; validated by their own owner. */
+const SIGNING = `${PREFIX}memory-signing.json`;
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 function invalid(): never { throw Object.assign(new Error('Saved mail evidence needs recovery before this backup can be used. No records were replaced.'), { status: 400 }); }
 type LogicalRecord = { id: string; kind: string; revision: number; value: unknown };
@@ -21,7 +23,7 @@ export function validateBackupMailGraph(reader: MailGraphReader, files: BackupMa
     saved.keys = function* () {
       for (const path of files.paths()) {
         if (path === INPUT) yield 'accounts-inbox-input';
-        else if (path.startsWith(PREFIX)) {
+        else if (path.startsWith(PREFIX) && path !== SIGNING) {
           const name = path.slice(PREFIX.length).replace(/\.json$/, '');
           if (!/^(?:mail-workspace|mail-prepared-input|mail-scan-[a-f0-9-]{36})$/.test(name)) invalid();
           yield name;
@@ -52,7 +54,7 @@ export function validateBackupMail(files: { path: string; base64: string }[], ke
         saved.set('accounts-inbox-input', JSON.parse(Buffer.from(file.base64, 'base64').toString('utf8')));
         continue;
       }
-      if (!file.path.startsWith(PREFIX)) continue;
+      if (!file.path.startsWith(PREFIX) || file.path === SIGNING) continue;
       const name = file.path.slice(PREFIX.length).replace(/\.json$/, '');
       if (!/^(?:mail-workspace|mail-prepared-input|mail-scan-[a-f0-9-]{36})$/.test(name) || saved.has(name)) invalid();
       const raw = Buffer.from(file.base64, 'base64');

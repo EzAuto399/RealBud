@@ -13,9 +13,8 @@ import { linkSync, lstatSync, readFileSync, readdirSync, renameSync, unlinkSync 
 import { join } from 'node:path';
 import { PACK_DIR, policyDocument } from './hermes-pack.ts';
 import { readProfileFiles } from './hermes-profile-storage.ts';
-import { containsCredential } from './redact.ts';
 import { DATA_DIR } from './config.ts';
-import { MEMORY_KEYS, artifactBytes, importLegacyProfileFacts, preserveCopy, projectProfileFacts, putArtifact, readWorkerState, updateWorkerState,
+import { MEMORY_KEYS, artifactBytes, holdCopy, importLegacyProfileFacts, preserveCopy, projectProfileFacts, putArtifact, readWorkerState, recordWorkerMemoryEdit, strictWorkerFile, updateWorkerState,
   workerScope, type WorkerScope, type WorkerState } from './worker-state.ts';
 import { ENTRY_DELIMITER, StoreRefusal, applyPending, normalizePayload, pinEntries, targetEnabled, targetLimit,
   type MemoryPayload, type MemorySettings, type MemoryTarget } from './hermes-memory-store.ts';
@@ -24,7 +23,7 @@ import type { MemoryReviewErrorCode } from '../shared/hermes-memory-review.ts';
 
 /** Runtime identity bound into owned receipts, journals and preview digests. */
 export const OWNED_MEMORY_RUNTIME = 'realbud-owned-memory-v1';
-const PAGE = 20, MAX_DIR = 2000, MAX_BYTES = 128 * 1024, MAX_INPUT = 64 * 1024;
+const WORKER_PENDING_LIMIT = 500, PAGE = 20, MAX_DIR = 2000, MAX_BYTES = 128 * 1024, MAX_INPUT = 64 * 1024;
 const HEX8 = /^[a-f0-9]{8}$/, HEX64 = /^[a-f0-9]{64}$/, RUNTIME_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const RECEIPT_KEYS = ['version', 'id', 'workspaceId', 'profileId', 'runtimeId', 'decision', 'state', 'phase', 'pendingDigest', 'configDigest', 'beforeDigest',
   'afterDigest', 'reviewDigest', 'target', 'action', 'origin', 'createdAt', 'at', 'operationCount', 'charLimit', 'mac'];
@@ -56,17 +55,17 @@ const paths = {
   stage: (key: string) => `.realbud-memory-reviews/proposals/${key}.stage`,
 };
 
-/** Memory settings from the worker's own config, or RealBud's pack policy when the worker folder is gone. */
-export function readMemorySettings(profileDirectory: string): { settings: MemorySettings; digest: string } {
-  let text: string;
+/** Memory settings from the worker's config; when that file is missing, unreadable or
+ * malformed, RealBud's own pack policy (never permissive) applies and `fallback` names
+ * the worker bytes so the caller records a hold. One bad file never stops reviews. */
+export function readMemorySettings(profileDirectory: string): { settings: MemorySettings; digest: string; fallback: Buffer | null } {
+  let worker: Buffer | null = null;
   let present = true; try { lstatSync(profileDirectory); } catch { present = false; }
-  if (present) {
-    let bytes: Buffer | null;
-    try { [bytes] = readProfileFiles([join(profileDirectory, 'config.yaml')]); } catch { return fail('unavailable'); }
-    text = bytes ? decodeUtf8(bytes) : fail('unavailable');
-  } else text = readFileSync(join(PACK_DIR, 'config.yaml'), 'utf8');
-  let config: unknown;
-  try { config = policyDocument(text).toJS({ maxAliasCount: 50 }); } catch { return fail('unavailable'); }
+  if (present) { try { [worker] = readProfileFiles([join(profileDirectory, 'config.yaml')]); } catch { worker = Buffer.from('realbud-unreadable-config'); } }
+  let config: unknown = null;
+  if (worker) { try { config = policyDocument(new TextDecoder('utf-8', { fatal: true }).decode(worker)).toJS({ maxAliasCount: 50 }); } catch { config = null; } }
+  const fallback = worker && config === null ? worker : null;
+  if (config === null) config = policyDocument(readFileSync(join(PACK_DIR, 'config.yaml'), 'utf8')).toJS({ maxAliasCount: 50 });
   const section = isObject(config) && isObject(config.memory) ? config.memory : {};
   for (const key of ['memory_enabled', 'user_profile_enabled', 'write_approval']) if (Object.hasOwn(section, key) && typeof section[key] !== 'boolean') fail('unsupported');
   const limit = (key: string, fallback: number) => {
@@ -77,19 +76,25 @@ export function readMemorySettings(profileDirectory: string): { settings: Memory
   };
   const settings: MemorySettings = { writeApproval: section.write_approval === true, memoryEnabled: section.memory_enabled !== false, userEnabled: section.user_profile_enabled !== false,
     memoryLimit: limit('memory_char_limit', 2200), userLimit: limit('user_char_limit', 1375) };
-  return { settings, digest: sha(canonical(settings)) };
+  return { settings, digest: sha(canonical(settings)), fallback };
 }
 
 export type OwnedRequest = { command: string; key: string; workspaceId: string; profileId: string; runtimeId: string; profileDirectory: string;
-  id?: string; expectedDigest?: string; decision?: 'approve' | 'reject'; cursor?: string; scopeId?: string; input?: unknown; proposalKey?: string };
+  id?: string; expectedDigest?: string; decision?: 'approve' | 'reject'; cursor?: string; scopeId?: string; input?: unknown; proposalKey?: string; legacyScopeIds?: unknown };
 interface Ctx {
   state: WorkerState; key: Buffer; workspaceId: string; profileId: string; runtimeId: string; at: number;
   settings?: MemorySettings; configDigest?: string; held: Map<MemoryTarget, MemoryReviewErrorCode>;
   /** Worker-staged proposal copies to remove from the profile after commit. */
   cleanup: Map<string, string>;
+  /** A worker-side memory edit was captured: project the approved memory back. */
+  project?: boolean;
 }
 const get = (ctx: Ctx, key: string) => artifactBytes(ctx.state, key);
-const put = (ctx: Ctx, key: string, bytes: Buffer | string) => putArtifact(ctx.state, key, Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes, 'utf8'), 'realbud', ctx.at);
+/** RealBud's own writes either store exactly or refuse the command; never a silent hold. */
+const put = (ctx: Ctx, key: string, bytes: Buffer | string) => {
+  const refused = putArtifact(ctx.state, key, Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes, 'utf8'), 'realbud', ctx.at);
+  if (refused) fail(refused === 'credential' ? 'blocked-content' : 'capacity');
+};
 const remove = (ctx: Ctx, key: string) => { delete ctx.state.artifacts[key]; };
 
 // ── signed records (helper formats; MAC over the stored canonical bytes) ───
@@ -291,8 +296,8 @@ function interruptedClose(ctx: Ctx, recKey: string, expected: string) {
 }
 
 const proposed = (id: string) => ({ version: 1, id, reviewLocation: MEMORY_PROPOSAL_REVIEW_LOCATION });
-function propose(ctx: Ctx, scopeId: string, raw: unknown) {
-  if (!HEX64.test(scopeId)) fail('invalid');
+function propose(ctx: Ctx, scopeId: string, raw: unknown, legacyScopeIds: unknown = []) {
+  if (!HEX64.test(scopeId) || !Array.isArray(legacyScopeIds) || legacyScopeIds.length > 4 || !legacyScopeIds.every(value => typeof value === 'string' && HEX64.test(value))) fail('invalid');
   const input = parseMemoryProposalInput(raw) ?? fail('invalid');
   const text = (value: string) => { if (!value.trim()) fail('invalid'); if (value.includes(ENTRY_DELIMITER)) fail('blocked-content'); };
   const p = input.payload;
@@ -301,11 +306,17 @@ function propose(ctx: Ctx, scopeId: string, raw: unknown) {
   if (Buffer.byteLength(sorted) > MAX_INPUT) fail('capacity');
   const payload = store(() => normalizePayload(p));
   const requestDigest = hmac(ctx.key, `realbud-memory-propose-request-v1\0${sorted}`);
-  const recKey = hmac(ctx.key, `realbud-memory-propose-key-v1\0${scopeId}\0${input.requestId}`), id = recKey.slice(0, 8);
-  const journal = readJournal(ctx, recKey);
+  const keyFor = (scope: string) => hmac(ctx.key, `realbud-memory-propose-key-v1\0${scope}\0${input.requestId}`);
+  let recKey = keyFor(scopeId), journal = readJournal(ctx, recKey), boundScope = scopeId;
+  // A retry from a conversation that began under the helper finds its signed journal through the legacy binding.
+  for (const legacy of journal ? [] : legacyScopeIds as string[]) {
+    const found = readJournal(ctx, keyFor(legacy));
+    if (found) { recKey = keyFor(legacy); journal = found; boundScope = legacy; break; }
+  }
+  const id = recKey.slice(0, 8);
   if (journal === 'bad') fail('recovery-required');
   if (journal) {
-    if (journal.requestDigest !== requestDigest || journal.scopeId !== scopeId) fail('conflict');
+    if (journal.requestDigest !== requestDigest || journal.scopeId !== boundScope) fail('conflict');
     if (journal.state === 'closed') fail('proposal-closed');
   }
   if (get(ctx, paths.claim(id))) fail('recovery-required');
@@ -335,44 +346,54 @@ function propose(ctx: Ctx, scopeId: string, raw: unknown) {
 }
 
 // ── worker adoption and cleanup ─────────────────────────────────────────────
-type WorkerCopies = { memory: Map<MemoryTarget, Buffer | 'unsafe'>; pending: Map<string, Buffer> };
+type WorkerCopies = { memory: Map<MemoryTarget, Buffer | 'unsafe'>; pending: Map<string, Buffer | 'unsafe'>; unlisted: number };
 function workerCopies(profile: string): WorkerCopies {
-  const out: WorkerCopies = { memory: new Map(), pending: new Map() };
+  const out: WorkerCopies = { memory: new Map(), pending: new Map(), unlisted: 0 };
   const read = (path: string, max: number): Buffer | 'unsafe' | null => {
     try { const stat = lstatSync(path); if (!stat.isFile() || stat.nlink !== 1 || stat.size > max) return 'unsafe'; }
     catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' || (error as NodeJS.ErrnoException).code === 'ENOTDIR' ? null : 'unsafe'; }
+    // The helper's admission: owner-only file in folders no one else can write.
+    if (!strictWorkerFile(profile, path)) return 'unsafe';
     try { return readProfileFiles([path])[0] ?? null; } catch { return 'unsafe'; }
   };
   for (const target of ['memory', 'user'] as const) { const bytes = read(join(profile, ...MEMORY_KEYS[target].split('/')), MAX_BYTES); if (bytes) out.memory.set(target, bytes); }
   let names: string[] = [];
-  try { const folder = join(profile, 'pending', 'memory'); if (lstatSync(folder).isDirectory()) names = readdirSync(folder).filter(name => /^[a-f0-9]{8}\.json$/.test(name)).sort().slice(0, MAX_DIR); } catch { /* none staged */ }
-  for (const name of names) { const bytes = read(join(profile, 'pending', 'memory', name), MAX_BYTES); if (Buffer.isBuffer(bytes)) out.pending.set(name.slice(0, 8), bytes); }
+  try { const folder = join(profile, 'pending', 'memory'); if (lstatSync(folder).isDirectory()) names = readdirSync(folder).filter(name => /^[a-f0-9]{8}\.json$/.test(name)).sort(); } catch { /* none staged */ }
+  out.unlisted = Math.max(0, names.length - WORKER_PENDING_LIMIT);
+  for (const name of names.slice(0, WORKER_PENDING_LIMIT)) { const bytes = read(join(profile, 'pending', 'memory', name), MAX_BYTES); if (bytes) out.pending.set(name.slice(0, 8), bytes); }
   return out;
 }
 
-/** Take in what the worker changed since RealBud last projected; hold what conflicts. */
+/** Take in what the worker staged or changed since RealBud last projected. A direct
+ * edit of a memory file never changes canonical memory: it becomes a proposal. */
 function adopt(ctx: Ctx, copies: WorkerCopies) {
   const draft = ctx.state;
   for (const [target, bytes] of copies.memory) {
     const key = MEMORY_KEYS[target];
-    if (bytes === 'unsafe') { ctx.held.set(target, 'unsafe-storage'); continue; }
-    const digest = sha(bytes), current = draft.artifacts[key], projected = draft.projected[key];
+    if (bytes === 'unsafe') { holdCopy(draft, key, Buffer.from(`realbud-unsafe-v1\0${key}`), 'unsafe', ctx.at); ctx.held.set(target, 'unsafe-storage'); continue; }
+    const digest = sha(bytes), current = draft.artifacts[key];
     if (current?.digest === digest) { draft.projected[key] = digest; continue; }
-    if (digest === projected) continue; // the worker has not caught up with RealBud yet
-    try { new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { ctx.held.set(target, 'unavailable'); continue; }
-    if (!current || current.digest === projected) {
-      if (containsCredential(bytes.toString('utf8'))) { ctx.held.set(target, 'blocked-content'); continue; }
-      putArtifact(draft, key, bytes, 'worker', ctx.at); draft.projected[key] = digest;
-    } else { preserveCopy(draft, key, bytes, 'worker-changed', ctx.at); ctx.held.set(target, 'conflict'); }
+    if (digest === draft.projected[key]) continue; // the worker has not caught up with RealBud yet
+    const recorded = recordWorkerMemoryEdit(draft, target, bytes, ctx.at);
+    // Every refusal is recorded (a digest-only hold) and holds this target only.
+    if (recorded === 'credential') ctx.held.set(target, 'blocked-content');
+    else if (recorded === 'unsafe') ctx.held.set(target, 'unavailable');
+    else if (recorded === 'capacity') ctx.held.set(target, 'capacity');
+    else ctx.project = true; // kept for review: the worker copy returns to the approved memory
   }
-  for (const [id, bytes] of copies.pending) {
-    const key = paths.pending(id), digest = sha(bytes), receipt = readReceipt(ctx, id), current = draft.artifacts[key];
+  if (copies.unlisted) holdCopy(draft, 'pending/memory', Buffer.from(`realbud-unlisted-v1\0${copies.unlisted}`), 'capacity', ctx.at);
+  for (const [id, read] of copies.pending) {
+    const key = paths.pending(id);
+    if (read === 'unsafe') { holdCopy(draft, key, Buffer.from(`realbud-unsafe-v1\0${key}`), 'unsafe', ctx.at); continue; }
+    const bytes = read, digest = sha(bytes), receipt = readReceipt(ctx, id), current = draft.artifacts[key];
     if (receipt) {
       if (receipt !== 'bad' && receipt.phase === 'final' && receipt.pendingDigest === digest && !current) ctx.cleanup.set(id, digest);
       else if (receipt === 'bad' || receipt.pendingDigest !== digest) preserveCopy(draft, key, bytes, 'worker-changed', ctx.at);
       continue;
     }
-    if (current?.digest === digest || containsCredential(bytes.toString('utf8'))) continue;
+    if (current?.digest === digest) continue;
+    // Worker staging is bounded: past the cap a staged file is held as a digest only.
+    if (!current && Object.entries(draft.artifacts).filter(([name, row]) => name.startsWith('pending/memory/') && row.source === 'worker').length >= WORKER_PENDING_LIMIT) { holdCopy(draft, key, bytes, 'capacity', ctx.at); continue; }
     // The worker re-staged its own undecided proposal; a RealBud-owned one is never replaced.
     if (!current || current.source !== 'realbud') putArtifact(draft, key, bytes, 'worker', ctx.at);
     else preserveCopy(draft, key, bytes, 'worker-changed', ctx.at);
@@ -396,15 +417,17 @@ export async function runOwnedMemoryReview(request: OwnedRequest, options: { sig
     if (key.length !== 32 || key.toString('base64') !== request.key) fail('invalid');
     const scope: WorkerScope = workerScope(request.workspaceId, request.profileId, request.profileDirectory);
     if (!(await readWorkerState(scope, dataDir)).migration.complete) await importLegacyProfileFacts([scope], { dataDir, now });
-    const recovery = request.command === 'interrupted-list' || request.command === 'interrupted-close';
-    const config = recovery ? null : readMemorySettings(request.profileDirectory);
+    // Listing and recovery never depend on the worker's config file.
+    const config = ['preview', 'decide', 'propose'].includes(request.command) ? readMemorySettings(request.profileDirectory) : null;
     const copies = workerCopies(request.profileDirectory);
     if (options.signal?.aborted) fail('unavailable');
     const cleanup = new Map<string, string>();
+    let project = false;
     const { result } = await updateWorkerState(scope, null, draft => {
       const ctx: Ctx = { state: draft, key, workspaceId: request.workspaceId, profileId: request.profileId, runtimeId: request.runtimeId, at: now(),
         settings: config?.settings, configDigest: config?.digest, held: new Map(), cleanup };
-      adopt(ctx, copies);
+      adopt(ctx, copies); project = ctx.project === true;
+      if (config?.fallback) holdCopy(draft, 'config.yaml', config.fallback, 'unsafe', ctx.at);
       const adopted = structuredClone(draft);
       try {
         const value = dispatch(ctx, request);
@@ -419,7 +442,7 @@ export async function runOwnedMemoryReview(request: OwnedRequest, options: { sig
       }
     }, dataDir);
     // Committed; now bring the worker copy along. A failure here only delays it to the next projection.
-    if (result.ok && (request.command === 'decide' || cleanup.size)) {
+    if (project || result.ok && (request.command === 'decide' || cleanup.size)) {
       try { await projectProfileFacts(scope, { dataDir, now, keys: [MEMORY_KEYS.memory, MEMORY_KEYS.user] }); } catch { /* retried before the next launch */ }
       for (const [id, digest] of cleanup) { try { removeWorkerCopy(request.profileDirectory, id, digest); } catch { /* left for the next pass */ } }
     }
@@ -435,7 +458,7 @@ function dispatch(ctx: Ctx, request: OwnedRequest): unknown {
     case 'list': return list(ctx, request.cursor);
     case 'preview': return preview(ctx, request.id!);
     case 'decide': return decide(ctx, request.id!, request.expectedDigest!, request.decision!);
-    case 'propose': return propose(ctx, request.scopeId!, request.input);
+    case 'propose': return propose(ctx, request.scopeId!, request.input, request.legacyScopeIds);
     case 'interrupted-list': return interruptedList(ctx, request.cursor);
     case 'interrupted-close': return interruptedClose(ctx, request.proposalKey!, request.expectedDigest!);
     default: return fail('invalid');

@@ -37,7 +37,8 @@ import { REMOTE_TEMPLATE_KIND, validateRemoteTemplate, restoreRemoteTemplate } f
 import { WEBSITE_REQUEST_KIND, validateSavedWebsiteRequest, restoreWebsiteRequest } from './website-requests.ts';
 import { validateWebsiteWorkGraph } from './website-work-backup.ts';
 import { isSkillArchivePath, validateSkillOverride, validateSkillJournalRoot } from './customer-pack-skill-history.ts';
-import { validateWorkerState } from './worker-state.ts';
+import { sanitizedWorkerStateBytes, validateWorkerState, workerStateHeldCount } from './worker-state.ts';
+import { MEMORY_SIGNING_NAME, parseMemorySigning } from './hermes-memory-signing.ts';
 import { parseLearningStore } from './learning-auto-keep.ts';
 import { containsCredential } from './redact.ts';
 import { validateCustomerSkillArchiveFile, validateCustomerSkillArchiveSet } from './customer-pack-skill-backup.ts';
@@ -68,13 +69,36 @@ export function privateBackupHistoryDirectory(parent: string, name: string): boo
 export const PRIVATE_WORKER_FACT_ROOTS = ['worker-state', 'memory-learning'] as const;
 const UUID_PART = '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
 const WORKER_FACT_PATH = new RegExp(`^worker-state/(${UUID_PART})/([a-f0-9]{32})/state\\.json$`), LEARNING_PATH = new RegExp(`^memory-learning/(${UUID_PART})/(property(?:-[a-z0-9-]+)?)/auto-keep\\.json$`);
+/** Decoded stored text of a worker-fact or learning file, for the credential guard. */
+function workerFactText(path: string, value: unknown): string {
+  if (!WORKER_FACT_PATH.test(path)) return JSON.stringify(value);
+  const state = value as { artifacts?: Record<string, { base64?: unknown }>; preserved?: { base64?: unknown }[] };
+  return [...Object.values(state?.artifacts ?? {}), ...(state?.preserved ?? [])].map(row => typeof row?.base64 === 'string' ? Buffer.from(row.base64, 'base64').toString('utf8') : '').join('\n');
+}
+/** The bytes a backup carries for a source file. A saved learning scope travels
+ * whole, with any credential-shaped item (from an older build) replaced by its
+ * digest-only hold: RealBud's facts are never left out, and secrets never leave. */
+export function privateBackupFileBytes(path: string, data: Buffer): Buffer {
+  return WORKER_FACT_PATH.test(path) ? sanitizedWorkerStateBytes(data) : data;
+}
+/** Items of Bud's learning that were never stored (digest-only holds), shown with the backup. */
+export function privateBackupWithheldCount(files: Iterable<[string, Buffer]>): number {
+  let count = 0; for (const [path, data] of files) if (WORKER_FACT_PATH.test(path)) count += workerStateHeldCount(data);
+  return count;
+}
+export const MEMORY_SIGNING_PATH = `company-installation/private/${MEMORY_SIGNING_NAME}.json`;
+/** Carried memory-review signing keys must all belong to the backed-up workspace. */
+export function validateMemorySigningFile(value: unknown, workspaceId: string): void {
+  try { parseMemorySigning(value, workspaceId); } catch { fail('Saved learning signatures belong to another private workspace or need recovery.', 400); }
+}
 /** The workspace a worker-fact path belongs to, or null for any other path. */
 export function privateWorkerFactWorkspace(path: string): string | null { return WORKER_FACT_PATH.exec(path)?.[1] ?? LEARNING_PATH.exec(path)?.[1] ?? null; }
 export function privateBackupSourcePaths() { return { staticPaths: [...STATIC], guardedPaths: [...GUARDED] }; }
 const INCLUDED = ['Private Desk book and property notes', 'Saved mail work and collected source evidence', 'Bank originals, reviewed copies, bills, review drafts and preparation receipts', 'Portfolio batch sources, saved results and retry history', 'Department preparation history and its reviewed case snapshot', 'Agency settings, saved views, plans and instruction revision history', 'What Bud learned, pending learning and review decisions, and office edits to Bud’s instructions'];
-const EXCLUDED = ['Provider keys, connected-account credentials and sign-in sessions', 'Shared office database and company membership', 'Worker installation, authentication and conversations', 'Files outside the listed business folders and external attachments'];
+const EXCLUDED = ['Provider keys, connected-account credentials and sign-in sessions', 'Anything in Bud’s learning that looks like a credential (it stays on this computer)', 'Shared office database and company membership', 'Worker installation, authentication and conversations', 'Files outside the listed business folders and external attachments'];
 const CHANGES = ['Use this installation’s protected encryption key', 'Clear connected-account selection and setup approvals', 'Pause all schedules and require plan review', 'Retain job history; interrupt unfinished work and close sign-in handoffs', 'Repair the installed instruction pack before running its plans'];
-export function privateBackupDescriptions() { return { included: [...INCLUDED], excluded: [...EXCLUDED], restoreChanges: [...CHANGES] }; }
+const withheldLine = (count: number) => `${count} item${count === 1 ? '' : 's'} of Bud’s learning withheld: they looked like credentials, were unsafe or exceeded the storage limit, and only their fingerprints were kept`;
+export function privateBackupDescriptions(withheld = 0) { return { included: [...INCLUDED], excluded: [...EXCLUDED, ...(withheld ? [withheldLine(withheld)] : [])], restoreChanges: [...CHANGES] }; }
 function fail(message: string, status = 409): never { throw Object.assign(new Error(message), { status }); }
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const exact = (v: unknown, keys: string[]) => { if (!object(v) || Object.keys(v).sort().join(',') !== keys.sort().join(',')) return fail('The private backup contains unsupported fields.', 400); return v; };
@@ -86,7 +110,7 @@ const positive = (v: unknown): v is number => Number.isSafeInteger(v) && Number(
 function allowed(path: string) {
   if (STATIC.has(path)) return true;
   return WORKER_FACT_PATH.test(path) || LEARNING_PATH.test(path) || isPackArchivePath(path) || isSkillArchivePath(path) ||
-    /^company-installation\/private\/(?:mail-workspace|mail-prepared-input|mail-scan-[a-f0-9-]{36})\.json$/.test(path) ||
+    /^company-installation\/private\/(?:mail-workspace|mail-prepared-input|mail-scan-[a-f0-9-]{36}|memory-signing)\.json$/.test(path) ||
     /^vault\/(?:properties|owners|decisions)\/[A-Za-z0-9_-]{1,180}\.md$/.test(path) ||
     /^vault\/workflow-inputs\/[A-Za-z0-9_-]{1,100}\.(?:json|csv|txt|md)$/.test(path) ||
     /^vault\/workflow-support\/[a-z][a-z0-9-]{0,63}\/(?:SKILL\.md|LICENSE)$/.test(path);
@@ -152,12 +176,9 @@ function validHistory(runs: unknown, jobs: boolean) {
 }
 function validateBusinessFile(path: string, value: unknown) {
   const worker = WORKER_FACT_PATH.exec(path), learning = LEARNING_PATH.exec(path);
-  if (worker) {
-    let text = '';
-    try { const state = validateWorkerState(value, { workspaceId: worker[1], scopeId: worker[2] }); text = [...Object.values(state.artifacts), ...state.preserved].map(row => Buffer.from(row.base64, 'base64').toString('utf8')).join('\n'); }
-    catch { fail('Bud’s saved learning needs recovery; no partial backup was created.', 400); }
-    if (containsCredential(text)) fail('Bud’s saved learning contains credential-shaped text and needs service review; no partial backup was created.', 400);
-  }
+  if (worker) { try { validateWorkerState(value, { workspaceId: worker[1], scopeId: worker[2] }); } catch { fail('Bud’s saved learning needs recovery; no partial backup was created.', 400); } }
+  // Capture withholds such files; an archive that still carries one is never restored.
+  if ((worker || learning) && containsCredential(workerFactText(path, value))) fail('Saved learning in this backup carries credential-shaped text; it was not restored.', 400);
   if (learning) { try { parseLearningStore(value, { workspaceId: learning[1], profileId: learning[2] }); } catch { fail('Bud’s learning settings need recovery; no partial backup was created.', 400); } }
   if (isSkillArchivePath(path)) validateCustomerSkillArchiveFile(path, value);
   if (isPackArchivePath(path)) {
@@ -248,7 +269,7 @@ async function filesAt(directory: string): Promise<SavedFile[]> {
   for (const root of PRIVATE_WORKER_FACT_ROOTS) await walk(root, 2);
   if (paths.size > MAX_FILES) fail('This business snapshot exceeds the supported file count. Use assisted backup; no partial export was issued.');
   const result: SavedFile[] = []; let total = 0;
-  for (const path of [...paths].sort()) { const content = await bytes(join(directory, path)); if (!content) fail('Business files changed during backup.'); total += content.length; if (total > MAX_PLAIN) fail('This business snapshot exceeds 48 MB. Use assisted backup; no partial export was issued.'); result.push(file(path, content)); }
+  for (const path of [...paths].sort()) { const raw = await bytes(join(directory, path)); if (!raw) fail('Business files changed during backup.'); const content = privateBackupFileBytes(path, raw); total += content.length; if (total > MAX_PLAIN) fail('This business snapshot exceeds 48 MB. Use assisted backup; no partial export was issued.'); result.push(file(path, content)); }
   return result;
 }
 async function recordsAt(directory: string, key: Buffer): Promise<{ present: boolean; records: SavedRecord[] }> {
@@ -319,6 +340,7 @@ function validateSnapshot(value: unknown): Snapshot {
         const envelope = exact(plain, ['name', 'value']);
         if (envelope.name !== f.path.split('/').at(-1)!.slice(0, -5) || !object(envelope.value)) fail('Saved mail evidence has an invalid identity.', 400);
         if (f.path.endsWith('/mail-workspace.json') && envelope.value.workspaceId !== s.workspaceId) fail('Saved mail work belongs to another private workspace.', 400);
+        if (f.path === MEMORY_SIGNING_PATH) validateMemorySigningFile(envelope.value, s.workspaceId);
       } else if (['agency-setup.json', 'workspace-views/tabs.json'].includes(f.path) && (!object(value) || value.workspaceId !== s.workspaceId)) fail('Saved settings belong to another private workspace.', 400);
       const factWorkspace = privateWorkerFactWorkspace(f.path);
       if (factWorkspace !== null && factWorkspace !== s.workspaceId) fail('Saved learning belongs to another private workspace.', 400);
@@ -353,7 +375,8 @@ async function passphraseKey(passphrase: unknown, salt: Buffer) {
 }
 function receipt(snapshot: Snapshot, digest: string): PrivateBackupReceipt {
   return { digest, createdAt: snapshot.createdAt, workspaceId: snapshot.workspaceId, fileCount: snapshot.files.length + Number(snapshot.databasePresent), recordCount: snapshot.records.length,
-    plainBytes: snapshot.files.reduce((sum, f) => sum + f.bytes, 0) + Buffer.byteLength(json(snapshot.records)), included: INCLUDED, excluded: EXCLUDED, restoreChanges: CHANGES };
+    plainBytes: snapshot.files.reduce((sum, f) => sum + f.bytes, 0) + Buffer.byteLength(json(snapshot.records)),
+    ...privateBackupDescriptions(privateBackupWithheldCount(snapshot.files.map(f => [f.path, Buffer.from(f.base64, 'base64')]))) };
 }
 async function unpack(value: unknown, passphrase: unknown) {
   if (Buffer.byteLength(json(value) ?? '') > PRIVATE_BACKUP_MAX_BYTES) fail('Choose a private backup no larger than 96 MB.', 413);

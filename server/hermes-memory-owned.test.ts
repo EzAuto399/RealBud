@@ -1,6 +1,6 @@
 /** RealBud-owned memory review over canonical worker state. Synthetic profiles only. */
 import { createHash, createHmac, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -69,14 +69,52 @@ describe('owned memory review', () => {
     expect(await readFile(f.file)).toEqual(before); expect(await f.decide(review.reviewDigest, 'reject')).toEqual(result);
   });
 
-  it.each(['memory', 'proposal'] as const)('holds approval if the worker changed the %s after review', async kind => {
+  it('holds approval if the worker re-staged the proposal after review', async () => {
     const f = await fixture(); await f.stage({ action: 'replace', target: 'memory', old_text: 'concise', content: 'Prefers detailed updates.', matched_entry: 'Prefers concise updates.' });
     const review = (await f.preview())!.body as MemoryReviewPreview;
-    if (kind === 'memory') await writeFile(f.file, 'A newer independent preference.');
-    if (kind === 'proposal') await f.stage({ action: 'add', target: 'memory', content: 'Another proposal.' });
+    await f.stage({ action: 'add', target: 'memory', content: 'Another proposal.' });
     const current = await readFile(f.file);
-    expect(await f.decide(review.reviewDigest)).toMatchObject({ status: 409, body: { code: kind === 'memory' ? 'conflict' : 'stale-review' } });
+    expect(await f.decide(review.reviewDigest)).toMatchObject({ status: 409, body: { code: 'stale-review' } });
     expect(await readFile(f.file)).toEqual(current);
+  });
+
+  it('never adopts a worker-written memory change: it waits as a proposal and approval applies exactly the reviewed bytes', async () => {
+    const f = await fixture(), approved = 'Prefers concise updates.\n§\nUse Australian English.';
+    const written = 'Prefers concise updates.\n§\nUse British English.\n§\nCalls the owner every Friday.';
+    await f.list(); // first boot: the trusted one-time import
+    await writeFile(f.file, written);
+    const listed = await f.list();
+    expect(await f.canonical()).toBe(approved);
+    // The worker copy returns to approved memory; the edit is not projected back.
+    expect(await readFile(f.file, 'utf8')).toBe(approved);
+    expect(listed.items).toEqual([expect.objectContaining({ state: 'pending', origin: 'background_review', action: 'batch', target: 'memory' })]);
+    const id = listed.items[0].id, review = (await f.preview(id))!.body as MemoryReviewPreview;
+    expect(review.before).toBe(approved); expect(review.after).toBe(written);
+    // Re-reading the worker file never stages the same edit twice.
+    await writeFile(f.file, written); expect((await f.list()).total).toBe(1);
+    expect(await f.decide(review.reviewDigest, 'approve', id)).toMatchObject({ status: 200, body: { state: 'applied', changed: true } });
+    expect(await f.canonical()).toBe(written); expect(await readFile(f.file, 'utf8')).toBe(written);
+  });
+
+  it('a rejected worker edit stays rejected and out of memory', async () => {
+    const f = await fixture(), approved = await readFile(f.file, 'utf8');
+    await f.list(); // first boot: the trusted one-time import
+    await writeFile(f.file, `${approved}\n§\nUnreviewed fact.`);
+    const id = (await f.list()).items[0].id, review = (await f.preview(id))!.body as MemoryReviewPreview;
+    expect(await f.decide(review.reviewDigest, 'reject', id)).toMatchObject({ status: 200, body: { state: 'rejected' } });
+    await writeFile(f.file, `${approved}\n§\nUnreviewed fact.`);
+    expect((await f.list()).items.map(item => item.state)).toEqual(['rejected']);
+    expect(await f.canonical()).toBe(approved); expect(await readFile(f.file, 'utf8')).toBe(approved);
+  });
+
+  it('holds credential-shaped worker edits as a digest only', async () => {
+    const f = await fixture(), approved = await readFile(f.file, 'utf8');
+    await f.list(); // first boot: the trusted one-time import
+    await writeFile(f.file, `${approved}\n§\nUse api_key = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCD"`);
+    await f.list();
+    const state = await readWorkerState(f.scope);
+    expect(JSON.stringify(state)).not.toContain('sk-proj'); expect(state.held).toEqual([expect.objectContaining({ key: 'memories/MEMORY.md', reason: 'credential' })]);
+    expect(await f.canonical()).toBe(approved);
   });
 
   it('reuses native batch semantics with a final-state budget and code-point counting', async () => {
@@ -114,13 +152,33 @@ describe('owned memory review', () => {
     expect(await readFile(f.file, 'utf8')).toBe('Use Australian English.');
   });
 
-  it.each(['disabled', 'duplicate-key', 'malformed', 'missing'] as const)('does not fall back to permissive defaults for a %s config in a present profile', async kind => {
+  it('honours a disabled target in the worker config', async () => {
+    const f = await fixture(); await f.stage({ action: 'add', target: 'memory', content: 'Weekly summaries.' });
+    await writeFile(join(f.profile, 'config.yaml'), config().replace('memory_enabled: true', 'memory_enabled: false'));
+    expect(await f.preview()).toMatchObject({ status: 409, body: { code: 'disabled' } });
+  });
+
+  it.each(['duplicate-key', 'malformed', 'missing'] as const)('a %s worker config never stops reviews: RealBud’s pack policy applies and a hold is recorded', async kind => {
     const f = await fixture(), cfg = join(f.profile, 'config.yaml'); await f.stage({ action: 'add', target: 'memory', content: 'Weekly summaries.' });
-    if (kind === 'disabled') await writeFile(cfg, config().replace('memory_enabled: true', 'memory_enabled: false'));
     if (kind === 'duplicate-key') await writeFile(cfg, `${config()}memory: {write_approval: true}`);
     if (kind === 'malformed') await writeFile(cfg, 'memory: [');
     if (kind === 'missing') await rm(cfg);
-    expect((await f.preview())?.status).not.toBe(200);
+    expect((await f.list()).items).toHaveLength(1);
+    const review = (await f.preview())!.body as MemoryReviewPreview; expect(review.charLimit).toBe(12000);
+    const held = (await readWorkerState(f.scope)).held.filter(row => row.key === 'config.yaml');
+    expect(held).toHaveLength(kind === 'missing' ? 0 : 1);
+  });
+
+  it('refuses memory and proposal files other accounts can read, holding only that file', async () => {
+    const f = await fixture(); await f.list();
+    await f.stage({ action: 'add', target: 'memory', content: 'Open to others.' }, '0000aaaa'); await chmod(join(f.folder, '0000aaaa.json'), 0o644);
+    await f.stage({ action: 'add', target: 'memory', content: 'Private proposal.' }, '0000bbbb');
+    await writeFile(f.file, 'Prefers concise updates.\n§\nUse Australian English.\n§\nWorld-readable edit.'); await chmod(f.file, 0o644);
+    expect((await f.list()).items.map(item => item.id)).toEqual(['0000bbbb']);
+    const state = await readWorkerState(f.scope);
+    expect(state.held.map(row => [row.key, row.reason]).sort()).toEqual([['memories/MEMORY.md', 'unsafe'], ['pending/memory/0000aaaa.json', 'unsafe']]);
+    expect(await f.preview('0000bbbb')).toMatchObject({ status: 409, body: { code: 'unsafe-storage' } });
+    expect(await f.canonical()).toBe('Prefers concise updates.\n§\nUse Australian English.');
   });
 
   it('binds the preview to the trusted workspace', async () => {
@@ -159,6 +217,27 @@ describe('owned memory proposals', () => {
     if (kind === 'over-budget') await writeFile(cfg, config().replace('2200', '20'));
     const value = input(kind === 'ambiguous' ? { target: 'memory', action: 'replace', old_text: 'updates', content: 'Changed.' } : { target: 'memory', action: 'add', content: 'Weekly summaries.' });
     await expect(f.propose(value)).rejects.toThrow(); expect((await f.list()).total).toBe(0);
+  });
+});
+
+describe('proposal identity across the update', () => {
+  it('finds a 0.1.42 conversation’s signed proposal through its legacy binding instead of staging a duplicate', async () => {
+    const f = await fixture(), signing = createHmac('sha256', sourceKey).update(`realbud-memory-review-v1\0${f.context.workspaceId}\0property`).digest();
+    const legacy: MemoryReviewContext = { profileDirectory: f.profile, runtimeDirectory: '/synthetic/release/hermes-agent', workspaceId: f.context.workspaceId, profileId: 'property',
+      runtimeId: 'f97608f178d1ffeca59860195ab7da295f7c8e5f-fictional', python: '/synthetic/release/hermes-agent/venv/bin/python' };
+    const value = input({ target: 'user', action: 'add', content: 'Fictional manager prefers phone calls.' });
+    const sortedDeep = (v: unknown): string => Array.isArray(v) ? `[${v.map(sortedDeep).join(',')}]` : v && typeof v === 'object' ? `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${sortedDeep((v as Record<string, unknown>)[k])}`).join(',')}}` : JSON.stringify(v);
+    const legacyScope = createHash('sha256').update(JSON.stringify(['realbud-memory-proposal-scope-v1', JSON.stringify(legacy), 'fictional-chat'])).digest('hex');
+    const requestKey = createHmac('sha256', signing).update(`realbud-memory-propose-key-v1\0${legacyScope}\0${value.requestId}`).digest('hex'), id = requestKey.slice(0, 8);
+    const staged = JSON.stringify(pending({ action: 'add', target: 'user', content: 'Fictional manager prefers phone calls.' }, id));
+    await writeFile(join(f.folder, `${id}.json`), staged, { mode: 0o600 });
+    await mkdir(join(f.profile, '.realbud-memory-reviews', 'proposals'), { recursive: true, mode: 0o700 });
+    await writeFile(join(f.profile, '.realbud-memory-reviews', 'proposals', `${requestKey}.json`), helperSigned(signing, { version: 1, state: 'published', id, workspaceId: f.context.workspaceId, profileId: 'property',
+      runtimeId: legacy.runtimeId, scopeId: legacyScope, requestKey, requestDigest: createHmac('sha256', signing).update(`realbud-memory-propose-request-v1\0${sortedDeep(value)}`).digest('hex'),
+      pendingDigest: createHash('sha256').update(staged).digest('hex'), createdAt: 1_790_000_000_000 }, 'realbud-memory-propose-v1'), { mode: 0o600 });
+    const service = createHermesMemoryReviewService({ context: () => f.context, key: () => sourceKey, autoReviewIntervalMs: 0, legacyContext: () => legacy }); services.push(service);
+    expect(await service.proposalIntegration('fictional-chat', () => true)!.propose(value, new AbortController().signal)).toMatchObject({ id });
+    expect((await f.list()).total).toBe(1);
   });
 });
 

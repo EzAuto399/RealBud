@@ -9,7 +9,7 @@ import { setImmediate } from 'node:timers/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { decryptBytes, isEncryptedEnvelope } from './desk-crypto.ts';
 import { PrivateBackupCatalog, type CatalogFile } from './private-backup-catalog.ts';
-import { isPrivateBackupPath, privateBackupSourcePaths, validatePrivateLogicalRecord, PRIVATE_PACK_HISTORY_ROOTS, PRIVATE_WORKER_FACT_ROOTS, privateBackupHistoryStorage, privateBackupHistoryDirectory } from './private-workspace-backup.ts';
+import { isPrivateBackupPath, privateBackupSourcePaths, validatePrivateLogicalRecord, PRIVATE_PACK_HISTORY_ROOTS, PRIVATE_WORKER_FACT_ROOTS, privateBackupHistoryStorage, privateBackupFileBytes, privateBackupHistoryDirectory } from './private-workspace-backup.ts';
 import { WORKFLOW_MAX_ENCRYPTED_RECORD_LENGTH } from './workflow-database.ts';
 import { WINDOWS_FILE_PRIVACY_MAX_BATCH, windowsFilePrivacyBatch, type WindowsFilePrivacyOperation } from './windows-file-privacy.ts';
 
@@ -379,7 +379,7 @@ class CaptureReader extends CaptureFilesystem {
         if (!file) changed();
         const found = file!; this.consume(found.data.length);
         this.include(['file', path, statIdentity(found.stat), createHash('sha256').update(found.data).digest('hex')]);
-        const logical = this.logicalFile(path, found.data);
+        const logical = this.logicalFile(path, privateBackupFileBytes(path, found.data));
         this.check(); if (this.writing) this.capture.catalog.addFile(logical);
         this.fileCount++; await this.progress('files');
       }

@@ -3,6 +3,8 @@
  * apply_memory_pending, threat_patterns.py strict scope) so reviews need no
  * worker Python. Entries are joined by "\n§\n"; budgets count code points. */
 
+import { createHash } from 'node:crypto';
+
 export const ENTRY_DELIMITER = '\n§\n';
 export type MemoryTarget = 'memory' | 'user';
 export type StoreCode = 'disabled' | 'blocked-content' | 'capacity' | 'conflict' | 'unsupported' | 'invalid';
@@ -236,4 +238,28 @@ export function normalizePayload(raw: unknown): MemoryPayload {
     }) };
   }
   return { ...single(raw, action), target: target as MemoryTarget } as MemoryPayload;
+}
+
+// ── a worker-side file edit as a reviewable record ──────────────────────────
+const OPEN: MemorySettings = { writeApproval: true, memoryEnabled: true, userEnabled: true, memoryLimit: Number.MAX_SAFE_INTEGER, userLimit: Number.MAX_SAFE_INTEGER };
+/** A worker's direct edit of MEMORY.md/USER.md as a staged record a person can
+ * review: the pinned operations that turn `before` into exactly `after`, or null
+ * when no reviewable change yields those bytes. The id follows the edited bytes,
+ * so the same edit is never staged twice. Real limits apply at preview. */
+export function workerEditRecord(target: MemoryTarget, before: string, after: string, at: number): { id: string; bytes: Buffer } | null {
+  const want = parseEntries(after), have = parseEntries(before);
+  if (after !== joined(want) || new Set(want).size !== want.length) return null;
+  const candidates: MemoryOp[][] = [];
+  if (want.length === have.length) candidates.push(have.flatMap((entry, i) => entry === want[i] ? [] : [{ action: 'replace' as const, old_text: entry, content: want[i], matched_entry: entry }]));
+  candidates.push([...have.filter(entry => !want.includes(entry)).map(entry => ({ action: 'remove' as const, old_text: entry, matched_entry: entry })),
+    ...want.filter(entry => !have.includes(entry)).map(entry => ({ action: 'add' as const, content: entry }))]);
+  for (const ops of candidates) {
+    if (!ops.length || ops.length > 100) continue;
+    const payload: MemoryPayload = ops.length === 1 ? { ...ops[0], target } as MemoryPayload : { action: 'batch', target, operations: ops };
+    try { if (applyPending(payload, before, OPEN).after !== after) continue; } catch { continue; }
+    const id = createHash('sha256').update(`realbud-worker-memory-edit-v1\0${target}\0`).update(after).digest('hex').slice(0, 8);
+    return { id, bytes: Buffer.from(JSON.stringify({ id, subsystem: 'memory', action: payload.action, summary: 'Bud edited its memory file directly. Review the change.',
+      origin: 'background_review', created_at: Math.floor(at / 1000), payload }), 'utf8') };
+  }
+  return null;
 }
