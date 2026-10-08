@@ -42,6 +42,7 @@ export const PICK_TOO_LARGE = "none — screenshot too large for the vision fall
 const PARTIAL_LIST = "Chosen from a partial list: Bud could not read the whole window.";
 const STOPPED = "Desktop work stopped. Nothing more was done in the window.";
 const NOT_APPROVED = "This step was not approved, so nothing was pressed. Do not retry it without a new request from the person.";
+const CHANGED_WHILE_ASKING = "The window changed while the person was deciding, so the approval no longer matches this step and nothing was pressed. Read the window again and ask afresh.";
 const ASKED_ONCE = "Bud already asked about this exact step once. Read the window again before asking about it afresh.";
 const UNCONFIRMED = "The desktop helper did not confirm this step; it may or may not have happened. Read the window again before the next step.";
 const CREDENTIAL_STATE = "This goal or window looks like it carries a password, code, session or token. Describe the control without those words. Nothing was sent.";
@@ -229,10 +230,15 @@ export async function startDesktopBroker(options: {
         { fence: { surface, origin: target.appName, ruleOffer: null }, approvalPolicy: "once", remote: "desktop-only" }).catch(() => false);
       if (!active(signal)) { note(tool, "ended", STOPPED); return toolError(STOPPED); }
       if (!yes) { note(tool, "refused", NOT_APPROVED); return toolError(NOT_APPROVED); }
-      // The window may have changed while the card waited: the fence decides again, and only a refusal or end overrides the person.
+      // The window may have changed while the card waited: the fence decides again. The approval covers only the
+      // decision the person saw; anything other than that same decision, or a plain allow, presses nothing.
+      const seen = decision;
       ({ decision, bounds } = await decideNow());
       if (decision.decision === "end") { note(tool, "ended", decision.reason); await endSession(); return toolError(decision.reason); }
       if (decision.decision === "deny") { note(tool, "denied", decision.reason); return toolError(decision.reason); }
+      if (decision.decision !== "allow" && (decision.decision !== seen.decision || decision.reason !== seen.reason || decision.kind !== seen.kind)) {
+        note(tool, "refused", CHANGED_WHILE_ASKING); return toolError(CHANGED_WHILE_ASKING);
+      }
       note(tool, "approved", decision.reason);
     } else note(tool, "allowed", decision.reason);
     if (!active(signal)) return toolError(STOPPED);

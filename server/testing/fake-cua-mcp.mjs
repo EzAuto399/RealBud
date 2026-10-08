@@ -4,6 +4,7 @@
 //   FAKE_CUA_FIXTURE  path to a get_window_state structured result
 //                     (default: fixtures/cua-0.22.1-calculator-window-state.json)
 //   FAKE_CUA_WINDOWS  JSON list_windows `windows` array (default: the fixture's Calculator window)
+//   FAKE_CUA_WINDOWS_FILE  path to that JSON, re-read on every list_windows (a test can move the window mid-step)
 //   FAKE_CUA_RECORD   file to append one JSON line {name, arguments} per tools/call
 //   FAKE_CUA_PNG_SIZE "WxH": get_window_state with include_screenshot returns a
 //                     synthetic PNG header of that size as an image content block
@@ -50,7 +51,7 @@ function call(name, args) {
   if (name === "start_session" && mode === "exit-on-start") process.exit(3);
   if (name === "start_session") return mode === "reject-capture-scope" && "capture_scope" in args ? fail("unknown field capture_scope") : ok({ session: args.session });
   if (name === "end_session") return ok({ ended: true });
-  if (name === "list_windows") return ok({ windows: windows.filter((row) => args.pid === undefined || row.pid === args.pid) });
+  if (name === "list_windows") return ok({ windows: (process.env.FAKE_CUA_WINDOWS_FILE ? JSON.parse(readFileSync(process.env.FAKE_CUA_WINDOWS_FILE, "utf8")) : windows).filter((row) => args.pid === undefined || row.pid === args.pid) });
   if (name === "get_window_state" && mode === "reject-max-dimension" && "max_dimension" in args) return fail("unknown field max_dimension");
   if (name === "get_window_state") return windowState(args);
   if (name === "click" && mode === "exit-on-click") process.exit(3);
