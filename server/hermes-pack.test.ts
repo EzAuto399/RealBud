@@ -902,6 +902,25 @@ describe("managed model profile", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     expect(parse(mergePropertyPolicy(chosen.replace("reasoning_effort: xhigh", "reasoning_effort: max"), pack)).agent.reasoning_effort).toBeUndefined();
   });
 
+  it("moves an office saved on Sonnet · High to Medium once; a later step back up to High is kept", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-managed-profile-")); dirs.push(home);
+    applyPropertyPack(home);
+    const profile = propertyProfileDir(home);
+    // An office set up while High was the default: its profile already says High, with no marker.
+    applyManagedModelProfile(GATEWAY, { root: home, choice: "sonnet-high" });
+    rmSync(join(profile, ".realbud-medium-default-2026-10-08"));
+    expect(applyManagedModelProfile(GATEWAY, { root: home })).toMatchObject({ choice: "sonnet-medium", reasoningEffort: "medium" });
+    applyManagedModelProfile(GATEWAY, { root: home, choice: "sonnet-high" });
+    applyPropertyPack(home);
+    expect(applyManagedModelProfile(GATEWAY, { root: home })).toMatchObject({ choice: "sonnet-high" });
+    // Other choices are never moved.
+    const other = mkdtempSync(join(tmpdir(), "realbud-managed-profile-")); dirs.push(other);
+    applyPropertyPack(other);
+    applyManagedModelProfile(GATEWAY, { root: other, choice: "flash-high" });
+    rmSync(join(propertyProfileDir(other), ".realbud-medium-default-2026-10-08"));
+    expect(applyManagedModelProfile(GATEWAY, { root: other })).toMatchObject({ choice: "flash-high" });
+  });
+
   it("survives a pack reinstall, and a fresh apply migrates auto to the default (Sonnet · Medium) while dropping shadowing keys", () => {
     const home = mkdtempSync(join(tmpdir(), "realbud-managed-profile-")); dirs.push(home);
     applyPropertyPack(home);
