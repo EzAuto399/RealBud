@@ -14,6 +14,15 @@ const SECTIONS: readonly { key: ScheduleSection; label: string }[] = [
   { key: "ready", label: "Other jobs" },
   { key: "paused", label: "Paused" },
 ];
+/** A result review names what went wrong; a plain waiting result keeps "Review result". */
+const REVIEW_LABELS: Partial<Record<AttentionWord, string>> = {
+  Failed: "Review failed run",
+  Missed: "Review missed run",
+  Interrupted: "Review interrupted run",
+  Incomplete: "Review incomplete run",
+  Unverified: "Verify result",
+};
+const actionLabel = (row: ScheduleRow) => (row.action === "review-result" && row.attention && REVIEW_LABELS[row.attention]) || row.actionLabel;
 
 function domId(key: string): string {
   return `schedule-row-${key.replace(/[^\w-]/g, "-")}`;
@@ -58,7 +67,7 @@ export function JobList({
           return [
             <li key={`section:${section.key}`} className="schedule-section-heading" data-section={section.key}>
               <h2>{section.label}<span className="schedule-section-count">{members.length}</span></h2>
-              <span aria-hidden="true">Timing</span>
+              <span aria-hidden="true">Next run</span>
             </li>,
             ...members.map((row) => {
                 const id = domId(row.key);
@@ -90,13 +99,13 @@ export function JobList({
                     </button>
                     <button
                       type="button"
-                      aria-label={`${row.actionLabel}: ${row.name}`}
+                      aria-label={`${actionLabel(row)}: ${row.name}`}
                       disabled={disabled}
                       onClick={() => onAction(row)}
                       className="schedule-row-action pm-control inline-flex items-center justify-center gap-1.5 rounded border border-line bg-sheet px-3 text-[14px] text-ink hover:bg-selected disabled:opacity-40"
                     >
                       {row.action === "stop" ? <Square size={12} className="fill-current" aria-hidden /> : null}
-                      {row.actionLabel}
+                      {actionLabel(row)}
                     </button>
                   </li>
                 );
