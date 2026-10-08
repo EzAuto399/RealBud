@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { budAutoSetupView, budAvailability, budFacingCopy, budReadinessFailure, budSetupJourney, parseBudStatus, type BudSetupInput } from "./bud-setup";
+import { budAutoSetupView, budAvailability, budFirstSetupCover, budFacingCopy, budReadinessFailure, budSetupJourney, parseBudStatus, type BudSetupInput } from "./bud-setup";
 import type { HermesStatus } from "@/state/store";
 
 const readyBase: BudSetupInput = {
@@ -102,8 +102,31 @@ describe("automatic Bud setup status", () => {
     autoSetup: { state: "verifying", step: 3, total: 4, detail: "Connecting Bud’s model" },
   } as HermesStatus;
 
+  it("covers the window only during Bud's first setup, with a way out unless it is running", () => {
+    const ok = { connected: true, statusError: false, recovering: false };
+    const auto = (state: NonNullable<HermesStatus["autoSetup"]>["state"], extra: Partial<HermesStatus> = {}) =>
+      budFirstSetupCover({ ...status, ...extra, autoSetup: { state, step: 1, total: 4, detail: "" } }, ok);
+    expect(auto("installing")).toBe("running");
+    expect(auto("verifying")).toBe("running");
+    expect(auto("waiting_retry")).toBe("stopped");
+    expect(auto("held")).toBe("stopped");
+    // Status that can't be confirmed never traps anyone behind a spinner.
+    expect(budFirstSetupCover(status, { ...ok, connected: false })).toBe("stopped");
+    expect(budFirstSetupCover(status, { ...ok, statusError: true })).toBe("stopped");
+    // The failing receipt every install start writes is not a past pass.
+    expect(auto("installing", { lastPing: { at: 1, ok: false, kind: "ping", detail: "Bud setup changed. Its private readiness check is still needed." } })).toBe("running");
+    // A Bud that passed here before, a ready Bud, a needs-a-check Bud and book recovery keep the shell.
+    expect(auto("installing", { readyOnce: true })).toBeNull();
+    expect(auto("verifying", { ready: true })).toBeNull();
+    expect(auto("idle", { modelAccess: { managed: true, withdrawn: false, attached: true, detail: "" } })).toBeNull();
+    expect(budFirstSetupCover(status, { ...ok, recovering: true })).toBeNull();
+    expect(budFirstSetupCover(null, ok)).toBeNull();
+  });
+
   it("validates the automatic setup field and rejects a malformed one", () => {
     expect(parseBudStatus(status).autoSetup?.state).toBe("verifying");
+    expect(parseBudStatus({ ...status, readyOnce: true }).readyOnce).toBe(true);
+    expect(() => parseBudStatus({ ...status, readyOnce: "yes" })).toThrow();
     expect(() => parseBudStatus({ ...status, autoSetup: { state: "done", step: 1, total: 4, detail: "" } })).toThrow();
     expect(() => parseBudStatus({ ...status, autoSetup: { state: "installing", step: "1", total: 4, detail: "" } })).toThrow();
   });

@@ -180,6 +180,20 @@ export function budAutoSetupView(status: HermesStatus | null, now = Date.now()):
   return null;
 }
 
+/**
+ * Bud's first setup on this computer takes the whole window. "running" while
+ * it installs or checks with a confirmed status: nothing is needed and there is
+ * no way out. "stopped" while it waits to retry, is held, or its status can't
+ * be confirmed: staff may leave. Null once Bud has passed its check here
+ * (`readyOnce`), so a later re-check or reinstall never swaps the window out
+ * mid-work.
+ */
+export function budFirstSetupCover(status: HermesStatus | null, context: { connected: boolean; statusError: boolean; recovering: boolean }): "running" | "stopped" | null {
+  const state = status?.autoSetup?.state;
+  if (context.recovering || !status || status.readyOnce || !state || state === "idle" || state === "ready" || !budAutoSetupView(status)) return null;
+  return context.connected && !context.statusError && (state === "installing" || state === "verifying") ? "running" : "stopped";
+}
+
 /** One dependency-ordered description for Ask and Schedule. A workroom alone
  * never proves an installed worker, model connection or permission to run. */
 function budAvailabilityFacts(status: HermesStatus | null, connected: boolean, recovering = false) {
@@ -305,6 +319,7 @@ export function parseBudStatus(value: unknown): HermesStatus {
     || ![value.pack.installed, value.pack.approvalsManual, value.pack.workroomReady].every(flag => typeof flag === "boolean")
     || (value.bootstrapPending !== undefined && typeof value.bootstrapPending !== "boolean")
     || (value.restartRequired !== undefined && typeof value.restartRequired !== "boolean")
+    || (value.readyOnce !== undefined && typeof value.readyOnce !== "boolean")
     || (value.model !== undefined && (!record(value.model) || typeof value.model.attached !== "boolean" || !nullableString(value.model.provider) || !nullableString(value.model.model)
       || (value.model.choice !== undefined && value.model.choice !== null && !isManagedModelChoice(value.model.choice))))
     || (value.modelAccess !== undefined && (!record(value.modelAccess) || typeof value.modelAccess.managed !== "boolean" || typeof value.modelAccess.withdrawn !== "boolean" || typeof value.modelAccess.attached !== "boolean" || typeof value.modelAccess.detail !== "string"))
