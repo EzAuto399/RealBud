@@ -17,7 +17,7 @@ import { REDBARK_APP_SLUG } from '@/lib/connected-app-catalog';
 beforeEach(() => { vi.clearAllMocks(); fixture.preview = null; fixture.snapshot = { configured: true, checkedAt: new Date().toISOString(), sourceKind: 'office_shared', policyRevision: 3, services: { gmail: { connected: false, status: 'NOT_CONNECTED', accounts: [], accountSelectionRequired: false } }, tools: { available: false, names: [] } }; });
 const html = () => renderToStaticMarkup(createElement(ConnectedAppsCard));
 it('shows owner setup instead of desktop OAuth for an unconnected shared mailbox', () => {
-  expect(html()).toContain('Ask the office owner to connect it');
+  expect(html()).toContain('realbud.app → Computers → Gmail for this office');
   expect(html()).not.toContain('Connect Gmail');
 });
 it('uses an already connected shared mailbox without another sign-in prompt', () => {

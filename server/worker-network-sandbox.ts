@@ -180,6 +180,11 @@ export interface WorkerSandboxSpec {
    * the temp names an atomic write uses beside its target). Seatbelt's regex
    * has no `{m,n}`; a backslash escapes as written. */
   writablePatterns?: readonly string[];
+  /** Folders whose own node answers `access(W_OK)` as writable (Seatbelt
+   * `file-write-data` on that exact folder), for a program that checks the
+   * folder before writing the files `writablePatterns` name in it. Nothing is
+   * created, removed, renamed or re-moded there through this rule. */
+  writableFolderNodes?: readonly string[];
   /** Folders inside which hard links may be made (source under one of them):
    * only for RealBud's own helpers whose atomic publish uses `link(2)` within
    * their one writable tree; a worker launch never names any. */
@@ -364,6 +369,7 @@ export function workerSandboxProfile(command: string, tmp: string, spec: WorkerS
     // let the worker remove or replace the root RealBud verified.
     `(allow file-write* ${spec.writable.map(ensurePrivateRoot).map(root => `(regex #"^${regexLiteral(root)}/")`).join("")}${subpaths([tmp])}${(spec.writablePatterns ?? []).map(pattern => `(regex #"${pattern.replace(/"/g, '\\"')}")`).join("")})`,
     '(allow file-write* (literal "/dev/null") (literal "/dev/zero") (literal "/dev/tty") (literal "/dev/dtracehelper"))',
+    ...(spec.writableFolderNodes?.length ? [`(allow file-write-data ${spec.writableFolderNodes.map(path => `(literal ${quote(trustedPath(path))})`).join("")})`] : []),
     // Reads: the launch's own rules, then the person's credential stores.
     reads,
     `(deny file-read* ${subpaths([...homes].flatMap(home => PRIVATE_HOME_PATHS.map(name => join(home, name))))})`,
