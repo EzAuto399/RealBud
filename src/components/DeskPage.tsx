@@ -38,10 +38,9 @@ import { MailWorkPanel } from './desk/MailWorkPanel';
 import { RemindersPanel } from "./desk/RemindersPanel";
 import { DeskRecoveryNotice, DeskRemindersDisclosure, DeskSections, DeskWorkArea, LicenseeBadge, OTHER_WORK_LABELS } from "./desk/DeskSections";
 import type { DeskOtherWork } from "@/lib/desk-view-state";
-import { DeskCustomizePanel } from "./desk/DeskCustomizePanel";
 import { CardMenu, DeskCardMenu } from "./shell/DeskArrangement";
 import { setDeskTabSlot } from "./shell/use-desk-nav";
-import { useDeskDataStatus } from "./shell/shell-layout";
+import { openArrangeDesk, useDeskDataStatus } from "./shell/shell-layout";
 import { useWorkspaceTabs } from "@/lib/workspace-tabs";
 import { deskSectionsOrDefault } from "@shared/workspace-tabs";
 import { BatchWorkspace } from "./desk/BatchWorkspace";
@@ -93,7 +92,6 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   // Disconnected office or stale check: one line says so above everything Desk shows.
   const dataStatus = useDeskDataStatus();
   const activityShown = deskLayout?.find(section => section.id === "activity")?.visible !== false;
-  const [customizeOpen, setCustomizeOpen] = useState(false);
   const layout = portfolioLayout(preferences, state.desk?.properties.length ?? 0);
   // Paint instantly from the SSE-pushed snapshot when we have one; the
   // effect below still refreshes from the server on mount.
@@ -775,8 +773,8 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
                 <details className="desk-options">
                   <summary className="desk-more-item">Desk options</summary>
                   <div className="desk-options-body">
-                    <button type="button" className="desk-more-item" aria-expanded={customizeOpen} onClick={chooseMore(() => setCustomizeOpen(true))}>
-                      Customize desk
+                    <button type="button" className="desk-more-item" onClick={chooseMore(openArrangeDesk)}>
+                      Arrange Desk
                     </button>
                     <div className="desk-more-layout">
                       <WorkspaceLayout />
@@ -815,7 +813,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
                 }}
               />
               {!sectionShown("mail") && !sectionShown("bills") && !sectionShown("shared-work") ? (
-                <p className="px-2.5 py-2 text-[12px] text-ink-muted">Turn these on in More → Desk options → Customize desk.</p>
+                <p className="px-2.5 py-2 text-[12px] text-ink-muted">Turn these on in More → Desk options → Arrange Desk.</p>
               ) : null}
             </div>
           </details>
@@ -850,20 +848,6 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
           </div>
         ) : null}
       </header>
-      {customizeOpen ? (
-        <div
-          className="desk-customize-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="desk-customize-title"
-          ref={(node) => { if (node && !node.contains(document.activeElement)) node.querySelector<HTMLElement>('[aria-label="Close Customize desk"]')?.focus(); }}
-          onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setCustomizeOpen(false); } }}
-          onMouseDown={(event) => { if (event.target === event.currentTarget) setCustomizeOpen(false); }}
-        >
-          <div className="desk-customize-dialog"><DeskCustomizePanel onClose={() => setCustomizeOpen(false)} /></div>
-        </div>
-      ) : null}
-
       {hermiosOpen ? (
         /* Hermios is an exclusive surface: its native view owns its own
            scrolling, so RealBud adds no outer scroller around it. */

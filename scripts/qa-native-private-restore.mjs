@@ -572,14 +572,14 @@ try {
   await page.goto(origin+'/#/desk');
   await page.locator('.desk-more > summary').filter({hasText:/^More$/}).click();
   await page.locator('.desk-options > summary').click();
-  await page.getByRole('button',{name:'Customize desk',exact:true}).click();
+  await page.locator('.desk-options-body').getByRole('button',{name:'Arrange Desk',exact:true}).click();const arrange=page.getByRole('dialog',{name:'Arrange Desk',exact:true});
   let changedDeskLayout=false;
-  for(const label of ['Show Mail priorities','Show Bills and calendar']){
-    const visible=page.getByLabel(label,{exact:true});
+  for(const label of ['Show Mail priorities on my Desk','Show Bills and calendar on my Desk']){
+    const visible=arrange.getByLabel(label,{exact:true});
     if(!await visible.isChecked()){await visible.check();changedDeskLayout=true;}
   }
-  if(changedDeskLayout){await page.getByRole('button',{name:'Save layout',exact:true}).click();await page.getByText('Desk layout saved.',{exact:true}).waitFor();}
-  await page.getByRole('button',{name:'Close Customize desk',exact:true}).click();
+  if(changedDeskLayout){await arrange.getByRole('button',{name:'Save',exact:true}).click();await arrange.getByText('Desk arrangement saved.',{exact:true}).waitFor();}
+  await arrange.getByRole('button',{name:'Close Arrange Desk',exact:true}).click();
   await page.locator('.desk-other-work > summary').click();
   await page.getByRole('group',{name:'Other work',exact:true}).getByRole('button',{name:'Mail priorities',exact:true}).click();
   const mailPanel=page.getByRole('region',{name:'Mail priorities and follow-ups',exact:true});

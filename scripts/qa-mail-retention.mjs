@@ -82,10 +82,10 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   assert.equal(readUrls.some(url=>url.startsWith('/api/mail-workspace/items?')),false,'Desk leaves mail conversations unloaded until Other work is opened');
   await page.locator('.desk-more > summary').filter({hasText:/^More$/}).click();
   await page.locator('.desk-options > summary').click();
-  await page.getByRole('button',{name:'Customize desk',exact:true}).click();
-  const showMail=page.getByLabel('Show Mail priorities',{exact:true});
-  if(!await showMail.isChecked()){await showMail.check();await page.getByRole('button',{name:'Save layout',exact:true}).click();await page.getByText('Desk layout saved.',{exact:true}).waitFor();}
-  await page.getByRole('button',{name:'Close Customize desk',exact:true}).click();
+  await page.locator('.desk-options-body').getByRole('button',{name:'Arrange Desk',exact:true}).click();const arrange=page.getByRole('dialog',{name:'Arrange Desk',exact:true});
+  const showMail=arrange.getByLabel('Show Mail priorities on my Desk',{exact:true});
+  if(!await showMail.isChecked()){await showMail.check();await arrange.getByRole('button',{name:'Save',exact:true}).click();await arrange.getByText('Desk arrangement saved.',{exact:true}).waitFor();}
+  await arrange.getByRole('button',{name:'Close Arrange Desk',exact:true}).click();
   await page.locator('.desk-other-work > summary').click();
   await page.getByRole('group',{name:'Other work',exact:true}).getByRole('button',{name:'Mail priorities',exact:true}).click();
   const panel=page.getByRole('region',{name:'Mail priorities and follow-ups',exact:true});await panel.waitFor();
