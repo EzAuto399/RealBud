@@ -175,6 +175,13 @@ describe('owned preparation loop on a fictional provider', () => {
     expect(result).toEqual({ ok: false, detail: 'Preparation cancelled.' }); expect(captures).toHaveLength(0);
   });
 
+  it('does not ask for request authority after a Stop during the launch hook', async () => {
+    const { root, captures } = await fixture(() => ({ role: 'assistant', content: 'unused' }));
+    const controller = new AbortController(), beforeRequest = vi.fn();
+    expect(await askDepartmentWorker('Prepare case.', { root, signal: controller.signal, beforeLaunch: async () => { controller.abort(); }, beforeRequest })).toEqual({ ok: false, detail: 'Preparation cancelled.' });
+    expect(beforeRequest).not.toHaveBeenCalled(); expect(captures).toHaveLength(0);
+  });
+
   it('never forwards when final launch authority is denied, or when the caller omits its checks', async () => {
     const { root, captures } = await fixture(() => ({ role: 'assistant', content: 'unused' }));
     const hook = vi.fn(async () => { throw new Error('stale company claim'); });

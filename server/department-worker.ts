@@ -173,6 +173,7 @@ export async function askDepartmentWorker(prompt: string, opts: DepartmentWorker
   };
   try {
     await opts.beforeLaunch();
+    const launchEnded = ended(); if (launchEnded) return settled({ ok: false, detail: launchEnded });
     const runId = randomBytes(16).toString('hex');
     const messages: Record<string, unknown>[] = [{ role: 'system', content: DEPARTMENT_SYSTEM_PROMPT }, { role: 'user', content: prompt }];
     for (let turn = 0; turn < maxTurns; turn++) {
