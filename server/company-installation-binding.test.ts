@@ -13,6 +13,7 @@ const companyId = '11111111-1111-4111-8111-111111111111';
 const otherCompanyId = '22222222-2222-4222-8222-222222222222';
 const token = 'fixture_only_session_12345678901234567890123';
 const response = (id = companyId, memberId = 'fixture-member-1') => ({ status: 200, body: {
+  configured: true, hostCompany: { version: 1, companyId: id },
   company: { id, name: 'Example Office' }, member: { id: memberId, displayName: 'Example Person', role: 'member' }, memberToken: token,
 } });
 let hostCode: string;
@@ -44,7 +45,7 @@ async function fixture(paired = true) {
 describe('office identity before session adoption', () => {
   it.each(['create', 'join', 'sign-in', 'recover-member'])('rejects a different office on %s without returning a token or writing identity', async path => {
     const { app, root, onSeatIdentity } = await fixture();
-    vi.mocked(requestCompanyHost).mockResolvedValue(response(otherCompanyId));
+    vi.mocked(requestCompanyHost).mockImplementation(async args => args.path === '/api/company/status' ? response() : response(otherCompanyId));
     const result = await app.handle(`/api/company/${path}`, 'POST', { headers: {} }, { loginName: 'fixture' });
     expect(result).toMatchObject({ status: 409, body: { code: 'host_identity_mismatch' } });
     expect(JSON.stringify(result)).not.toContain(token);
@@ -54,7 +55,8 @@ describe('office identity before session adoption', () => {
 
   it('rejects a successful session without a company identity', async () => {
     const { app } = await fixture();
-    vi.mocked(requestCompanyHost).mockResolvedValue({ status: 200, body: { member: response().body.member, memberToken: token } });
+    vi.mocked(requestCompanyHost).mockImplementation(async args => args.path === '/api/company/status' ? response()
+      : { status: 200, body: { member: response().body.member, memberToken: token } });
     expect(await app.handle('/api/company/sign-in', 'POST', { headers: {} }, { loginName: 'fixture' })).toMatchObject({ status: 409, body: { code: 'host_identity_mismatch' } });
     expect(await app.seatIdentity()).toBeNull();
   });
@@ -76,10 +78,36 @@ describe('office identity before session adoption', () => {
 
   it('does not adopt a member from an unauthenticated host connection check', async () => {
     const { app, onSeatIdentity } = await fixture(false);
-    vi.mocked(requestCompanyHost).mockResolvedValue({ status: 200, body: { configured: true, ...response().body } });
+    vi.mocked(requestCompanyHost).mockResolvedValue(response());
     expect((await app.handle('/api/company/connect-host', 'POST', { headers: {} }, { hostCode })).status).toBe(200);
     expect(await app.seatIdentity()).toBeNull();
     expect(onSeatIdentity).not.toHaveBeenCalled();
+  });
+  it.each([['missing', 'host_update_required', /update RealBud on the host computer/], ['foreign', 'host_identity_mismatch', /different office/]] as const)('holds a %s host precondition without saving the peer', async (kind, code, copy) => {
+    const { app, root } = await fixture(false);
+    vi.mocked(requestCompanyHost).mockResolvedValue({ status: 200, body: { configured: true,
+      ...(kind === 'foreign' ? { hostCompany: { version: 1, companyId: otherCompanyId } } : {}) } });
+    expect(await app.handle('/api/company/connect-host', 'POST', { headers: {} }, { hostCode })).toMatchObject({ status: 409, body: { code, error: expect.stringMatching(copy) } });
+    await expect(readFile(join(root, 'company-installation/peer.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+  it('asks for a host update before enrollment on an older host, but keeps its status polls working', async () => {
+    const { app, root } = await fixture();
+    vi.mocked(requestCompanyHost).mockResolvedValue({ status: 200, body: { configured: true } });
+    expect(await app.handle('/api/company/join', 'POST', { headers: {} }, { invitationToken: 'fictional', credential: { loginName: 'fixture', password: 'Synthetic-password' } }))
+      .toMatchObject({ status: 409, body: { code: 'host_update_required' } });
+    expect(vi.mocked(requestCompanyHost).mock.calls.map(([args]) => args.path)).toEqual(['/api/company/status']);
+    await expect(readFile(join(root, 'company-installation/enrollment.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    // An older host omits hostCompany on status; a poll must still answer.
+    expect(await app.handle('/api/company/status', 'GET', { headers: {} })).toMatchObject({ status: 200, body: { configured: true, remoteHost: true, transport: 'encrypted-company' } });
+    // A host that does name an office must name the saved one.
+    vi.mocked(requestCompanyHost).mockResolvedValue({ status: 200, body: { configured: true, hostCompany: { version: 1, companyId: otherCompanyId } } });
+    expect(await app.handle('/api/company/status', 'GET', { headers: {} })).toMatchObject({ status: 409, body: { code: 'host_identity_mismatch' } });
+  });
+  it('sends the saved office as the expected company on enrollment and status', async () => {
+    const { app } = await fixture();
+    vi.mocked(requestCompanyHost).mockResolvedValue(response());
+    expect((await app.handle('/api/company/sign-in', 'POST', { headers: {} }, { loginName: 'fixture', password: 'Synthetic-password' })).status).toBe(200);
+    expect(vi.mocked(requestCompanyHost).mock.calls.map(([args]) => [args.path, args.companyId])).toEqual([['/api/company/status', companyId], ['/api/company/sign-in', companyId]]);
   });
 });
 
@@ -206,7 +234,10 @@ describe('durable membership recovery', () => {
   });
   it('recovers lost enrollment after restart by signing in, without replaying the invitation', async () => {
     const { app, root } = await fixture(); const identity = await app.workspaceIdentity();
-    vi.mocked(requestCompanyHost).mockRejectedValueOnce(new Error('Response lost after membership committed'));
+    vi.mocked(requestCompanyHost).mockImplementation(async args => {
+      if (args.path === '/api/company/status') return response();
+      throw new Error('Response lost after membership committed');
+    });
     expect((await app.handle('/api/company/join', 'POST', { headers: {} }, { invitationToken: 'one-use', credential: credentials })).status).toBe(503);
     const saved = await readFile(join(root, 'company-installation/enrollment.json'), 'utf8');
     expect(saved).toContain('fixture'); expect(saved).not.toContain(credentials.password); expect(saved).not.toContain('one-use');
@@ -261,7 +292,7 @@ describe('durable membership recovery', () => {
     expect((await app.handle('/api/company/sign-in', 'POST', { headers: {} }, credentials)).status).toBe(200);
     expect((await app.handle('/api/company/detach-offline', 'POST', { headers: {} }, { acknowledgeActiveSessions: true })).status).toBe(200);
     await app.close(); const restarted = await reopen(root);
-    vi.mocked(requestCompanyHost).mockResolvedValue({ status: 200, body: { configured: true } });
+    vi.mocked(requestCompanyHost).mockResolvedValue({ status: 200, body: { configured: true, hostCompany: { version: 1, companyId: otherCompanyId } } });
     expect((await restarted.handle('/api/company/connect-host', 'POST', { headers: {} }, { hostCode: otherHostCode })).status).toBe(200);
     vi.mocked(requestCompanyHost).mockResolvedValue(response(otherCompanyId, 'fixture-member-2'));
     expect((await restarted.handle('/api/company/sign-in', 'POST', { headers: {} }, credentials)).status).toBe(200);
@@ -322,7 +353,7 @@ describe('durable membership recovery', () => {
     const wrongCode = encodeCompanyPairing({ version: 1, origin: 'https://127.0.0.1:9555', certificatePem: cert, companyId: otherCompanyId });
     expect((await app.handle('/api/company/connect-host', 'POST', { headers: {} }, { hostCode: newCode })).status).toBe(409);
     expect((await app.handle('/api/company/connect-host', 'POST', { headers: {} }, { hostCode: wrongCode, replaceExisting: true })).body).toMatchObject({ code: 'host_identity_mismatch' });
-    vi.mocked(requestCompanyHost).mockResolvedValue({ status: 200, body: { configured: true } });
+    vi.mocked(requestCompanyHost).mockResolvedValue({ status: 200, body: { configured: true, hostCompany: { version: 1, companyId } } });
     expect((await app.handle('/api/company/connect-host', 'POST', { headers: {} }, { hostCode: newCode, replaceExisting: true })).status).toBe(200);
     expect(JSON.parse(await readFile(join(root, 'company-installation/peer.json'), 'utf8'))).toBe(newCode);
     expect(await app.seatIdentity()).toBe('fixture-member-1'); expect(await app.workspaceIdentity()).toEqual(identity);

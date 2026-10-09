@@ -265,6 +265,7 @@ export type AppSettingsSection = "general" | "connections" | "voice" | "computer
 
 /** GET /api/hermes — how the pinned worker is doing. Never any secrets. */
 export interface HermesStatus {
+  workerIsolation?: { state: "held"; platform: string; detail: string };
   pin: { product: string; tag: string; commit: string; profile: string };
   /** Office-facing name for the worker profile (`property` stays internal). */
   handsLabel?: string;

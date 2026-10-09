@@ -55,4 +55,5 @@ export function scrollYouTarget(id: string): void {
     behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
   });
   if (id === "you-website" || id === "you-website-code" || id === "you-private-backup") target.focus({ preventScroll: true });
+  if (id === "you-service-admin") target.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true });
 }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createOnboardingHandler } from './onboarding.ts';
@@ -20,6 +20,37 @@ async function fixture() {
 }
 
 describe('durable onboarding', () => {
+  it('exposes the same physical setup scope without allocating or changing saved state', async () => {
+    const f = await fixture();
+    const identity = f.handler.currentScope();
+    expect(identity).toMatch(/^[a-f0-9]{64}$/);
+    expect(await readdir(f.directory)).toEqual([]);
+    expect(createOnboardingHandler(f.options).currentScope()).toBe(identity);
+    const fresh = await f.read();
+    expect(fresh.scope).toBe(identity);
+    const rules = parseOnboardingState((await f.write(fresh, 'office-rules'))!.body);
+    const file = join(f.directory, 'onboarding', `${identity}.json`), bytes = await readFile(file);
+    expect(f.handler.currentScope()).toBe(identity);
+    expect(await readFile(file)).toEqual(bytes);
+    expect(await f.read()).toEqual(rules);
+    expect(Object.keys(rules).sort()).toEqual(['revision', 'scope', 'stage', 'version']);
+  });
+  it('binds physical workspace and private member independently of book revisions', async () => {
+    const f = await fixture(), first = f.handler.currentScope();
+    const replacement = createOnboardingHandler({ ...f.options, workspaceId: 'fictional-replacement-workspace' });
+    expect(replacement.currentScope()).not.toBe(first);
+    const originalState = await f.read();
+    const replacementState = parseOnboardingState((await replacement.handle('/api/onboarding', 'GET'))!.body);
+    expect(originalState.revision).toBe(replacementState.revision);
+    expect(replacementState.scope).toBe(replacement.currentScope());
+    const files = await readdir(join(f.directory, 'onboarding'));
+    expect((await replacement.handle('/api/onboarding', 'PUT', { expectedScope: first, expectedRevision: replacementState.revision, stage: 'office-rules' }))!.status).toBe(409);
+    expect(await readdir(join(f.directory, 'onboarding'))).toEqual(files);
+    f.member('fictional-private-member-b');
+    expect(f.handler.currentScope()).not.toBe(first);
+    f.member('fictional-member-a');
+    expect(f.handler.currentScope()).toBe(first);
+  });
   it('resumes interrupted rules and completed setup after handler/service recreation', async () => {
     const f = await fixture();
     const fresh = await f.read();

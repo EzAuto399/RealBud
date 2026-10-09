@@ -7,7 +7,7 @@ import { modelServiceFailure } from "./model-service-failure.ts";
 import { randomUUID } from "node:crypto";
 
 import { hardenHermesChildEnv, hermesWorkerSandbox } from "./drivers/acp/hermes.ts";
-import { trackSandboxedChild } from "./worker-network-sandbox.ts";
+import { trackSandboxedChild, workerIsolationRefusal } from "./worker-network-sandbox.ts";
 import { applyAskModelRelayEnv, withAskModelRelayLease } from "./ask-model-relay.ts";
 import { augmentedPath } from "./env-path.ts";
 import { execFileCli, type OneShotOptions } from "./procs.ts";
@@ -95,6 +95,8 @@ async function scopedHermesPing(opts?: {
   const started = Date.now();
   let workerFingerprint: string | undefined;
   const done = (ok: boolean, detail: string): HermesPing => ({ ok, detail, elapsedMs: Date.now() - started, ...(workerFingerprint ? { workerFingerprint } : {}) });
+  const isolation = workerIsolationRefusal();
+  if (isolation) return done(false, isolation);
   const serviceFailure = managedServiceFailure("reasoning");
   if (serviceFailure) return done(false, serviceFailure);
   if (process.env.VITEST && !opts?.cli) return done(false, "tests do not ping the live worker");
@@ -260,6 +262,8 @@ async function scopedHermesLedger(
   },
 ): Promise<HermesLedgerAttempt> {
   const miss = (detail: string): HermesLedgerAttempt => ({ rows: null, detail });
+  const isolation = workerIsolationRefusal();
+  if (isolation) return miss(isolation);
   const serviceFailure = managedServiceFailure("reasoning");
   if (serviceFailure) return miss(serviceFailure);
   if (process.env.VITEST && !opts?.cli) return miss("tests do not use the live worker — unknown facts stay held");

@@ -5,12 +5,13 @@ import { api, useStore } from '@/state/store';
 // A draft plan only: nothing here books, sends or calls Property Inspect.
 interface Appointment { id: string; propertyId: string; address: string; area: string; date: string; time: string; inspector: string; dueDate: string | null; status: 'accepted' | 'manual' | 'draft'; reason: string }
 interface Hold { propertyId: string; kind: 'overdue' | 'no-history' | 'unschedulable' | 'manual-hold' | 'unreadable'; dueDate: string | null; reason: string }
+interface Diagnostic { kind: 'closed-day' | 'capacity' | 'collision'; date: string; inspector: string; propertyIds: string[]; reason: string }
 interface Rules { horizonMonths: number; cycleMonths: number; cycleBasis: 'completed' | 'planned'; workingDays: number[]; closedDates: string[]; inspectors: string[]; dayStart: string; appointmentMinutes: number; travelMinutes: number; dailyCapacity: number }
 interface Unmatched { row: number; property: string; reason: string }
 export interface InspectionsView {
   rules: { revision: number; rules: Rules };
   history: { revision: number; records: Record<string, unknown>; unmatched: Unmatched[]; lastImport: { at: number; matched: number; unmatched: number } | null };
-  plan: { revision: number; draft: { planStart: string; createdAt: number; plan: { appointments: Appointment[]; holds: Hold[]; notDue: unknown[] } } | null };
+  plan: { revision: number; draft: { planStart: string; createdAt: number; plan: { appointments: Appointment[]; holds: Hold[]; notDue: unknown[]; diagnostics?: Diagnostic[] } } | null };
   properties: Record<string, string>;
 }
 
@@ -23,6 +24,18 @@ const STATUS_LABEL: Record<Appointment['status'], string> = { draft: 'Draft', ac
 const dayLabel = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 const localToday = () => new Date().toLocaleDateString('en-CA');
 
+/** Qualify only the known planner's legacy copy; stored/source text stays exact. */
+function planningReason(reason: string): string {
+  if (reason === 'Accepted booking; kept as booked.') return 'Accepted plan visit; kept as planned.';
+  const closed = /^(.+) has (\d+) kept (bookings?) on (\d{4}-\d{2}-\d{2}), (when the office is closed|outside the working days)\. Review and move them if needed\.$/.exec(reason);
+  if (closed) return `${closed[1]} has ${closed[2]} kept plan visit${closed[3] === 'bookings' ? 's' : ''} on ${closed[4]}, ${closed[5]}. Review and move them if needed.`;
+  const capacity = /^(.+) has (\d+) kept bookings on (\d{4}-\d{2}-\d{2}); the daily limit is (\d+)\. Review and move the excess bookings\.$/.exec(reason);
+  if (capacity) return `${capacity[1]} has ${capacity[2]} kept plan visits on ${capacity[3]}; the daily limit is ${capacity[4]}. Review and move the excess plan visits.`;
+  const collision = /^(.+)'s kept bookings at (\d{2}:\d{2}) and (\d{2}:\d{2}) on (\d{4}-\d{2}-\d{2}) overlap the (\d+) minute visit and (\d+) minute travel allowance\. Review and move one\.$/.exec(reason);
+  if (collision) return `${collision[1]}'s kept plan visits at ${collision[2]} and ${collision[3]} on ${collision[4]} overlap the ${collision[5]} minute visit and ${collision[6]} minute travel allowance. Review and move one.`;
+  return reason;
+}
+
 /** A malformed 200 is an error, never a partial view. */
 export function readInspectionsView(v: unknown): InspectionsView {
   const r = v as InspectionsView;
@@ -30,6 +43,8 @@ export function readInspectionsView(v: unknown): InspectionsView {
       !r.plan || typeof r.plan.revision !== 'number' || !(r.plan.draft === null || (Array.isArray(r.plan.draft?.plan?.appointments) && Array.isArray(r.plan.draft.plan.holds))) || !r.properties) {
     throw new Error('Inspections returned an unexpected answer.');
   }
+  const diagnostics = r.plan.draft?.plan.diagnostics;
+  if (diagnostics !== undefined && (!Array.isArray(diagnostics) || diagnostics.some(d => !d || !['closed-day', 'capacity', 'collision'].includes(d.kind) || typeof d.date !== 'string' || typeof d.inspector !== 'string' || typeof d.reason !== 'string' || !Array.isArray(d.propertyIds) || d.propertyIds.some(id => typeof id !== 'string')))) throw new Error('Inspections returned an unexpected answer.');
   return r;
 }
 
@@ -62,7 +77,7 @@ function Row({ a, selected, busy, onSelect, onMove }: { a: Appointment; selected
       <div className="min-w-0 flex-1">
         <p className="break-words"><span className="font-medium tabular-nums">{a.time}</span> · {a.address || a.propertyId} · {a.inspector}
           <span className={`ml-2 rounded px-1.5 py-0.5 text-[11px] ${a.status === 'draft' ? 'bg-paper text-ink-muted' : 'bg-selected text-agency'}`}>{STATUS_LABEL[a.status]}</span></p>
-        <p className="text-[13px] text-ink-secondary break-words">{a.reason}</p>
+        <p className="text-[13px] text-ink-secondary break-words">{planningReason(a.reason)}</p>
       </div>
       <button type="button" className={button} disabled={busy} aria-expanded={moving} aria-label={`Move ${name}`} onClick={() => setMoving(v => !v)}>Move</button>
     </div>
@@ -143,6 +158,11 @@ export function InspectionsPanel() {
 
     {!draft ? <p className="text-ink-secondary">{view.rules.rules.inspectors.length ? 'Import history, then draft a plan.' : 'Add inspectors to the rules (Ask Bud to change), then draft a plan.'}</p> : <>
       <p className="text-ink-secondary">Plan from {dayLabel(draft.planStart)} · {appointments.length} visits · {holds.length} held · {draft.plan.notDue.length} not due yet</p>
+      {(draft.plan.diagnostics?.length ?? 0) > 0 && <section aria-label="Kept visits need review" className="rounded-lg border border-hold/30 bg-hold/10 p-2">
+        <h5 className="font-medium text-hold">Kept visits need review</h5>
+        <p className="text-[13px] text-ink">Your accepted plan visits and manual moves are kept. Use Move below to resolve these conflicts.</p>
+        <ul className="mt-1 space-y-1">{draft.plan.diagnostics!.map((d, i) => <li key={`${d.kind}-${d.date}-${d.inspector}-${i}`} className="break-words text-[13px] text-hold">{planningReason(d.reason)}</li>)}</ul>
+      </section>}
       {holds.length > 0 && <div aria-label="Held for you" role="group" className="rounded-lg border border-line p-2">
         <h5 className="font-medium">Held for you · {holds.length}</h5>
         <ul className="divide-y divide-line">{holds.map(h => <li key={h.propertyId} className="py-1.5 break-words"><span className="font-medium">{HOLD_LABEL[h.kind]}</span> · {label(h.propertyId)} · <span className="text-ink-secondary">{h.reason}</span></li>)}</ul>

@@ -13,7 +13,7 @@ const HEX = /^[a-f0-9]{64}$/;
 const WORKSPACE = /^[A-Za-z0-9_-]{1,128}$/;
 const VALUE_KEYS = ['workspaceId', 'state', 'billId', 'billRevision', 'itemId', 'messageId', 'sourceDigest', 'fields', 'billState', 'reason', 'seriesId', 'arrivalDate', 'proposalRequest'];
 const FIELD_KEYS = ['propertyId', 'kind', 'vendor', 'amount', 'invoiceDate', 'dueDate', 'note'] as const;
-const OPTIONAL_FIELD_KEYS = ['invoiceNumber', 'invoiceVersion', 'supplierReference', 'workDescription'] as const;
+const OPTIONAL_FIELD_KEYS = ['invoiceNumber', 'invoiceVersion', 'supplierReference', 'workDescription', 'maintenanceClassification'] as const;
 const STATES = ['editing', 'saved', 'accepted', 'discarded'];
 const BILL_STATES = ['received', 'in-process', 'hold', 'cancelled'];
 const fail = (message: string, status: number): never => { throw Object.assign(new Error(message), { status }); };
@@ -27,7 +27,7 @@ const timestamp = (value: unknown): value is number => Number.isSafeInteger(valu
 const text = (value: unknown, max: number): value is string => typeof value === 'string' && value.length <= max && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value);
 const nullable = (value: unknown, pattern: RegExp) => value === null || typeof value === 'string' && pattern.test(value);
 const closed = (value: BillReviewDraftValue) => value.state === 'accepted' || value.state === 'discarded';
-const valueKeys = (value: unknown) => [...VALUE_KEYS, ...(object(value) && Object.hasOwn(value, 'financialReview') ? ['financialReview'] : [])];
+const valueKeys = (value: unknown) => [...VALUE_KEYS, ...['financialReview', 'forwardedOriginalSource'].filter(key => object(value) && Object.hasOwn(value, key))];
 export const billReviewDraftRecordId = (id: string) => `${BILL_REVIEW_DRAFT_KIND}:${id}`;
 
 function checkValue(value: unknown): asserts value is BillReviewDraftValue {
@@ -36,6 +36,7 @@ function checkValue(value: unknown): asserts value is BillReviewDraftValue {
   if (!object(fields) || !FIELD_KEYS.every(key => Object.hasOwn(fields, key)) ||
       Object.keys(fields).some(key => ![...FIELD_KEYS, ...OPTIONAL_FIELD_KEYS].includes(key as typeof FIELD_KEYS[number])) ||
       OPTIONAL_FIELD_KEYS.some(key => Object.hasOwn(fields, key) && !text(fields[key], BILL_REVIEW_DRAFT_LIMITS[key]))) return invalid();
+  if (Object.hasOwn(fields, 'maintenanceClassification') && !['unclassified', 'maintenance', 'not-maintenance'].includes(String(fields.maintenanceClassification))) return invalid();
   if (typeof value.workspaceId !== 'string' || !WORKSPACE.test(value.workspaceId) ||
       typeof value.state !== 'string' || !STATES.includes(value.state) || typeof value.billState !== 'string' || !BILL_STATES.includes(value.billState) ||
       !nullable(value.billId, /^source-bill:[a-f0-9]{64}$/) ||
@@ -44,6 +45,10 @@ function checkValue(value: unknown): asserts value is BillReviewDraftValue {
       FIELD_KEYS.some(key => !text(fields[key], BILL_REVIEW_DRAFT_LIMITS[key])) ||
       !text(value.reason, BILL_REVIEW_DRAFT_LIMITS.reason) || !text(value.seriesId, BILL_REVIEW_DRAFT_LIMITS.seriesId) ||
       !text(value.arrivalDate, BILL_REVIEW_DRAFT_LIMITS.arrivalDate)) return invalid();
+  if (Object.hasOwn(value, 'forwardedOriginalSource') && value.forwardedOriginalSource !== null) {
+    const reference = value.forwardedOriginalSource;
+    if (!exact(reference, ['itemId', 'messageId', 'expectedSourceDigest', 'expectedEnvelopeDigest']) || !text(reference.itemId, 64) || !HEX.test(reference.itemId as string) || !text(reference.messageId, 128) || !/^[a-fA-F0-9]{1,128}$/.test(reference.messageId as string) || !text(reference.expectedSourceDigest, 64) || !HEX.test(reference.expectedSourceDigest as string) || !text(reference.expectedEnvelopeDigest, 64) || !HEX.test(reference.expectedEnvelopeDigest as string)) return invalid();
+  }
   if (Object.hasOwn(value, 'financialReview')) {
     const financial = value.financialReview;
     if (!exact(financial, [...FINANCIAL_OBSERVATION_KEYS, 'reviewReason']) || value.billId === null || value.billRevision === null || value.sourceDigest === null || value.proposalRequest !== null) return invalid();

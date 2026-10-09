@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { budAutoSetupView, budAvailability, budFirstSetupCover, budFacingCopy, budReadinessFailure, budSetupJourney, parseBudStatus, type BudSetupInput } from "./bud-setup";
+import { budAutoSetupRetryable, budAutoSetupView, budAvailability, budFirstSetupCover, budFacingCopy, budReadinessFailure, budSetupJourney, parseBudStatus, type BudSetupInput } from "./bud-setup";
 import type { HermesStatus } from "@/state/store";
 
 const readyBase: BudSetupInput = {
@@ -101,6 +101,19 @@ describe("automatic Bud setup status", () => {
     ready: false, detail: "", homeDir: "/synthetic", profileDir: "/synthetic", installCommand: null, signInCommand: "",
     autoSetup: { state: "verifying", step: 3, total: 4, detail: "Connecting Bud’s model" },
   } as HermesStatus;
+
+  it('shows platform capability hold while saved work remains accessible and retries cannot fix it', () => {
+    const held = { ...status, workerIsolation: { state: 'held' as const, platform: 'win32', detail: 'Saved records and recovery remain available. Contact support.' } };
+    const availability = budAvailability(held, true, false, { canAdminister: false, officeLink: 'not-linked' });
+    expect(availability).toMatchObject({ ready: false, label: 'Worker unavailable on this computer', detail: held.workerIsolation.detail, action: 'View Bud status', canVerify: false });
+    expect(budAutoSetupRetryable(held)).toBe(false);
+    expect(budAutoSetupView(held)).toMatchObject({ working: false, detail: held.workerIsolation.detail });
+    expect(budFirstSetupCover(held, { connected: true, statusError: false, recovering: false })).toBeNull();
+    expect(budReadinessFailure(held)).toBeNull();
+    expect(parseBudStatus(held).workerIsolation).toEqual(held.workerIsolation);
+    expect(() => parseBudStatus({ ...held, ready: true })).toThrow();
+    expect(() => parseBudStatus({ ...held, workerIsolation: { state: 'ready', platform: 'win32', detail: '' } })).toThrow();
+  });
 
   it("covers the window only during Bud's first setup, with a way out unless it is running", () => {
     const ok = { connected: true, statusError: false, recovering: false };

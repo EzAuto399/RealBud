@@ -16,7 +16,7 @@ import { createReiMorningRefresh, REI_SIGN_IN_MISSED, reiMorningRuns } from "./r
 import { LoopManager } from "./routines.ts";
 import { FICTIONAL_BUSINESS, FICTIONAL_REI_ORIGIN, FICTIONAL_TENANT_LIST, fictionalBook, fictionalReiPack, fictionalReiPortal, type FictionalReiOptions } from "./testing/fictional-rei-portal.ts";
 import { LEARNED_LEAK_LABEL, LEARNED_LEAK_RECIPE, publishLearnedInDataDir, saveApprovedPathInDataDir } from "./testing/learned-recipe-fixture.ts";
-import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
+import { plantPrivateFile, privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { parseBrowserTaskGrant, type BrowserTaskGrant } from "../shared/browser-task.ts";
 import { governApprovals } from "./approval-settings.ts";
 import type { ApprovalChoice, ApprovalSettings } from "../shared/approval-settings.ts";
@@ -40,6 +40,9 @@ const ACCOUNT = { marker: FICTIONAL_BUSINESS };
 
 async function fixture(options: FictionalReiOptions = {}) {
   const root = privateTempRoot(join(tmpdir(), "rb-rei-refresh-")); dirs.push(root);
+  // The clock and Desk share one durable workspace, so retain its synthetic
+  // key as a source-run workspace would; an inline Desk key alone is not escrow.
+  plantPrivateFile(join(root, "desk.key"), KEY);
   const mock = fictionalReiPortal(options);
   const runtime = new BrowserRuntime({ root, command: mock.command, executable: async () => "/synthetic/bsk", startDaemon: async () => {} });
   await runtime.connect(); await runtime.select("work");

@@ -18,7 +18,7 @@ COPY managed-gateway/hermios-catalog.json ./
 # imports from every entrypoint and fails when this list falls behind.
 COPY server/composio-gmail.ts server/source-attachments.ts server/pdf-text.ts server/redact.ts server/service-entitlement.ts /app/server/
 COPY server/helpers/pdf-text-worker.mjs /app/server/helpers/pdf-text-worker.mjs
-COPY shared/mail-ingestion.ts shared/source-attachments.ts shared/service-entitlement.ts shared/app-tool-policy.ts /app/shared/
+COPY shared/mail-ingestion.ts shared/source-attachments.ts shared/service-entitlement.ts shared/app-tool-policy.ts shared/connected-app-binding.ts /app/shared/
 ENV NODE_ENV=production
 ENV PORT=8787
 EXPOSE 8787

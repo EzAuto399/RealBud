@@ -291,6 +291,14 @@ export function deskEnvelopeOpens(hex, file) {
 function existingEncryptedState(dir) {
   const names = fs.readdirSync(dir);
   if (names.some(name => name.startsWith('desk.json') || name.startsWith('desk.key') || name.startsWith('workflow-state.sqlite') || name.startsWith('private-workspace-restore'))) return true;
+  for (const name of ['artifacts', 'desk-backups']) {
+    const savedDir = path.join(dir, name);
+    try {
+      const stat = fs.lstatSync(savedDir);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) throw recovery();
+      if (fs.readdirSync(savedDir).length) return true;
+    } catch (error) { if (error.code !== 'ENOENT') throw recovery(); }
+  }
   const privateDir = path.join(dir, 'company-installation', 'private');
   try { if (fs.readdirSync(privateDir).length) return true; } catch (error) { if (error.code !== 'ENOENT') throw recovery(); }
   return false;

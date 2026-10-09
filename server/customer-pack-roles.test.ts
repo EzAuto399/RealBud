@@ -12,7 +12,7 @@ import { workflowRecipeId } from '../shared/agency-workflow-packs.ts';
 import { hiddenAustinLoopIds } from '../shared/austin-pack.ts';
 import { createAgencySetupService, type AgencySetupOptions } from './agency-setup.ts';
 import { createAustinPack, loadAustinPack } from './austin-pack.ts';
-import { austinAccountsCustomerPack, austinPropertyCustomerPack } from './customer-pack-definition.ts';
+import { austinAccountsCustomerPack, latestAustinAccountsCustomerPack, austinPropertyCustomerPack } from './customer-pack-definition.ts';
 import { createCustomerPackService, validateCustomerPack, type CustomerPackServiceOptions } from './customer-packs.ts';
 import { loadRecipes, resetRecipeApprovalsAtomically, saveRecipesAtomically } from './recipes.ts';
 import { DATA_DIR } from './config.ts';
@@ -234,13 +234,19 @@ describe('packs from your office', () => {
 
   it('still admits the role packs as built-ins from the app itself, and exports them for signing', async () => {
     const f = office();
-    for (const build of [austinAccountsCustomerPack, austinPropertyCustomerPack]) {
+    // Export offers the latest reviewed revision; the published r2 loader stays
+    // immutable and remains admitted separately for existing installations.
+    for (const build of [latestAustinAccountsCustomerPack, austinPropertyCustomerPack]) {
       const exported = await f.packs.handle(`/api/customer-packs/${build().id}/export`, 'GET');
       expect(exported?.body).toEqual(validateCustomerPack(build()));
       expect((await f.packs.preview(exported!.body)).canInstall).toBe(true);
       // The fallback preview admits only an exact copy: one changed field needs a signature.
       await expect(f.packs.preview({ ...(exported!.body as object), title: 'Fictional changed title' })).rejects.toMatchObject({ status: 400 });
     }
+    const historical = validateCustomerPack(austinAccountsCustomerPack());
+    expect(historical.revision).toBe(2);
+    expect(validateCustomerPack(latestAustinAccountsCustomerPack()).revision).toBe(3);
+    expect((await f.packs.preview(historical)).canInstall).toBe(true);
     // The owner's Preview then Import of a built-in role pack installs it like an office pack.
     const exported = (await f.packs.handle('/api/customer-packs/austin-accounts/export', 'GET'))!.body;
     const preview = await f.packs.handle('/api/customer-packs/preview', 'POST', { pack: exported });
@@ -256,4 +262,3 @@ describe('packs from your office', () => {
       expect(() => parseOfficePacks(bad)).toThrow('could not be read');
   });
 });
-

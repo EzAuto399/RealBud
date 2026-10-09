@@ -163,7 +163,7 @@ test('a live lock owner is never stolen from, and its lock is untouched', async 
 
 test('a lock from another host or an unknown writer is never recovered; a proved-dead same-host owner is', () => {
   const f = fixture(); try {
-    mkdirSync(dirname(f.registry), { recursive: true });
+    mkdirSync(dirname(f.registry), { recursive: true, mode: 0o700 });
     const lock = `${f.registry}.lock`;
     const update = () => updateRegistry(f.registry, devices => ({ devices }));
     // Another host's process is unknowable, even with a pid that cannot exist here.

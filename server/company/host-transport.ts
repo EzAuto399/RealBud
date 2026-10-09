@@ -144,7 +144,11 @@ function isBrowserAttempt(headers: IncomingHttpHeaders): boolean {
 function companyAuthorityHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
   const value = headers[MEMBER_HEADER];
   const execution = headers[EXECUTION_HEADER];
+  // A current member names the office it expects; the host refuses enrollment
+  // for any other. Older members omit it (see expectedHostCompany).
   const result: IncomingHttpHeaders = {};
+  const companyId = headers['x-realbud-company-id'];
+  if (typeof companyId === 'string') result['x-realbud-company-id'] = companyId;
   if (typeof value === 'string' && value.length > 0 && value.length <= 4096 && !/[\0\r\n]/.test(value)) result[MEMBER_HEADER] = value;
   if (typeof execution === 'string' && /^[a-f0-9]{64}$/.test(execution)) result[EXECUTION_HEADER] = execution;
   return result;
@@ -334,12 +338,14 @@ export async function requestCompanyHost(options: {
   path: string;
   method: string;
   memberToken?: string;
+  /** Saved pairing identity, used only as an exact host precondition. */
+  companyId?: string;
   executionToken?: string;
   body?: unknown;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<{ status: number; body: unknown }> {
-  const { origin, certificatePem, path, method, memberToken, executionToken, body, signal } = options;
+  const { origin, certificatePem, path, method, memberToken, executionToken, companyId, body, signal } = options;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (signal?.aborted) {
     const err = new Error('aborted');
@@ -347,6 +353,7 @@ export async function requestCompanyHost(options: {
     throw err;
   }
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 60_000) throw new Error('company host timeout');
+  if (companyId !== undefined && !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(companyId)) throw new Error('invalid company identity');
   if (!/^[A-Z]+$/.test(method) || method.length > 16) throw new Error('invalid company path');
   if (!isCanonicalPath(path) || !ALLOWED.get(path)?.has(method)) throw new Error('invalid company path');
   if (executionToken !== undefined && (!/^\/api\/company\/execution\/(status|admit|check|renew|settle)$/.test(path) || !/^[a-f0-9]{64}$/.test(executionToken) || memberToken)) throw new Error('invalid execution credential');
@@ -486,6 +493,7 @@ export async function requestCompanyHost(options: {
             req.setHeader(MEMBER_HEADER, memberToken);
           }
           if (executionToken) req.setHeader(EXECUTION_HEADER, executionToken);
+          if (companyId) req.setHeader('x-realbud-company-id', companyId);
           req.end(payload);
         } catch {
           fail(failedRequest());

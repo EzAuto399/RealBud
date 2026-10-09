@@ -16,6 +16,7 @@ import type { OperatorPrincipal } from './operator-token.ts';
 import { ensureManualPaymentTables, invoiceStanding, manualPayments, squarePayment, type BillingService, type Invoice, type InvoiceStatus,
   type ManualPayment, type ManualPaymentMethod, type ManualPaymentReversal } from './billing.ts';
 import type { CommercialTerms } from './commercial-terms.ts';
+import { requireOfficeResalePolicies } from './office-ai-terms.ts';
 import { closeOfficeMonth, type MonthClose, type OfficeBilling } from './office-ai-billing.ts';
 import { periodAt } from './money.ts';
 import type { BillingPlans, BillingPlanView } from './billing-plans.ts';
@@ -63,6 +64,16 @@ function amount(value:unknown):string {
   return text as string;
 }
 const officeName=(customer:{name:string;tradingName?:string})=>customer.tradingName||customer.name;
+const snapshotFields=(value:Record<string,unknown>)=>['expectedCompanyId','expectedOutstandingCents'].filter(key=>Object.hasOwn(value,key));
+function checkCompany(invoice:Invoice,value:Record<string,unknown>) {
+  if(Object.hasOwn(value,'expectedCompanyId')) { id(value.expectedCompanyId); requireThat(invoice.companyId===value.expectedCompanyId,'account_changed',409); }
+}
+function checkBalance(standing:{outstandingCents:string},value:Record<string,unknown>) {
+  if(Object.hasOwn(value,'expectedOutstandingCents')) {
+    requireThat(typeof value.expectedOutstandingCents==='string' && /^(0|[1-9][0-9]{0,14})$/.test(value.expectedOutstandingCents),'invalid_amount');
+    requireThat(standing.outstandingCents===value.expectedOutstandingCents,'invoice_changed',409);
+  }
+}
 
 /** The operator's view of one invoice: its standing and every payment, Square and recorded. */
 export function operatorInvoice(billing:BillingService,invoice:Invoice,now=billing.ledger.now()):OperatorInvoice {
@@ -91,7 +102,7 @@ function storedInvoice(billing:BillingService,invoiceId:string):Invoice {
  * different record under the same id is `payment_conflict`. */
 export function recordManualPayment(billing:BillingService,operator:OperatorPrincipal,invoiceId:string,value:unknown):OperatorInvoice {
   object(value);
-  exact(value,['paymentId','method','amountCents','receivedOn',...(value.reference!==undefined?['reference']:[]),...(value.note!==undefined?['note']:[])]);
+  exact(value,['paymentId','method','amountCents','receivedOn',...(value.reference!==undefined?['reference']:[]),...(value.note!==undefined?['note']:[]),...snapshotFields(value)]);
   requireThat(typeof value.paymentId==='string' && UUID.test(value.paymentId),'invalid_payment_id');
   requireThat(typeof value.method==='string' && (METHODS as readonly string[]).includes(value.method),'invalid_payment_method');
   const amountCents=amount(value.amountCents);
@@ -103,6 +114,7 @@ export function recordManualPayment(billing:BillingService,operator:OperatorPrin
   ensureManualPaymentTables(ledger);
   ledger.db.transaction(()=>{
     const invoice=storedInvoice(billing,invoiceId);
+    checkCompany(invoice,value);
     const prior=ledger.db.get<{body:string}>('SELECT body FROM manual_payments WHERE id=?',record.id);
     if(prior) {
       const saved=JSON.parse(prior.body) as ManualPayment;
@@ -112,6 +124,7 @@ export function recordManualPayment(billing:BillingService,operator:OperatorPrin
     requireThat(invoice.kind==='Tax Invoice' && BigInt(invoice.totalCents)>0n,'nothing_to_pay',409);
     requireThat(!squarePayment(ledger,invoiceId),'invoice_already_paid',409);
     const standing=invoiceStanding(ledger,invoice,now,billing.invoiceTermsDays);
+    checkBalance(standing,value);
     requireThat(BigInt(amountCents)<=BigInt(standing.outstandingCents),'payment_exceeds_outstanding',409);
     const payment:ManualPayment={...record,recordedBy:operator.subject,recordedAt:now};
     ledger.db.run('INSERT INTO manual_payments(id,invoice,body) VALUES(?,?,?)',payment.id,invoiceId,canonical(payment));
@@ -123,18 +136,20 @@ export function recordManualPayment(billing:BillingService,operator:OperatorPrin
 /** Undo one recorded payment with a reason: appends a reversal, deletes nothing.
  * Square payments are refunded through Square, never undone here. Idempotent. */
 export function reverseManualPayment(billing:BillingService,operator:OperatorPrincipal,invoiceId:string,paymentId:string,value:unknown):OperatorInvoice {
-  object(value); exact(value,['reason']);
+  object(value); exact(value,['reason',...snapshotFields(value)]);
   requireThat(typeof value.reason==='string' && plain(value.reason,false),'invalid_reason');
   const reason=value.reason.trim(); requireThat(reason.length>=3 && reason.length<=300,'invalid_reason');
   const ledger=billing.ledger, now=ledger.now();
   ensureManualPaymentTables(ledger);
   ledger.db.transaction(()=>{
     const invoice=storedInvoice(billing,invoiceId);
+    checkCompany(invoice,value);
     const square=squarePayment(ledger,invoiceId);
     requireThat(!square || square.id!==paymentId,'square_payment_not_reversible',409);
     const row=ledger.db.get<{body:string}>('SELECT body FROM manual_payments WHERE id=? AND invoice=?',paymentId,invoiceId); requireThat(row,'payment_not_found',404);
     const prior=ledger.db.get<{body:string}>('SELECT body FROM manual_payment_reversals WHERE payment=?',paymentId);
     if(prior) { requireThat((JSON.parse(prior.body) as ManualPaymentReversal).reason===reason,'reversal_conflict',409); return; }
+    checkBalance(invoiceStanding(ledger,invoice,now,billing.invoiceTermsDays),value);
     const reversal:ManualPaymentReversal={paymentId,reason,by:operator.subject,at:now};
     ledger.db.run('INSERT INTO manual_payment_reversals(payment,body) VALUES(?,?)',paymentId,canonical(reversal));
     ledger.db.append(invoice.companyId,'manual_payment_reversed',null,now,{invoiceId,...reversal});
@@ -155,7 +170,7 @@ type Resolved={termsVersion:string|null;officeName:string|null;blocker:string|nu
  * An earlier version accepted but a newer one published and not accepted:
  * `terms_version_ambiguous` (the office must accept the current version). Then
  * the same admission the close itself checks, reported as its code. */
-function resolveTerms(billing:BillingService,companyId:string,period:string):Resolved {
+function resolveTerms(billing:BillingService,companyId:string,period:string,deferAi=false):Resolved {
   const ledger=billing.ledger;
   const latest=ledger.db.get<{version:string;body:string}>('SELECT version,body FROM commercial_terms WHERE tenant=? AND period=? ORDER BY seq DESC LIMIT 1',companyId,period);
   const name=latest?officeName((JSON.parse(latest.body) as CommercialTerms).customer):null;
@@ -166,10 +181,11 @@ function resolveTerms(billing:BillingService,companyId:string,period:string):Res
   if(!(period<periodAt(ledger.now()))) return block('month_not_closed');
   try {
     requireThat(billing.commercialTerms,'commercial_terms_unavailable',503);
-    billing.commercialTerms.accepted(companyId,period,latest.version);
+    const current=billing.commercialTerms.accepted(companyId,period,latest.version);
     const tenant=ledger.tenant(companyId);
     requireThat(period>=periodAt(tenant.goLiveAt),'period_before_go_live',409);
     requireThat(!ledger.db.get('SELECT id FROM invoices WHERE tenant=? AND period>?',companyId,period),'invoice_period_out_of_order',409);
+    if(current.terms.aiUsage && !deferAi) requireOfficeResalePolicies(billing.commercialTerms,ledger,companyId,[period]);
   } catch(error) { return block(error instanceof GatewayError?error.code:'close_blocked'); }
   return {termsVersion:latest.version,officeName:name,blocker:null};
 }
@@ -210,7 +226,8 @@ export function closeList(billing:BillingService,period:string,plans?:BillingPla
  * already returns its invoice. The invoice email is queued by the close and
  * delivered by the server's drain. */
 export async function closeMonth(options:OfficeBilling&{policyUnavailable?:string;plans?:BillingPlans},operator:OperatorPrincipal,value:unknown) {
-  object(value); exact(value,['companyId','period',...(value.deferAi!==undefined?['deferAi']:[])]);
+  object(value); exact(value,['companyId','period',...(value.deferAi!==undefined?['deferAi']:[]),...(Object.hasOwn(value,'expectedTermsVersion')?['expectedTermsVersion']:[])]);
+  if(Object.hasOwn(value,'expectedTermsVersion')) id(value.expectedTermsVersion);
   id(value.companyId); requireThat(typeof value.period==='string' && MONTH.test(value.period),'invalid_billing_period');
   requireThat(value.deferAi===undefined || typeof value.deferAi==='boolean','invalid_defer_ai');
   const {billing}=options, companyId=value.companyId, period=value.period as string;
@@ -222,12 +239,14 @@ export async function closeMonth(options:OfficeBilling&{policyUnavailable?:strin
     requireThat(!options.policyUnavailable,options.policyUnavailable??'',503);
     const plan=planBlocker(options.plans,companyId,period);
     if(plan) throw new GatewayError(plan,plan.startsWith('billing_plan_unconfigured:') || plan==='commercial_terms_unavailable'?503:409);
-    const resolved=resolveTerms(billing,companyId,period);
+    const resolved=resolveTerms(billing,companyId,period,value.deferAi===true);
     if(resolved.blocker) throw new GatewayError(resolved.blocker,resolved.blocker==='commercial_terms_unavailable'?503:409);
     termsVersion=resolved.termsVersion!;
   }
-  const closed=await closeOfficeMonth(options,companyId,period,termsVersion,{deferAi:value.deferAi===true});
-  if(closed.ai!=='already_closed') billing.ledger.db.transaction(()=>billing.ledger.db.append(companyId,'operator_month_closed',null,billing.ledger.now(),{invoiceId:closed.invoice.id,period,termsVersion,ai:closed.ai,by:operator.subject}));
+  if(Object.hasOwn(value,'expectedTermsVersion')) requireThat(value.expectedTermsVersion===termsVersion,'commercial_terms_changed',409);
+  const closed=await closeOfficeMonth(options,companyId,period,termsVersion,{deferAi:value.deferAi===true,onCreated(invoice,ai) {
+    billing.ledger.db.append(companyId,'operator_month_closed',null,billing.ledger.now(),{invoiceId:invoice.id,period,termsVersion,ai,by:operator.subject});
+  }});
   return {invoice:operatorInvoice(billing,closed.invoice),ai:closed.ai,alreadyClosed:closed.ai==='already_closed'};
 }
 

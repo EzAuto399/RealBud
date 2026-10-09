@@ -8,7 +8,7 @@ import { redactSecretsInText } from "./redact.ts";
 import { join } from "node:path";
 
 import { hardenHermesChildEnv, hermesWorkerSandbox } from "./drivers/acp/hermes.ts";
-import { trackSandboxedChild } from "./worker-network-sandbox.ts";
+import { trackSandboxedChild, workerIsolationRefusal } from "./worker-network-sandbox.ts";
 import { applyAskModelRelayEnv, withAskModelRelayLease } from "./ask-model-relay.ts";
 import { augmentedPath } from "./env-path.ts";
 import { execFileCli, type OneShotOptions } from "./procs.ts";
@@ -178,6 +178,8 @@ async function inspect(csv: string, opts: InspectOptions | undefined, usage: Run
     const mapping = headers && await jevMapping(headers, countJevUsage(usage, jev.decide));
     if (mapping) return { mapping, detail: "Bud read the columns." };
   }
+  const isolation = workerIsolationRefusal();
+  if (isolation) return miss(isolation);
   if (process.env.VITEST && !opts?.cli) return miss("tests do not use the live worker");
   // The pack checks read the scoped seat's profile; launch that same profile,
   // never the shared base, so a member's upload stays in their own worker.

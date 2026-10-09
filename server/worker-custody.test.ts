@@ -36,7 +36,8 @@ describe("durable worker custody across restart", () => {
     const before = await restart();
     expect(before.custody.recordWorkerCustody(worker.pid!)).toBe(true);
     // This run's own live worker never blocks its own launches.
-    expect(() => launch(before.sandbox)).not.toThrow();
+    expect(before.custody.workerCustodyRefusal()).toBeNull();
+    expect(() => launch(before.sandbox)).toThrow(before.sandbox.WORKER_PLATFORM_HELD);
 
     const after = await restart();
     expect(() => launch(after.sandbox)).toThrow(after.custody.WORKER_CUSTODY_HELD);
@@ -60,7 +61,8 @@ describe("durable worker custody across restart", () => {
     await waitGone(unsaved.pid!);
     expect(() => launch(sandbox)).toThrow(custody.WORKER_CUSTODY_UNSAVED);
     custody.custodyIo.create = create;
-    expect(() => launch(sandbox)).not.toThrow();
+    expect(custody.workerCustodyRefusal()).toBeNull();
+    expect(() => launch(sandbox)).toThrow(sandbox.WORKER_PLATFORM_HELD);
   });
 
   it("(b) writes the release only after the stop is confirmed", async () => {
@@ -90,7 +92,8 @@ describe("durable worker custody across restart", () => {
     expect(() => launch(sandbox)).toThrow(custody.WORKER_CUSTODY_UNSAVED);
     expect(records()).toHaveLength(1);
     custody.custodyIo.create = create; custody.custodyIo.remove = remove;
-    expect(() => launch(sandbox)).not.toThrow();
+    expect(custody.workerCustodyRefusal()).toBeNull();
+    expect(() => launch(sandbox)).toThrow(sandbox.WORKER_PLATFORM_HELD);
     expect(records()).toEqual([]);
   });
 
@@ -154,6 +157,7 @@ setInterval(() => {}, 100);`;
     process.kill(pids.leader, "SIGKILL"); await waitGone(pids.leader);
     expect(() => launch(sandbox)).toThrow(custody.WORKER_CUSTODY_HELD);
     process.kill(pids.descendant, "SIGKILL"); await waitGone(pids.descendant);
-    expect(() => launch(sandbox)).not.toThrow();
+    expect(custody.workerCustodyRefusal()).toBeNull();
+    expect(() => launch(sandbox)).toThrow(sandbox.WORKER_PLATFORM_HELD);
   }, 15_000);
 });

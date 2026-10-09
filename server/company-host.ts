@@ -26,6 +26,18 @@ export function companyExecutionToken(request: Request): string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value) ? value : '';
 }
 
+function expectedHostCompany(request: Request, currentCompanyId: string): string {
+  const expected = request.headers['x-realbud-company-id'];
+  // Compatibility window: a member computer from before this precondition sends
+  // no expected office. Its join/sign-in/recovery keeps the earlier behaviour
+  // (its TLS-pinned pairing and the after-the-fact company check on the member
+  // side), checked against this host's own single company. Close the window by
+  // answering an update-required refusal here once older members are retired.
+  if (expected === undefined) return currentCompanyId;
+  if (typeof expected !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(expected)) throw new CompanyError('invalid_input');
+  return expected;
+}
+
 function fields(value: unknown, allowed: string[]): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => !allowed.includes(key))) {
     throw new CompanyError("invalid_input");
@@ -52,6 +64,7 @@ function fail(error: unknown, path: string): Reply {
       unauthenticated: "The company sign-in details were not accepted. Check them or wait five minutes after repeated attempts.",
       forbidden: "Your company membership does not permit this action.", not_found: "This company item is unavailable.",
       invalid_input: "Check the company fields and try again.", conflict: "Company state changed. Refresh before trying again.",
+      host_identity_mismatch: "This host does not serve the expected office. No membership or sign-in changes were made. Check the current host code with the office owner.",
       claim_busy: "This case is already being worked on.", stale_claim: "This claim is no longer current.",
       recovery_required: "The previous work needs recovery before another claim can start.",
       unsafe_database_role: "Company storage needs a restricted application role. Contact service administration.",
@@ -99,6 +112,7 @@ export function createCompanyHost(options: {
           const company = await currentCompany();
           status.storageAvailable = true;
           status.configured = Boolean(company);
+          if (company) status.hostCompany = { version: 1, companyId: company.companyId };
           // Successful authorization only when status requested with an actual
           // token; ordinary status discovery does not mint or expand authority.
           const authorized = options.hasAdminSession(request);
@@ -170,22 +184,23 @@ export function createCompanyHost(options: {
         if (path === "/api/company/join" && method === "POST") {
           const input = fields(body, ["invitationToken", "credential"]);
           if (typeof input.invitationToken !== "string" || input.credential === undefined) throw new CompanyError("invalid_input");
-          await currentCompany();
-          const joined = await kernel.redeemInvitation(input.invitationToken, input.credential);
+          const company = await currentCompany();
+          if (!company) throw new CompanyError("unauthenticated");
+          const joined = await kernel.redeemInvitation(input.invitationToken, input.credential, expectedHostCompany(request, company.companyId));
           return { status: 201, body: { ...await session(joined.sessionToken), recoveryKey: joined.recoveryKey } };
         }
         if (path === "/api/company/sign-in" && method === "POST") {
           const input = fields(body, ["loginName", "password"]);
           const company = await currentCompany();
           if (!company) throw new CompanyError("unauthenticated");
-          const result = await kernel.signInMember({ companyId: company.companyId, loginName: input.loginName as string, password: input.password as string });
+          const result = await kernel.signInMember({ companyId: company.companyId, expectedCompanyId: expectedHostCompany(request, company.companyId), loginName: input.loginName as string, password: input.password as string });
           return { status: 200, body: await session(result.sessionToken) };
         }
         if (path === "/api/company/recover-member" && method === "POST") {
           const input = fields(body, ["loginName", "recoveryKey", "newPassword"]);
           const company = await currentCompany();
           if (!company) throw new CompanyError("unauthenticated");
-          const result = await kernel.recoverMember({ companyId: company.companyId, loginName: input.loginName as string, recoveryKey: input.recoveryKey as string, newPassword: input.newPassword as string });
+          const result = await kernel.recoverMember({ companyId: company.companyId, expectedCompanyId: expectedHostCompany(request, company.companyId), loginName: input.loginName as string, recoveryKey: input.recoveryKey as string, newPassword: input.newPassword as string });
           return { status: 200, body: { ...await session(result.sessionToken), recoveryKey: result.recoveryKey } };
         }
         if (path === "/api/company/logout" && method === "POST") {

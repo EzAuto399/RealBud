@@ -21,6 +21,8 @@ export interface MaintenanceInvoice {
   description: string;
   /** How the sender was read, e.g. "Sent via Xero for a@b.example." Shown as a finding note. */
   senderNote?: string;
+  classificationNeeded?: boolean;
+  senderEvidenceVersion?: string;
 }
 
 export interface MaintenanceCoverage {
@@ -48,7 +50,7 @@ export interface FindingInvoice {
   unresolvedRevision: boolean;
 }
 
-export type SenderReason = "unlisted-sender" | "conflicting-sender" | "supplier-unresolved" | "unverified-sender";
+export type SenderReason = "unlisted-sender" | "conflicting-sender" | "supplier-unresolved" | "unverified-sender" | "classification-needed";
 
 interface FindingBase {
   id: string;
@@ -244,6 +246,7 @@ export function computeMaintenanceFindings(input: MaintenanceFindingsInput): Mai
       const bySender = new Map<string, SenderReason[]>();
       for (const r of entry.records) {
         const reasons: SenderReason[] = [];
+        if (r.classificationNeeded) reasons.push("classification-needed");
         if (r.senderMatch === "unlisted") reasons.push("unlisted-sender");
         if (r.senderMatch === "conflict") reasons.push("conflicting-sender");
         if (r.senderMatch === "unverified") reasons.push("unverified-sender");
@@ -254,13 +257,14 @@ export function computeMaintenanceFindings(input: MaintenanceFindingsInput): Mai
       }
       for (const [senderEmail, reasons] of bySender) {
         const notes = sharedNotes([entry], input.coverage);
+        if (reasons.includes("classification-needed")) notes.push("Maintenance classification is undecided. Open the saved bill and record a separate staff decision after checking the original source.");
         if (supplierRef === null) {
           notes.push("Supplier not matched yet, so this invoice was not compared with others from the same supplier.");
         }
         findings.push({
           kind: "sender-verification",
           id: hash(["sender-verification", propertyId, supplierRef, senderEmail, entry.key]),
-          evidenceVersion: hash([entryEvidence(entry), reasons]),
+          evidenceVersion: hash([entryEvidence(entry), reasons, entry.records.map(r => r.senderEvidenceVersion ?? null).sort()]),
           propertyId,
           supplierRef,
           senderEmail,

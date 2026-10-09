@@ -9,6 +9,8 @@ import { expectedBillsPage } from './expected-bills-page.ts';
 import type { BillDuplicateCheck, BillFacts, BillMailSource } from '../shared/source-bills.ts';
 import type { JevRequest, JevResult } from './jev-client.ts';
 import { removeFixture } from './testing/private-fixture.ts';
+import { billSenderEnvelopeDigest } from './source-bill-rules.ts';
+import { validateOccurrence } from './source-bill-graph.ts';
 import { listHistory } from './computer-history.ts';
 
 const resources: { dir: string; db: WorkflowDatabase }[] = [];
@@ -24,7 +26,10 @@ function fixture(jev?: BillApiHost['jev']) {
   const source: BillMailSource = { accountId: 'private-mail', receiptId: 'synthetic-receipt', threadId: 'abc', message: { id: messageId,
     at: now - 1000, from: 'billing@example.test', subject: 'Fictional water invoice', body: 'Please review this fictional invoice.', bodyTruncated: false, attachments: [] } };
   let recovering = false, propertyIds = ['private-property'];
+  const reviewContext = { workspaceId: 'fictional-private-workspace', setupRevision: 1, accountId: source.accountId as string | null };
   const host = {
+    sourceToken: vi.fn(() => db.changeToken()),
+    withReviewContext: async <T>(work: (context: typeof reviewContext) => T) => work(reviewContext),
     register: vi.fn(() => store),
     source: vi.fn(async (item: string, message: string) => {
       if (item !== itemId || message !== messageId) throw Object.assign(new Error('Saved message unavailable.'), { status: 404 });
@@ -38,8 +43,64 @@ function fixture(jev?: BillApiHost['jev']) {
   const handle = createSourceBillsApi(host);
   const call = (path: string, method = 'GET', body?: unknown) => handle(new URL(path, 'http://127.0.0.1'), method, body);
   const acceptance = () => ({ itemId, messageId, expectedSourceDigest: previewBillSource(source).digest, sourceReviewed: true, facts: structuredClone(facts), reviewReason: 'Human reviewed the saved message.' });
-  return { dir, db, store, host, source, call, acceptance, recovery: (value: boolean) => { recovering = value; }, properties: (value: string[]) => { propertyIds = value; } };
+  return { dir, db, store, host, source, call, acceptance, reviewContext, recovery: (value: boolean) => { recovering = value; }, properties: (value: string[]) => { propertyIds = value; } };
 }
+
+describe('actual original sender staff review', () => {
+  function forwardedFixture() {
+    const f = fixture(), originalItemId = 'b'.repeat(64), originalMessageId = 'cd';
+    const original: BillMailSource = { ...structuredClone(f.source), receiptId: 'actual-original-receipt', threadId: 'original-thread', message: { ...structuredClone(f.source.message), id: originalMessageId, at: f.source.message.at - 1000, from: 'billing@original.example.test', authResults: 'mx.google.com; dmarc=pass header.from=original.example.test', subject: 'Original fictional invoice' } };
+    f.source.message.subject = 'Fwd: Original fictional invoice'; f.source.message.body = '---------- Forwarded message ---------\nFrom: billing@original.example.test\nFictional invoice';
+    f.source.message.from = 'office@forwarder.example.test';
+    f.host.source.mockImplementation(async (id, message) => {
+      if (id === itemId && message === messageId) return structuredClone(f.source);
+      if (id === originalItemId && message === originalMessageId) return structuredClone(original);
+      throw Object.assign(new Error('Actual original unavailable'), { status: 404 });
+    });
+    const evidence = previewBillSource(original);
+    const input = { ...f.acceptance(), expectedWorkspaceId: f.reviewContext.workspaceId, expectedSetupRevision: f.reviewContext.setupRevision, expectedAccountId: f.reviewContext.accountId,
+      originalSourceReviewed: true, forwardedOriginalSource: { itemId: originalItemId, messageId: originalMessageId, expectedSourceDigest: evidence.digest, expectedEnvelopeDigest: billSenderEnvelopeDigest(evidence) } };
+    return { ...f, original, input, originalItemId, originalMessageId };
+  }
+  it('persists exact trusted original provenance with host review identity and strict portable graph admission', async () => {
+    const f = forwardedFixture(), saved = (await f.call('/api/bill-occurrences', 'POST', f.input))!.body as any;
+    expect(saved.forwardedSenderReview).toMatchObject({ version: 1, forwardedSourceDigest: f.input.expectedSourceDigest, originalItemId: f.originalItemId, originalEnvelopeDigest: f.input.forwardedOriginalSource.expectedEnvelopeDigest, reviewedBy: 'private-local-reviewer', reviewedAt: now });
+    expect(saved.forwardedSenderReview.originalSource).toEqual(previewBillSource(f.original));
+    const portable = JSON.parse(JSON.stringify(saved)); expect(validateOccurrence(portable)).toEqual(saved);
+    const reopened = new SourceBillRegister(f.db, { dataDir: f.dir, now: () => now }); expect(reopened.getOccurrence(saved.id)).toEqual(saved);
+    for (const mutate of [(row: any) => { row.forwardedSenderReview.originalSource.message.from = 'spoofed@example.test'; }, (row: any) => { row.forwardedSenderReview.originalSource.message.extra = 'unadmitted'; }, (row: any) => { row.forwardedSenderReview.originalSource.accountId = 'other-account'; }]) {
+      const tampered = structuredClone(saved); mutate(tampered); expect(() => validateOccurrence(tampered)).toThrow(/recovery/);
+    }
+  });
+  it('requires separate human confirmation and rejects missing, wrong-account, changed, forwarded or caller-supplied original evidence', async () => {
+    const f = forwardedFixture();
+    await expect(f.call('/api/bill-occurrences', 'POST', { ...f.input, originalSourceReviewed: false })).rejects.toMatchObject({ status: 400 });
+    await expect(f.call('/api/bill-occurrences', 'POST', { ...f.input, forwardedOriginalSource: { ...f.input.forwardedOriginalSource, itemId: 'c'.repeat(64) } })).rejects.toMatchObject({ status: 404 });
+    await expect(f.call('/api/bill-occurrences', 'POST', { ...f.input, forwardedOriginalSource: { ...f.input.forwardedOriginalSource, sender: 'caller@fake.test' } })).rejects.toMatchObject({ status: 400 });
+    f.original.accountId = 'other-account'; await expect(f.call('/api/bill-occurrences', 'POST', f.input)).rejects.toMatchObject({ status: 409 }); f.original.accountId = f.source.accountId;
+    f.original.message.authResults = 'mx.google.com; dmarc=fail header.from=original.example.test';
+    expect(previewBillSource(f.original).digest).toBe(f.input.forwardedOriginalSource.expectedSourceDigest); // Legacy hashes deliberately do not bind these headers.
+    await expect(f.call('/api/bill-occurrences', 'POST', f.input)).rejects.toMatchObject({ status: 409 });
+    f.input.forwardedOriginalSource.expectedEnvelopeDigest = billSenderEnvelopeDigest(previewBillSource(f.original));
+    f.original.message.subject = 'Fwd: another copy'; f.input.forwardedOriginalSource.expectedSourceDigest = previewBillSource(f.original).digest; f.input.forwardedOriginalSource.expectedEnvelopeDigest = billSenderEnvelopeDigest(previewBillSource(f.original));
+    await expect(f.call('/api/bill-occurrences', 'POST', f.input)).rejects.toThrow('Another forwarded copy');
+    expect(f.store.counts().occurrences).toBe(0);
+  });
+  it('checks changed source and current setup/account/workspace after awaits, and accepts the stable retry', async () => {
+    const f = forwardedFixture(); let token = 'initial'; f.host.sourceToken.mockImplementation(() => token);
+    const sourceRead = f.host.source.getMockImplementation()!;
+    f.host.source.mockImplementation(async (id, message) => { const saved = await sourceRead(id, message); if (id === f.originalItemId) token = 'source changed during original read'; return saved; });
+    await expect(f.call('/api/bill-occurrences', 'POST', f.input)).rejects.toThrow('source envelope changed'); expect(f.store.counts().occurrences).toBe(0);
+    f.host.source.mockImplementation(sourceRead);
+    for (const context of [{ workspaceId: 'replaced' }, { setupRevision: 2 }, { accountId: 'other-account' }]) {
+      const old = { ...f.reviewContext }; Object.assign(f.reviewContext, context);
+      await expect(f.call('/api/bill-occurrences', 'POST', f.input)).rejects.toMatchObject({ status: 409 }); Object.assign(f.reviewContext, old);
+    }
+    const saved = (await f.call('/api/bill-occurrences', 'POST', f.input))!.body as any;
+    await expect(f.call(`/api/bill-occurrences/${saved.id}`, 'PUT', { ...f.input, expectedRevision: saved.revision - 1, state: 'received' })).rejects.toThrow('revision');
+    expect(f.store.getOccurrence(saved.id)?.forwardedSenderReview).toBeDefined();
+  });
+});
 
 describe('private source-bill host API', () => {
   it('previews exact-evidence candidates without writing, then requires an explicit current distinctness review', async () => {
@@ -168,7 +229,7 @@ describe('private source-bill host API', () => {
   it('accepts only a host-resolved saved message and host actor, preserving evidence across rescan and restart', async () => {
     const f = fixture();
     const preview = await f.call(`/api/bill-evidence/${itemId}?messageId=${messageId}`);
-    expect(preview).toEqual({ status: 200, body: previewBillSource(f.source) });
+    expect(preview).toEqual({ status: 200, body: { ...previewBillSource(f.source), senderEnvelopeDigest: billSenderEnvelopeDigest(previewBillSource(f.source)) } });
     const accepted = await f.call('/api/bill-occurrences', 'POST', f.acceptance());
     expect(accepted).toMatchObject({ status: 200, body: { revision: 1, source: previewBillSource(f.source), reviewedBy: 'private-local-reviewer', facts } });
     expect(f.host.source).toHaveBeenLastCalledWith(itemId, messageId);

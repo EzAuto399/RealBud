@@ -48,7 +48,8 @@ async function fixture() {
   const scan = vi.fn(async (current: MailAuthority, request: Parameters<Parameters<typeof createMailIngestionService>[0]['scan']>[1], _signal: AbortSignal): Promise<MailScanResult> =>
     ({ ...structuredClone(data), accountId: current.accountId, windowStartAt: request.windowStartAt, windowEndAt: request.windowEndAt }));
   const database = new WorkflowDatabase({dir:root,key:Buffer.alloc(32,7)}); databases.push(database);
-  const options = { database, directory: root, workspaceId: 'private-workspace-a', workroomDirectory: join(root, 'workroom'), key: Buffer.alloc(32, 7), authorize, scan, now: () => time };
+  const reviewContext = { workspaceId: 'private-workspace-a', setupRevision: 1, accountId: 'mail-a' as string | null };
+  const options = { withReviewContext: async <T>(work: (context: typeof reviewContext) => T) => work(reviewContext), database, directory: root, workspaceId: 'private-workspace-a', workroomDirectory: join(root, 'workroom'), key: Buffer.alloc(32, 7), authorize, scan, now: () => time };
   const service = createMailIngestionService(options);
   const vault = { async read(name: string): Promise<any> {
     if(name==='mail-workspace') { const state=await service.get(); return {...state,workspaceId:options.workspaceId,receipts: database.page<any>('mail-receipt',{limit:200}).records.map(r=>r.value)}; }
@@ -57,7 +58,7 @@ async function fixture() {
     if(name==='mail-workspace') {for(const r of value.receipts){const id=mailRecordId('mail-receipt',r.id),old=database.get('mail-receipt',id)!;database.update('mail-receipt',id,old.revision,()=>r);} const id=mailRecordId('mail-register'),reg=database.get<any>('mail-register',id)!;database.update('mail-register',id,reg.revision,()=>({...reg.value,latestScanId:value.latestScan?.id??null,activeScan:null}));return;}
     const kind=name==='mail-prepared-input'?'mail-prepared':'mail-source',id=mailRecordId(kind,name==='mail-prepared-input'?'workspace':name.slice(10)),old=database.get(kind,id)!;database.update(kind,id,old.revision,()=>value);
   }};
-  return { root, options, service, vault, authority, authorize, scan, data, advance: (ms = 1000) => { time += ms; },
+  return { root, options, service, vault, authority, authorize, scan, data, reviewContext, advance: (ms = 1000) => { time += ms; },
     workspaceFile: join(root, 'workflow-state.sqlite') };
 }
 async function reviewRun(f: Awaited<ReturnType<typeof fixture>>, patch: Partial<InboxReview> = {}): Promise<JobRun> {
@@ -69,6 +70,33 @@ async function reviewRun(f: Awaited<ReturnType<typeof fixture>>, patch: Partial<
       sourceMessageIds: t.messages.map(m => m.messageId), reason: 'Source needs a human reply review.', nextAction: 'Review the source before replying.', missingFacts: [] })), ...patch };
   return { id: randomUUID(), jobId: MORNING_MAIL_RECIPE, status: 'awaiting-approval', evidence: [{ kind: 'output', note: JSON.stringify(review) }] } as unknown as JobRun;
 }
+
+describe('mail staff review scope at the actual commit', () => {
+  it('holds replaced workspaces, changed setup/account and stale records without writing the note', async () => {
+    const f = await fixture(), saved = await f.service.collect(), item = saved.items[0];
+    const body = { expectedRevision: item.revision, expectedWorkspaceId: f.options.workspaceId, expectedSetupRevision: 1, expectedAccountId: 'mail-a', note: 'Fictional private note' };
+    for (const next of [{ workspaceId: 'private-workspace-replaced', setupRevision: 1, accountId: 'mail-a' }, { workspaceId: f.options.workspaceId, setupRevision: 2, accountId: 'mail-a' }, { workspaceId: f.options.workspaceId, setupRevision: 1, accountId: 'mail-b' }]) {
+      Object.assign(f.reviewContext, next);
+      await expect(f.service.update(item.id, body)).rejects.toMatchObject({ status: 409 });
+      expect((await f.service.get()).items[0]).toEqual(item);
+    }
+    Object.assign(f.reviewContext, { workspaceId: f.options.workspaceId, setupRevision: 1, accountId: 'mail-a' });
+    await expect(f.service.update(item.id, { ...body, expectedRevision: item.revision - 1 })).rejects.toMatchObject({ status: 409 });
+    await expect(f.service.update(item.id, { ...body, expectedAccountId: undefined })).rejects.toMatchObject({ status: 400 });
+    const next = (await f.service.update(item.id, body)).items[0]; expect(next.note).toBe(body.note); expect(next.revision).toBe(item.revision + 1);
+    expect(next).not.toHaveProperty('expectedWorkspaceId'); expect(next).not.toHaveProperty('expectedSetupRevision');
+  });
+  it('checks a changed host context after awaited admission and a rejected save does not deadlock the next review', async () => {
+    const f = await fixture(), item = (await f.service.collect()).items[0];
+    let release!: () => void, admitted!: () => void;
+    const waiting = new Promise<void>(resolve => { release = resolve; }), entered = new Promise<void>(resolve => { admitted = resolve; });
+    f.options.withReviewContext = async work => { admitted(); await waiting; return work(f.reviewContext); };
+    const body = { expectedRevision: item.revision, expectedWorkspaceId: f.options.workspaceId, expectedSetupRevision: 1, expectedAccountId: 'mail-a', note: 'Held old draft' };
+    const pending = f.service.update(item.id, body); await entered; f.reviewContext.setupRevision = 2; release();
+    await expect(pending).rejects.toMatchObject({ status: 409 }); expect((await f.service.get()).items[0]).toEqual(item);
+    expect((await f.service.update(item.id, { ...body, expectedSetupRevision: 2 })).items[0].note).toBe(body.note);
+  });
+});
 
 describe('durable private mail acquisition and work list', () => {
   it('makes every message in a large prepared input reachable through bounded line reads', async () => {

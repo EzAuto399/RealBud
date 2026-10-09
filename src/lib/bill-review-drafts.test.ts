@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BillReviewDraft, BillReviewDraftValue } from '@shared/bill-review-drafts';
-import { BillReviewDraftCoordinator } from './bill-review-drafts';
+import { BillReviewDraftCoordinator, draftValue } from './bill-review-drafts';
 
 const value = (): BillReviewDraftValue => ({ workspaceId: 'office-a', state: 'editing', billId: null, billRevision: null, itemId: null, messageId: null, sourceDigest: null,
   fields: { propertyId: '', kind: '', vendor: '', amount: '12.', invoiceDate: '', dueDate: '', note: 'Keep my raw note' }, billState: 'received', reason: '', seriesId: '', arrivalDate: '', proposalRequest: null });
@@ -8,6 +8,13 @@ const saved = (fields = value(), revision = 1, id = 'review-a'): BillReviewDraft
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
 
 describe('encrypted bill-review draft coordinator', () => {
+  it('preserves bounded original-source references on adopt/resume without inventing approvals', () => {
+    const fields = value(); fields.forwardedOriginalSource = { itemId: 'a'.repeat(64), messageId: 'cd', expectedSourceDigest: 'b'.repeat(64), expectedEnvelopeDigest: 'c'.repeat(64) };
+    fields.fields.maintenanceClassification = 'maintenance';
+    const store = new BillReviewDraftCoordinator(); store.adopt(saved(fields));
+    expect(store.get('office-a', 'review-a')?.value).toEqual(fields); expect(draftValue(saved(fields))).toEqual(fields);
+    expect(draftValue(saved(fields))).not.toHaveProperty('originalSourceReviewed'); expect(draftValue(saved(fields))).not.toHaveProperty('maintenanceClassificationReviewed');
+  });
   it('serializes a later edit behind an in-flight create and preserves raw fields', async () => {
     const gate = deferred<{ draft: BillReviewDraft }>(), calls: any[] = [];
     const store = new BillReviewDraftCoordinator(async (_path, init) => { const body = JSON.parse(String(init?.body)); calls.push(body); return calls.length === 1 ? gate.promise : { draft: saved(body.value, 2) }; });

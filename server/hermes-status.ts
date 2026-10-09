@@ -15,6 +15,7 @@ import type { HandsLast } from "./hands-last.ts";
 import { readRuntimeSelection, WORKER_HOLD_COPY, workerHold, type WorkerHold } from "./hermes-runtime-selection.ts";
 import { DOCUMENT_TOOLS_UNSUPPORTED, documentToolsStatus, ownedRuntimeHome } from "./hermes-document-deps.ts";
 import { checkRuntimeIntegrity, runtimeIdentity, runtimeIntegrity, RUNTIME_DAMAGED, type RuntimeIntegrity, type verifyRuntime } from "./hermes-runtime-check.ts";
+import { workerIsolationRefusal } from "./worker-network-sandbox.ts";
 
 export function workerSetupPending(root?: string): boolean {
   try { return !readRuntimeSelection(hermesHome(root)).selected && bootstrapPending(hermesHome(root)); }
@@ -51,6 +52,8 @@ export interface HermesStatus {
   runtimeIntegrity?: RuntimeIntegrity;
   /** Nothing may launch: a removal awaits a restart, or the selection needs recovery. */
   hold?: WorkerHold;
+  /** No installed engine or earlier ping can admit an absent OS boundary. */
+  workerIsolation?: { state: "held"; platform: string; detail: string };
 }
 
 /** `unavailable_here`: no reviewed libraries for this computer, or Bud runs a
@@ -151,6 +154,7 @@ function canonicalJson(value: unknown): string {
 }
 
 export function applyHandsReadiness(status: HermesStatus, lastPing: HandsLast | null): HermesStatus {
+  if (status.workerIsolation) return { ...status, ready: false, detail: status.workerIsolation.detail };
   // A withdrawn grant is a hold with its own explanation, not "not attached":
   // nothing on this computer is broken and every record stays readable.
   if (status.modelAccess?.withdrawn) return { ...status, ready: false, detail: status.modelAccess.detail };
@@ -256,11 +260,13 @@ export async function hermesStatus(opts?: { root?: string; cli?: string; platfor
   integrity?: "cached" | "await" | "force"; verifyRuntime?: typeof verifyRuntime }): Promise<HermesStatus> {
   const pack = { installed: packInstalled(opts?.root), approvalsManual: approvalsAreManual(opts?.root), workroomReady: propertyWorkroomReady(opts?.root) };
   const modelAccess = modelAccessStatus(opts?.root);
+  const platform = opts?.platform ?? process.platform, isolation = workerIsolationRefusal(platform);
   const base = {
     pin: { ...HERMES_PIN }, handsLabel: BUD_HANDS_LABEL, pack, homeDir: hermesHome(opts?.root), profileDir: propertyProfileDir(opts?.root),
     installCommand: hermesInstallCommand(opts?.platform ?? process.platform),
-    installerAvailable: ["darwin", "linux", "win32"].includes(opts?.platform ?? process.platform), signInCommand: `hermes -p ${currentWorkerProfile().profile} model`,
+    installerAvailable: !isolation && ["darwin", "linux", "win32"].includes(platform), signInCommand: `hermes -p ${currentWorkerProfile().profile} model`,
     modelAccess,
+    ...(isolation ? { workerIsolation: { state: "held" as const, platform, detail: isolation } } : {}),
   };
   // Held: nothing is probed or launched, and status never throws.
   const hold = workerHold(hermesHome(opts?.root));
@@ -268,6 +274,9 @@ export async function hermesStatus(opts?: { root?: string; cli?: string; platfor
     return { ...base, cli: { installed: true, versionText: null, matchesPin: false, compatible: false, probeState: "error" },
       bootstrapPending: false, detail: modelAccess.withdrawn ? modelAccess.detail : WORKER_HOLD_COPY[hold], ready: false, hold, documentTools: "unknown" };
   }
+  if (isolation) return { ...base, installerAvailable: false, bootstrapPending: false,
+    cli: { installed: false, versionText: null, matchesPin: false, compatible: false, probeState: "error" },
+    detail: isolation, ready: false, documentTools: "unknown", workerIsolation: { state: "held", platform, detail: isolation } };
   const cli = opts?.cli ?? hermesCli();
   const probe = await probeHermesCli(cli, opts?.probeTimeoutMs);
   const versionText = probe.text;

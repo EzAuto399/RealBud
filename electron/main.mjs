@@ -1,3 +1,4 @@
+import { registerUnsavedWorkPrompt } from "./unsaved-work.mjs";
 import { registerDesktopShutdown } from "./shutdown.mjs";
 import { createServerSupervisor } from "./server-supervisor.mjs";
 import { findBusyService, findRunningService, isOurService, probeService, serviceIdentity } from "./service-instance.mjs";
@@ -337,6 +338,8 @@ function createWindow({ untilServiceDecided = pendingLaunchDecision } = {}) {
       preload: path.join(__dirname, "preload.cjs"),
     },
   });
+
+  registerUnsavedWorkPrompt(win, dialog);
 
   // Popups never open; https links go to the browser, nothing else leaves, and
   // the window stays on the office page it was given (the port can change).

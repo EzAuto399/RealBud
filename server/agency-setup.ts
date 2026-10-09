@@ -182,6 +182,11 @@ export function createAgencySetupService(options: AgencySetupOptions) {
   }
   return {
     get, getConfiguration: read, save, review,
+    /** Local synchronous commits only: hold the settings queue across the final
+     * read and commit, never provider/network work or another setup action. */
+    withConfiguration<T>(work: (state: AgencySetupState) => T): Promise<T> {
+      return exclusive(async () => work(await read()));
+    },
     /** An installed role pack that is one of the known agency workflow packs is
      * chosen when no pack is chosen yet, as one saved revision. An existing
      * choice is never replaced. Returns whether the saved setup changed. */

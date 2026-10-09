@@ -18,6 +18,8 @@ export function createOnboardingHandler(options: { directory: string; workspaceI
   const directory = resolve(options.directory, 'onboarding');
   const scope = () => createHash('sha256').update(JSON.stringify([options.workspaceId, options.memberKey()])).digest('hex');
   return {
+    // Response-only identity for pairing a Desk read with its saved setup state.
+    currentScope: scope,
     async handle(path: string, method: string, body?: unknown): Promise<{ status: number; body: unknown } | null> {
       if (path !== '/api/onboarding') return null;
       if (!['GET', 'PUT'].includes(method)) return { status: 405, body: { error: 'This setup action is unavailable.' } };

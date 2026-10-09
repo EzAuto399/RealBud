@@ -2,7 +2,7 @@
 // DATA_DIR (~/.realbud) never touches the real one. os.homedir()
 // reads HOME (POSIX) / USERPROFILE (Windows) at call time, and this file
 // runs before any test module imports server/config.ts.
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, vi } from "vitest";
@@ -16,15 +16,25 @@ const waitFor = vi.waitFor;
 vi.waitFor = ((callback, options) => waitFor(callback,
   typeof options === "number" ? options : { timeout: 10_000, ...options })) as typeof vi.waitFor;
 
-// Test fakes (fake CLIs, FAKE_ACP_DUMP) leave their evidence under the temp
-// folder; the worker sandbox grants it only through this explicit hook.
-SANDBOX_TEST_WRITABLE.push(realpathSync(tmpdir()));
-
 const home = mkdtempSync(join(tmpdir(), "omb-test-home-"));
+const originalTemp = { TMPDIR: process.env.TMPDIR, TMP: process.env.TMP, TEMP: process.env.TEMP };
+const privateTemp = join(realpathSync(home), "tmp");
+mkdirSync(privateTemp, { mode: 0o700 });
+// Test fakes get an owned, private root. Never grant /tmp itself: source
+// sandbox admission correctly refuses that root when it belongs to root.
+SANDBOX_TEST_WRITABLE.push(privateTemp);
+process.env.TMPDIR = privateTemp;
+process.env.TMP = privateTemp;
+process.env.TEMP = privateTemp;
 process.env.HOME = home;
 process.env.USERPROFILE = home;
 
 afterAll(async () => {
+  for (const [name, value] of Object.entries(originalTemp)) {
+    if (value === undefined) delete process.env[name]; else process.env[name] = value;
+  }
+  const writableIndex = SANDBOX_TEST_WRITABLE.indexOf(privateTemp);
+  if (writableIndex !== -1) SANDBOX_TEST_WRITABLE.splice(writableIndex, 1);
   // Windows holds a directory that is a live process's cwd, and a
   // just-killed CLI lets go a beat after the kill call returns (rmSync's own
   // maxRetries does not cover an EPERM on the directory itself). Retry

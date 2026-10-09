@@ -25,10 +25,11 @@
  */
 import { composioAuthConfigClient, GMAIL_AUTH_CONFIG_NAME, oauthAppsFromEnv, TOOLKIT_SLUG, type ComposioAuthConfigClient } from './composio-auth-config.ts';
 import { serialized } from './serialized.ts';
+import { physicalPath, withRuntimeStateWriter } from './runtime-state-lock.ts';
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { canonical, exact, GatewayError, id, object, requireThat, type PortalPrincipal } from './contracts.ts';
 import { connectorRegistry, newConnectorCredential, validateConnectorDevices, type ConnectorDevice } from './connectors.ts';
 import { issueDesktopServiceEntitlement, serviceIssuerFromEnv, type DesktopServiceBundle, type ServiceIssuer, type ServiceIssuerState } from './service-entitlement-issuer.ts';
@@ -44,16 +45,9 @@ import { hasCustomerTerms, modelviaKeyClient, ModelviaRotationRefused, type Mode
 // ---------------------------------------------------------------------------
 
 /** Resolve the nearest existing ancestor too: an output file need not exist yet,
- * and aliased parents must not turn two destinations into one. */
-export function physicalPath(path: string): string {
-  let ancestor = resolve(path); const tail: string[] = [];
-  while (!existsSync(ancestor)) {
-    tail.unshift(basename(ancestor)); const parent = dirname(ancestor);
-    if (parent === ancestor) throw new Error('Output location is unavailable.');
-    ancestor = parent;
-  }
-  return join(realpathSync(ancestor), ...tail);
-}
+ * and aliased parents must not turn two destinations into one. One definition,
+ * shared with the runtime-state admission. */
+export { physicalPath };
 
 /** File operations behind every durable publication here; tests inject faults
  * (ENOSPC, a kill) at each boundary. */
@@ -154,6 +148,7 @@ function acquireRegistryLock(io: DurableIo, lock: string): string {
 export function updateRegistry<T>(registry: string, work: (devices: ConnectorDevice[]) => { devices: ConnectorDevice[]; commit?: () => T }, io: DurableIo = nodeIo): T {
   if (typeof registry !== 'string' || !isAbsolute(registry)) throw new Error('Use an explicit absolute registry path.');
   const path = physicalPath(registry);
+  return withRuntimeStateWriter(dirname(path), () => {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const lock = `${path}.lock`, token = acquireRegistryLock(io, lock);
   try {
@@ -173,6 +168,7 @@ export function updateRegistry<T>(registry: string, work: (devices: ConnectorDev
     // Never remove a lock this call does not hold.
     if (readLockOwner(lock)?.owner?.token === token) io.unlinkSync(lock);
   }
+  });
 }
 
 /** Pure core of the operator CLI. Run only on the trusted service machine; it
@@ -239,7 +235,7 @@ export function fileSecretStore(directory: string, io: DurableIo = nodeIo): Secr
   };
   // Startup reconciliation: an interrupted write leaves only a temp file, never
   // an admitted secret.
-  removeOrphanTemps(directory, 'REALBUD_COMPOSIO_');
+  withRuntimeStateWriter(directory, () => removeOrphanTemps(directory, 'REALBUD_COMPOSIO_'));
   return {
     read(name) {
       const file = path(name);
@@ -255,14 +251,16 @@ export function fileSecretStore(directory: string, io: DurableIo = nodeIo): Secr
       return raw.trim() || undefined;
     },
     write(name, value) {
+      return withRuntimeStateWriter(directory, () => {
       requireThat(typeof value === 'string' && value.trim().length > 0 && value.length <= 8192, 'gateway_secret_unwritable', 503);
       ensure();
       // Never silently replace a secret an installation may already use (EEXIST),
       // and never expose a partly written one: the name appears only once the
       // complete value is fsynced.
       publishFile(io, path(name), `${value.trim()}\n`, false);
+      });
     },
-    remove(name) { rmSync(path(name), { force: true }); },
+    remove(name) { withRuntimeStateWriter(directory, () => rmSync(path(name), { force: true })); },
   };
 }
 

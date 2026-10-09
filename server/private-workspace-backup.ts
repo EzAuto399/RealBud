@@ -27,7 +27,8 @@ import { TENANT_DIRECTORY_RECORD_KINDS, validateTenantDirectoryRecord } from './
 import { validateSavedBillProposal } from './bill-proposal-validation.ts';
 import { validateSavedBillReviewDraft, validateBillReviewDraftProposalLink } from './bill-review-drafts.ts';
 import { ROUTINE_RESULT_KIND, validateRoutineResultRecord } from './routine-results.ts';
-import { validateBackupMail } from './private-backup-mail-validation.ts';
+import { CONNECTED_MAIL_OPERATIONS_FILE, interruptConnectedAppOperationsForRestore } from './connected-app-operations.ts';
+import { validateBackupConnectedMailBytes, validateBackupMail } from './private-backup-mail-validation.ts';
 import { MAIL_RECORD_KINDS, interruptMailRecordsForRestore } from './mail-records.ts';
 import { EXECUTION_RECORD_KINDS } from '../shared/execution-history.ts';
 import { validateExecutionRecord } from './execution-history.ts';
@@ -49,7 +50,7 @@ export const PRIVATE_RESTORE_RECEIPT_FILE = 'private-workspace-restore-receipt.j
 const MAX_FILE = 8 * 1024 * 1024, MAX_PLAIN = PRIVATE_BACKUP_MAX_CONTENT_BYTES, MAX_PAYLOAD = 64 * 1024 * 1024, MAX_FILES = PRIVATE_BACKUP_MAX_FILES;
 const WORKSPACE = 'company-installation/workspace.json';
 const DATABASE = 'workflow-state.sqlite';
-const STATIC = new Set(['desk.json', WORKSPACE, 'agency-setup.json', 'workspace-views/tabs.json', 'recipes.json', 'job-runs.json', 'work-batches.json', 'loops.json', 'expected-bills.json', 'bill-followups.json', 'bank-source/redbark-coverage.json', 'customer-packs.json', 'vault/USER.md', 'vault/README.md', 'vault/AU-RENTAL-LAW.md']);
+const STATIC = new Set([CONNECTED_MAIL_OPERATIONS_FILE, 'desk.json', WORKSPACE, 'agency-setup.json', 'workspace-views/tabs.json', 'recipes.json', 'job-runs.json', 'work-batches.json', 'loops.json', 'expected-bills.json', 'bill-followups.json', 'bank-source/redbark-coverage.json', 'customer-packs.json', 'vault/USER.md', 'vault/README.md', 'vault/AU-RENTAL-LAW.md']);
 // W1 bank-import state (w1/: runs, settings, evidence and its "not sent" marks) is outside the backup paths: a restore carries
 // no W1 import, so no restored mark can close one without a readback.
 const KINDS = new Set(['bank', BANK_TENANT_SOURCE_KIND, ...TENANT_DIRECTORY_RECORD_KINDS, 'handoff', 'bill-proposal', 'bill-review-draft', ROUTINE_RESULT_KIND, DEPARTMENT_WORK_KIND, WEBSITE_REQUEST_KIND, WEBSITE_REMOTE_WORK_KIND, REMOTE_TEMPLATE_KIND, REMOTE_EVIDENCE_KIND, ...SOURCE_BILL_RECORD_KINDS, ...MAIL_RECORD_KINDS, ...EXECUTION_RECORD_KINDS]);
@@ -94,9 +95,9 @@ export function validateMemorySigningFile(value: unknown, workspaceId: string): 
 /** The workspace a worker-fact path belongs to, or null for any other path. */
 export function privateWorkerFactWorkspace(path: string): string | null { return WORKER_FACT_PATH.exec(path)?.[1] ?? LEARNING_PATH.exec(path)?.[1] ?? null; }
 export function privateBackupSourcePaths() { return { staticPaths: [...STATIC], guardedPaths: [...GUARDED] }; }
-const INCLUDED = ['Private Desk book and property notes', 'Saved mail work and collected source evidence', 'Bank originals, reviewed copies, bills, review drafts and preparation receipts', 'Portfolio batch sources, saved results and retry history', 'Department preparation history and its reviewed case snapshot', 'Agency settings, saved views, plans and instruction revision history', 'What Bud learned, pending learning and review decisions, and office edits to Bud’s instructions'];
+const INCLUDED = ['Connected mail outcome receipts and their exact protected approval reviews', 'Private Desk book and property notes', 'Saved mail work and collected source evidence', 'Bank originals, reviewed copies, bills, review drafts and preparation receipts', 'Portfolio batch sources, saved results and retry history', 'Department preparation history and its reviewed case snapshot', 'Agency settings, saved views, plans and instruction revision history', 'What Bud learned, pending learning and review decisions, and office edits to Bud’s instructions'];
 const EXCLUDED = ['Provider keys, connected-account credentials and sign-in sessions', 'Anything in Bud’s learning that looks like a credential (it stays on this computer)', 'Shared office database and company membership', 'Worker installation, authentication and conversations', 'Files outside the listed business folders and external attachments'];
-const CHANGES = ['Use this installation’s protected encryption key', 'Clear connected-account selection and setup approvals', 'Pause all schedules and require plan review', 'Retain job history; interrupt unfinished work and close sign-in handoffs', 'Repair the installed instruction pack before running its plans'];
+const CHANGES = ['Hold uncertain mail outcomes; preserve the original workspace/account identities and require exact-account inspection', 'Use this installation’s protected encryption key', 'Clear connected-account selection and setup approvals', 'Pause all schedules and require plan review', 'Retain job history; interrupt unfinished work and close sign-in handoffs', 'Repair the installed instruction pack before running its plans'];
 const withheldLine = (count: number) => `${count} item${count === 1 ? '' : 's'} of Bud’s learning withheld: they looked like credentials, were unsafe or exceeded the storage limit, and only their fingerprints were kept`;
 export function privateBackupDescriptions(withheld = 0) { return { included: [...INCLUDED], excluded: [...EXCLUDED, ...(withheld ? [withheldLine(withheld)] : [])], restoreChanges: [...CHANGES] }; }
 function fail(message: string, status = 409): never { throw Object.assign(new Error(message), { status }); }
@@ -110,7 +111,7 @@ const positive = (v: unknown): v is number => Number.isSafeInteger(v) && Number(
 function allowed(path: string) {
   if (STATIC.has(path)) return true;
   return WORKER_FACT_PATH.test(path) || LEARNING_PATH.test(path) || isPackArchivePath(path) || isSkillArchivePath(path) ||
-    /^company-installation\/private\/(?:mail-workspace|mail-prepared-input|mail-scan-[a-f0-9-]{36}|memory-signing)\.json$/.test(path) ||
+    /^company-installation\/private\/(?:mail-workspace|mail-prepared-input|mail-scan-[a-f0-9-]{36}|mail-review-[a-f0-9]{64}|memory-signing)\.json$/.test(path) ||
     /^vault\/(?:properties|owners|decisions)\/[A-Za-z0-9_-]{1,180}\.md$/.test(path) ||
     /^vault\/workflow-inputs\/[A-Za-z0-9_-]{1,100}\.(?:json|csv|txt|md)$/.test(path) ||
     /^vault\/workflow-support\/[a-z][a-z0-9-]{0,63}\/(?:SKILL\.md|LICENSE)$/.test(path);
@@ -359,6 +360,7 @@ function validateSnapshot(value: unknown): Snapshot {
       }
     }
     validateBackupMail(files, key, s.workspaceId, logicalRecords);
+    validateBackupConnectedMailBytes(files, key, s.workspaceId);
     validateSourceBillRecords(logicalRecords);
     const banks = new Map(logicalRecords.filter(record=>record.kind === 'bank').map(record=>[record.id,record]));
     for (const record of banks.values()) validateBankReviewLinks(record,id=>banks.get(id));
@@ -447,7 +449,8 @@ async function restoredFiles(s: Snapshot, targetKey: Buffer, directory: string, 
             decoded.data.workItems = decoded.data.workItems.map(w => ['approved','preparing','handoff-ready'].includes(w.state) ? { ...w, state: 'held', updatedAt: at } : w);
           }
           decodeDeskPlain(book, { properties: [], ledger: [] }, 'UTC'); value = encryptJson(targetKey, book);
-        } else if (f.path.startsWith('company-installation/private/')) value = encryptJson(targetKey, decryptJson(sourceKey, value as EncryptedEnvelope));
+        } else if (f.path === CONNECTED_MAIL_OPERATIONS_FILE) value = interruptConnectedAppOperationsForRestore(value, at);
+        else if (f.path.startsWith('company-installation/private/')) value = encryptJson(targetKey, decryptJson(sourceKey, value as EncryptedEnvelope));
         else if (f.path === 'agency-setup.json') {
           if (!object(value) || !object(value.settings) || !positive(value.revision)) fail('Saved agency settings need recovery.', 400);
           value = { ...value, revision: value.revision + 1, updatedAt: at, settings: { ...value.settings, gmailAccountId: null }, reviews: {} };
@@ -483,6 +486,7 @@ async function restoredFiles(s: Snapshot, targetKey: Buffer, directory: string, 
       if (index < 0) output.push(restored); else output[index] = restored;
     }
     validateBackupMail(output, targetKey, s.workspaceId, restoredRecords);
+    validateBackupConnectedMailBytes(output, targetKey, s.workspaceId);
     if (s.databasePresent) {
       const temp = join(directory, `.private-restore-database-${randomUUID()}.sqlite`); await safeParents(directory);
       try {

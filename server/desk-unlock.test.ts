@@ -102,13 +102,16 @@ describe("recovery key escrow + unlock", () => {
     const locked = new Desk({ file, key: loadDeskKey({ key: Buffer.alloc(32, 4) }).key });
     expect(locked.snapshot().recovery.active).toBe(true);
     expect(() => locked.startAgain("start again")).toThrow(/START AGAIN/);
+    expect(existsSync(join(dir, "desk.key"))).toBe(false);
 
     const result = locked.startAgain("START AGAIN");
     expect(result.ok).toBe(true);
     expect(result.preserved.some((name) => name.startsWith("desk.json.quarantine-"))).toBe(true);
     expect(readdirSync(dir).some((name) => name.startsWith("desk.json.quarantine-"))).toBe(true);
 
-    const fresh = new Desk({ file, key: loadDeskKey({ dir }).key });
+    const restartKey = loadDeskKey({ dir }).key;
+    expect(restartKey).toEqual(Buffer.alloc(32, 4));
+    const fresh = new Desk({ file, key: restartKey });
     expect(fresh.snapshot().recovery.active).toBe(false);
     expect(fresh.snapshot().mode).toBe("demo");
     expect(fresh.snapshot().properties.some((property) => property.address === "9 Preserve Lane")).toBe(false);

@@ -23,7 +23,7 @@ test('two independent processes cannot reserve more than one shared monthly cap'
         process.stdout.write('ready\\n');for await(const chunk of process.stdin){try{ledger.reserve(grant,'fixture-host-key','fingerprint-${n}','idem-${n}',${JSON.stringify(bound)});process.stdout.write('reserved\\n');}catch(e){process.stdout.write(e.code+'\\n');}break;}db.close();`;
       const child=spawn(process.execPath,['--experimental-strip-types','--input-type=module','-e',code,path],{stdio:['pipe','pipe','pipe']});children.push(child);
       let stdout='',stderr='';child.stdout!.on('data',chunk=>{stdout+=chunk;});child.stderr!.on('data',chunk=>{stderr+=chunk;});
-      const exited=once(child,'exit');await new Promise<void>((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('child readiness timeout')),5000);child.stdout!.once('data',()=>{clearTimeout(timer);resolve();});child.once('error',reject);});
+      const exited=once(child,'exit');await new Promise<void>((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error(`child readiness timeout: ${stderr}`)),5000);child.stdout!.once('data',()=>{clearTimeout(timer);resolve();});child.once('error',reject);});
       return {child,exited,output:()=>({stdout,stderr})};
     });
     const ready=await Promise.all(runs);for(const r of ready)r.child.stdin!.end('go\n');
@@ -47,7 +47,7 @@ test('two independent processes share one immutable attempt cap across distinct 
         process.stdout.write('ready\\n');for await(const chunk of process.stdin){try{ledger.reserve(grant,'fixture-host-key','fingerprint-${n}','idem-${n}',${JSON.stringify(bound)});process.stdout.write('reserved\\n');}catch(e){process.stdout.write(e.code+'\\n');}break;}db.close();`;
       const child=spawn(process.execPath,['--experimental-strip-types','--input-type=module','-e',code,path],{stdio:['pipe','pipe','pipe']});children.push(child);
       let stdout='',stderr='';child.stdout!.on('data',chunk=>{stdout+=chunk;});child.stderr!.on('data',chunk=>{stderr+=chunk;});
-      const exited=once(child,'exit');await new Promise<void>((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('child readiness timeout')),5000);child.stdout!.once('data',()=>{clearTimeout(timer);resolve();});child.once('error',reject);});
+      const exited=once(child,'exit');await new Promise<void>((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error(`child readiness timeout: ${stderr}`)),5000);child.stdout!.once('data',()=>{clearTimeout(timer);resolve();});child.once('error',reject);});
       return {child,exited,output:()=>({stdout,stderr})};
     });
     const ready=await Promise.all(runs);for(const r of ready)r.child.stdin!.end('go\n');

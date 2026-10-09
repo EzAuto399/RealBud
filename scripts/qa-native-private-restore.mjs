@@ -217,7 +217,11 @@ try {
   }, 200, true)).draft;
   const original = Buffer.from('\uFEFFDate,Amount,Narrative,Reference\r\n2026-09-21,45.67,"Native café 🏡","KEEP"\r\n');
   const batch = await api('/api/bank-reference', 'POST', { source: { filename: 'fictional-native.csv', bytesBase64: original.toString('base64') }, columns: { date: 'Date', amount: 'Amount', narrative: 'Narrative', reference: 'Reference' }, dateFormat: 'YYYY-MM-DD', rules: [] }, 200, true);
-  if (welcomeRestore) assert.equal((await api('/api/desk/agency', 'PATCH', { office: { pmUser: welcomeSourceContact } }, 200, true)).book.office.pmUser, welcomeSourceContact);
+  if (welcomeRestore) {
+    const sourceBefore = await api('/api/desk', 'GET', undefined, 200, true);
+    assert.match(sourceBefore.workspaceId, /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/);
+    assert.equal((await api('/api/desk/agency', 'PATCH', { expectedWorkspaceId: sourceBefore.workspaceId, expectedRevision: sourceBefore.revision, office: { pmUser: welcomeSourceContact } }, 200, true)).book.office.pmUser, welcomeSourceContact);
+  }
   const passphrase = 'Fictional native restore phrase 2026';
   const exported = await api('/api/private-backup/export', 'POST', { passphrase }, 200, true);
   await stopChild(sourceChild);

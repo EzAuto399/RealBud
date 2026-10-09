@@ -174,7 +174,9 @@ try {
   await page.close();
 
   await start(join(scratch, 'restored'));
-  await request('/api/desk/agency', 'PATCH', { office: { pmUser: 'Fictional Restored Contact' } });
+  const restoredBefore = await request('/api/desk');
+  assert.match(restoredBefore.workspaceId, /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/);
+  await request('/api/desk/agency', 'PATCH', { expectedWorkspaceId: restoredBefore.workspaceId, expectedRevision: restoredBefore.revision, office: { pmUser: 'Fictional Restored Contact' } });
   page = await open(); await rules(page, 'Fictional New Profile'); await finish(page);
   assert.equal((await request('/api/desk')).book.office.pmUser, 'Fictional Restored Contact');
   record('Replayed welcome preserves a restored book contact instead of overwriting it');

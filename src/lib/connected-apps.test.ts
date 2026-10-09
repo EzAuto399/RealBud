@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  activeConnectedAccounts, canPrepareConnectedEmail, connectedAppOperationContext, connectedEmailContext,
+  activeConnectedAccounts, canPrepareConnectedEmail, connectedAppOperationContext, connectedEmailContext, needsAttention, needsEarlierConnectionCheck, needsOwnerCheck, operationsToShow,
   readConnectedAppOperations, readConnectedAppsStatus, selectedConnectedAccount, type ConnectedAppsStatus,
 } from "./connected-apps";
 import { fileAttachment } from "./composer-attachments";
@@ -42,6 +42,55 @@ describe("connected email setup and account choice", () => {
     expect(canPrepareConnectedEmail(snapshot, "gmail", "office-1")).toBe(true);
   });
 
+  it('keeps manual mail evidence separate from an unknown provider outcome and omits protected account/review material', () => {
+    const row = { id: 'operation', threadId: 'thread', toolName: 'GMAIL_SEND_EMAIL', toolSlugs: [], status: 'unknown', startedAt: new Date(NOW).toISOString(), detail: 'Outcome needs checking', revision: 2,
+      accountDigest: 'a'.repeat(64), originalReview: { card: 'PRIVATE ORIGINAL' }, reconciliation: { outcome: 'not-sent', source: 'manual-app-inspection', at: NOW + 1, recoveryBindingDigest: 'b'.repeat(64) } };
+    const parsed = readConnectedAppOperations({ operations: [row] })[0];
+    expect(parsed.status).toBe('unknown'); expect(parsed.reconciliation).toEqual({ outcome: 'not-sent', source: 'manual-app-inspection', at: new Date(NOW + 1).toISOString() });
+    expect(parsed).not.toHaveProperty('accountDigest'); expect(JSON.stringify(parsed)).not.toContain('PRIVATE ORIGINAL');
+    expect(() => readConnectedAppOperations({ operations: [{ ...row, status: 'succeeded' }] })).toThrow();
+    expect(() => readConnectedAppOperations({ operations: [{ ...row, reconciliation: { ...row.reconciliation, source: 'provider-confirmed' } }] })).toThrow();
+    expect(() => readConnectedAppOperations({ operations: [{ ...row, revision: -1 }] })).toThrow();
+  });
+  it('reads the owner check on a receipt without account details and keeps every held receipt visible', () => {
+    const at = (offset: number) => new Date(NOW - offset).toISOString();
+    const legacy = { id: 'older', threadId: 'thread', toolName: 'GMAIL_SEND_EMAIL', toolSlugs: [], status: 'unknown', startedAt: at(86_400_000), revision: 1 };
+    const identified = { ...legacy, id: 'identified', startedAt: at(10), effectDigest: 'c'.repeat(64) };
+    const recent = Array.from({ length: 6 }, (_, index) => ({ ...legacy, id: `recent-${index}`, status: 'succeeded', finishedAt: at(index), startedAt: at(index) }));
+    const parsed = readConnectedAppOperations({ operations: [legacy, identified, ...recent] });
+    expect(parsed.find(row => row.id === 'identified')).toMatchObject({ identified: true });
+    expect(parsed.find(row => row.id === 'identified')).not.toHaveProperty('effectDigest');
+    expect(parsed.filter(needsOwnerCheck).map(row => row.id)).toEqual(['older']);
+    // The Recent activity summary counts both as needing checking.
+    expect(parsed.filter(needsAttention).map(row => row.id)).toEqual(['identified', 'older']);
+    // Held receipts come first, ahead of newer activity, however old they are.
+    expect(operationsToShow(parsed).map(row => row.id)).toEqual(['identified', 'older', 'recent-0', 'recent-1', 'recent-2', 'recent-3', 'recent-4']);
+    const checked = readConnectedAppOperations({ operations: [{ ...legacy, revision: 2, acknowledgement: { at: NOW, source: 'owner-checked-app' } }] })[0];
+    expect(checked.acknowledgement).toEqual({ at: new Date(NOW).toISOString() }); expect(needsOwnerCheck(checked)).toBe(false);
+    for (const bad of [{ status: 'failed' }, { effectDigest: 'c'.repeat(64), status: 'started' }, { effectDigest: 'c'.repeat(64), status: 'succeeded' }, { acknowledgement: { at: NOW, source: 'model' } }])
+      expect(() => readConnectedAppOperations({ operations: [{ ...legacy, acknowledgement: { at: NOW, source: 'owner-checked-app' }, ...bad }] })).toThrow();
+  });
+  it('loads an owner-checked send from an earlier company or gateway and stops asking about it', () => {
+    const at = (offset: number) => new Date(NOW - offset).toISOString();
+    const earlier = { id: 'earlier', threadId: 'thread', toolName: 'GMAIL_SEND_EMAIL', toolSlugs: [], status: 'unknown', startedAt: at(86_400_000), revision: 1, effectDigest: 'c'.repeat(64) };
+    const checked = { ...earlier, id: 'checked', revision: 2, acknowledgement: { at: NOW, source: 'owner-checked-app' } };
+    const failedChecked = { ...checked, id: 'failed-checked', status: 'failed', finishedAt: at(5) };
+    const parsed = readConnectedAppOperations({ operations: [earlier, checked, failedChecked] });
+    expect(parsed.find(row => row.id === 'checked')).toMatchObject({ identified: true, acknowledgement: { at: new Date(NOW).toISOString() } });
+    expect(parsed.find(row => row.id === 'failed-checked')).toMatchObject({ identified: true, status: 'failed' });
+    // Only the unchecked one still leads the list as needing the owner.
+    expect(operationsToShow(parsed, 0).map(row => row.id)).toEqual(['earlier']);
+  });
+  it('offers the owner check only for an unconfirmed identified send Inspect named as from an earlier connection', () => {
+    const base = { id: 'earlier', threadId: 'thread', toolName: 'GMAIL_SEND_EMAIL', toolSlugs: [], status: 'unknown' as const, startedAt: new Date(NOW).toISOString(), identified: true };
+    const refused = new Set(['earlier']);
+    expect(needsEarlierConnectionCheck(base, refused)).toBe(true);
+    expect(needsEarlierConnectionCheck({ ...base, status: 'failed' }, refused)).toBe(true);
+    expect(needsEarlierConnectionCheck(base, new Set())).toBe(false);
+    for (const other of [{ status: 'started' as const }, { status: 'succeeded' as const }, { identified: undefined }, { acknowledgement: { at: base.startedAt } },
+      { reconciliation: { outcome: 'sent' as const, at: base.startedAt, source: 'manual-app-inspection' as const } }])
+      expect(needsEarlierConnectionCheck({ ...base, ...other }, refused)).toBe(false);
+  });
   it("expires access at the action boundary and rejects future or invalid clocks", () => {
     expect(canPrepareConnectedEmail(status(), "gmail", "", NOW + 300_000)).toBe(true);
     for (const now of [NOW + 300_001, NOW - 1, Infinity, NaN]) {

@@ -1,3 +1,5 @@
+import { syncTestResalePolicy } from './testing-resale-policy.ts';
+import { bindOfficeCustomer } from './provisioning.ts';
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -154,12 +156,12 @@ test('a live lease prevents concurrent dispatch',async()=>{
 
 test('a second SQLite connection observes the first process lease without dispatching',async()=>{
   const dir=mkdtempSync(join(tmpdir(),'realbud-invoice-email-'));cleanups.push(()=>rmSync(dir,{recursive:true,force:true}));
-  const f=fixture(join(dir,'gateway.sqlite'));cleanups.push(f.close);f.setTime(Date.parse('2026-10-01T00:00:00Z'));
+  const f=fixture(join(dir,'ledger.sqlite'));cleanups.push(f.close);f.setTime(Date.parse('2026-10-01T00:00:00Z'));
   const billing=new BillingService(f.ledger,undefined,{internalCompanyId:'realbud-internal'});
   const draft=careTermsDraft(f,'care-v1','12500');draft.customer.billingEmail='accounts@example.test';
   const published=billing.commercialTerms!.publish(draft);billing.commercialTerms!.accept(f.owner,'2026-09','care-v1',published.digest);
   const invoice=billing.finalizeCommercialInvoice('company-a','2026-09','care-v1');
-  const secondDb=new LedgerDatabase(join(dir,'gateway.sqlite'));cleanups.push(()=>secondDb.close());
+  const secondDb=new LedgerDatabase(join(dir,'ledger.sqlite'));cleanups.push(()=>secondDb.close());
   const secondBilling=new BillingService(new UsageLedger(secondDb,f.now),undefined,{internalCompanyId:'realbud-internal'});
   let release:(value:{id:string})=>void=()=>{};
   let entered:()=>void=()=>{};
@@ -205,6 +207,8 @@ test('an AI invoice email contains the full invoice and an absolute account link
   const draft=careTermsDraft(f,'care-v1','12500');draft.customer.billingEmail='accounts@example.test';
   draft.aiUsage={billing:'resale',markupBasisPoints:3000,termsReference:'synthetic-resale-terms'};
   const published=billing.commercialTerms!.publish(draft);billing.commercialTerms!.accept(f.owner,'2026-09','care-v1',published.digest);
+  bindOfficeCustomer(f.ledger,'company-a','fictional-email-test-customer');
+  await syncTestResalePolicy(f.ledger,'company-a');
   const invoice=billing.finalizeCommercialInvoice('company-a','2026-09','care-v1',{invoices:[{id:'CI-000001',period:'2026-09',totalCents:'1200',gstCents:'109'}]});
   const mail=stub();await deliverInvoiceEmail(billing,'company-a',invoice.id,mail.transport);
   const html=(JSON.parse(mail.requests[0].payloadJson) as InvoiceEmailPayload).html;

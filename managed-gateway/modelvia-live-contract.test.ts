@@ -126,8 +126,8 @@ function operatorAuthorized(header: string | undefined, now: number): boolean {
   return c.aud === 'managed-ai-realbud' && typeof c.iat === 'number' && typeof c.exp === 'number' && c.exp > now && c.exp - c.iat <= 300_000;
 }
 
-function liveModelvia(options: { billingMode?: 'client' | 'customer' | 'mixed'; customers?: Row[]; policies?: Row[]; clientModels?: string[] } = {}) {
-  const now = () => Date.now();
+function liveModelvia(options: { billingMode?: 'client' | 'customer' | 'mixed'; customers?: Row[]; policies?: Row[]; clientModels?: string[]; now?: () => number } = {}) {
+  const now = options.now ?? (() => Date.now());
   const clients = new Map<string, Row>([[CLIENT, { id: CLIENT, name: 'RealBud', active: true, monthlyCapNanoAud: '10000000000', maxConcurrent: 4,
     allowedModels: options.clientModels ?? LIVE_MODELS.split(','), version: 1, billingMode: options.billingMode ?? 'client',
     ...(options.billingMode === 'customer' ? {} : { billingCompanyId: BILLING_COMPANY }) }]]);
@@ -200,7 +200,7 @@ function liveModelvia(options: { billingMode?: 'client' | 'customer' | 'mixed'; 
     if (body.state === 'active' && policies.some(p => p.customerId === body.customerId && p.state === 'active' && (p.effectiveAt as number) >= (body.effectiveAt as number))) return fail(409, 'policy_effective_order');
     const saved = { ...body, createdAt: now(), createdBy: 'realbud-provisioning' };
     policies.push(saved);
-    return Response.json(saved);
+    return Response.json(saved, { headers: { date: new Date(now()).toUTCString() } });
   };
   const mintKey = (projectId: string, environment: string, label?: string) => {
     const id = randomBytes(8).toString('hex'), secret = `rbk_${id}_${randomBytes(32).toString('base64url').slice(0, 43)}`;
@@ -572,7 +572,8 @@ test('resale is written only from explicit configuration, and its receipt is a r
     assert.equal(routes?.officeAiAccess, undefined);
   } finally { f.close(); }
 
-  const m = liveModelvia(), g = gateway(m, { REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES: '', REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS: '3000',
+  let providerNow = Math.floor(Date.now() / 1000) * 1000;
+  const m = liveModelvia({ now: () => providerNow }), g = gateway(m, { REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES: '', REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS: '3000',
     REALBUD_MODELVIA_RESALE_TERMS_REFERENCE: 'fictional-signed-order-7' }); try {
     // Until the office's billing owner accepts RealBud's terms carrying AI resale, nothing is written.
     assert.deepEqual((await g.setAccess('realbud-company-a')).terms, { state: 'acceptance_required' });
@@ -591,7 +592,15 @@ test('resale is written only from explicit configuration, and its receipt is a r
     assert.equal(((await g.setAccess('realbud-company-a')).terms as Row).created, false);
     const acceptance = accept('care-v2', { billing: 'resale', markupBasisPoints: 3000, termsReference: 'fictional-signed-order-7' });
     const second = (await g.setAccess('realbud-company-a')).terms as Row;
-    assert.deepEqual([second.state, second.created, second.clientMarkupBasisPoints, second.supersedes], ['active', true, 3000, first.policyId]);
+    // At the same provider Date, the policy must start one millisecond after
+    // the previous policy. Accepted and saved is still pending, not active.
+    assert.deepEqual([second.state, second.created, second.clientMarkupBasisPoints, second.supersedes], ['pending', true, 3000, first.policyId]);
+    assert.equal(second.effectiveAt, providerNow + 1);
+    assert.equal(second.verifiedAt, providerNow);
+    providerNow += 1000;
+    const verified = (await g.setAccess('realbud-company-a')).terms as Row;
+    assert.deepEqual([verified.state, verified.created, verified.policyId, verified.clientMarkupBasisPoints, verified.acceptanceReference],
+      ['active', false, second.policyId, 3000, resaleAcceptanceReference('fictional-signed-order-7', acceptance)]);
     const [older, policy] = m.posts('/v1/operator/commercial-policies').map(call => call.body!);
     assert.equal(older!.clientMarkupBasisPoints, 2000);
     assert.ok((policy!.effectiveAt as number) > (older!.effectiveAt as number), 'the new policy starts after the one it supersedes');

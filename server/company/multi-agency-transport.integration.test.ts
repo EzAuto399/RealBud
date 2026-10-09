@@ -38,7 +38,7 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('independent agency au
     const transport = await startCompanyTransport({ ...certificate, host: '127.0.0.1', port: 0, handle: host.handle });
     transports.push(transport);
     const call = (path: string, token: string, body?: unknown, method = body === undefined ? 'GET' : 'POST') => requestCompanyHost({
-      origin: `https://localhost:${transport.port}`, certificatePem: certificate.cert, path: `/api/company/${path}`, method, memberToken: token, body,
+      origin: `https://localhost:${transport.port}`, certificatePem: certificate.cert, companyId: owner.companyId, path: `/api/company/${path}`, method, memberToken: token, body,
     });
     return { fixture, kernel, owner, member, department, password, certificate, transport, call };
   }

@@ -5,12 +5,13 @@
 // the shadow-instance behavior end to end while it's at it.
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readSessionToken } from "./testing/local-session.ts";
+import { plantPrivateFile, privateDir, privateTempRoot } from "./testing/private-fixture.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
@@ -54,17 +55,18 @@ const api = async (method: string, path: string, body?: unknown): Promise<{ stat
 };
 
 beforeAll(async () => {
-  home = mkdtempSync(join(realpathSync(tmpdir()), "omb-api-test-"));
+  home = privateTempRoot(join(realpathSync(tmpdir()), "omb-api-test-"));
   staticDir = join(home, "static");
   const workerCli = join(home, "hermes.mjs");
   writeFileSync(workerCli, `#!${process.execPath}\nconsole.log("Hermes Agent v0.21.0 (2026.8.31)");\n`);
   chmodSync(workerCli, 0o755);
   // a fleet of exactly one unknown driver: no CLI probes, no network
-  mkdirSync(join(home, ".realbud"), { recursive: true });
+  // Private stores open at import time, before the server's startup admission.
+  privateDir(join(home, ".realbud"));
   mkdirSync(join(staticDir, "assets"), { recursive: true });
   writeFileSync(join(staticDir, "index.html"), "<!doctype html><title>Packaged RealBud</title>");
   writeFileSync(join(staticDir, "assets", "smoke.css"), "body { color: white; }");
-  writeFileSync(
+  plantPrivateFile(
     join(home, ".realbud", "config.json"),
     JSON.stringify({ instances: { ghost: { driver: "not-a-real-driver", displayName: "Ghost" } } }),
   );
@@ -318,19 +320,26 @@ describe("harness HTTP API", () => {
     stream.abort();
   });
 
-  it("requires authenticated, current-revision rent settings and never updates payment facts", async () => {
+  it("requires authenticated, workspace-bound current-revision rent settings and never updates payment facts", async () => {
     const before = (await api("GET", "/api/desk")).body;
+    expect(before.workspaceId).toMatch(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/);
+    expect(before.onboardingScope).toBe((await api("GET", "/api/onboarding")).body.scope);
+    const workspace = { expectedWorkspaceId: before.workspaceId };
     const office = { rentWorkflow: { receiptChannels: ["whatsapp", "email"], verificationMethod: "bank-allocation", checkingSteps: "Match the unit and period." } };
-    const unauthorized = await fetch(`${BASE}/api/desk/agency`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ office, expectedRevision: before.revision }) });
+    const unauthorized = await fetch(`${BASE}/api/desk/agency`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...workspace, office, expectedRevision: before.revision }) });
     expect(unauthorized.status).toBe(401);
-    expect((await api("PATCH", "/api/desk/agency", { office })).status).toBe(400);
-    expect((await api("PATCH", "/api/desk/agency", { office, expectedRevision: String(before.revision) })).status).toBe(400);
-    const saved = await api("PATCH", "/api/desk/agency", { office, expectedRevision: before.revision });
+    expect((await api("PATCH", "/api/desk/agency", { office, expectedRevision: before.revision })).status).toBe(409);
+    expect((await api("PATCH", "/api/desk/agency", { expectedWorkspaceId: 'fictional-replaced-workspace', office, expectedRevision: before.revision })).status).toBe(409);
+    expect((await api("GET", "/api/desk")).body).toEqual(before);
+    expect((await api("PATCH", "/api/desk/agency", { ...workspace, office })).status).toBe(400);
+    expect((await api("PATCH", "/api/desk/agency", { ...workspace, office, expectedRevision: String(before.revision) })).status).toBe(400);
+    const saved = await api("PATCH", "/api/desk/agency", { ...workspace, office, expectedRevision: before.revision });
     expect(saved.status).toBe(200);
+    expect(saved.body.workspaceId).toBe(before.workspaceId);
     expect(saved.body.book.office.rentWorkflow).toEqual(office.rentWorkflow);
     expect(saved.body.ledger).toEqual(before.ledger);
-    expect((await api("PATCH", "/api/desk/agency", { name: "Stale overwrite", office, expectedRevision: before.revision })).status).toBe(409);
-    expect((await api("PATCH", "/api/desk/agency", { office: { rentWorkflow: { ...office.rentWorkflow, verificationMethod: "receipt-is-paid" } }, expectedRevision: saved.body.revision })).status).toBe(400);
+    expect((await api("PATCH", "/api/desk/agency", { ...workspace, name: "Stale overwrite", office, expectedRevision: before.revision })).status).toBe(409);
+    expect((await api("PATCH", "/api/desk/agency", { ...workspace, office: { rentWorkflow: { ...office.rentWorkflow, verificationMethod: "receipt-is-paid" } }, expectedRevision: saved.body.revision })).status).toBe(400);
     const after = (await api("GET", "/api/desk")).body;
     expect(after.revision).toBe(saved.body.revision);
     expect(after.book.agency).toEqual(before.book.agency);
@@ -1483,7 +1492,9 @@ describe("harness HTTP API", () => {
       expect(checked.body).toMatchObject({ configured: true, tools: { available: true }, services: {
         gmail: { connected: true, accounts: [{ id: "acct-1", status: "ACTIVE" }], accountSelectionRequired: false },
       } });
-      expect((await api("GET", "/api/connected-apps/operations")).body.operations).toEqual([]);
+      const operations = await api("GET", "/api/connected-apps/operations");
+      expect(operations.status, JSON.stringify(operations.body)).toBe(200);
+      expect(operations.body.operations).toEqual([]);
       expect(JSON.stringify(checked.body)).not.toContain("alreadyconnected");
     } finally { composioForceConnected.clear(); }
   });

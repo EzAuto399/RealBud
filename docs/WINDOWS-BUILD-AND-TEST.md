@@ -1,5 +1,7 @@
 # Windows build and test
 
+**Repair candidate, 9 October 2026:** [System resolution](SYSTEM-RESOLUTION-2026-10-09.md) records the new source qualification gates. Windows/Linux autonomous Hermes work is held until an admitted native OS boundary exists; saved records/recovery remain accessible. Build evidence is a rehearsal or signed installed-CI candidate only. `scripts/windows-candidate.mjs stable-public` always refuses under this hold; current package workflow artifacts exclude `latest.yml`. No source/simulated receipt or earlier installed result establishes this candidate's release acceptance.
+
 Use a native **Windows 11 x64** computer or a disposable x64 Windows CI runner. The supported package target is `win32-x64`; WSL, Wine, macOS cross-compilation and native Windows ARM64 are not accepted build hosts. A hosted Windows Server runner verifies Windows binaries, but does not establish Windows 11 GUI or office acceptance.
 
 Current evidence: [macOS and Windows candidate](PLATFORM-CANDIDATE-2026-09-23.md). Match the supplied installer's source revision and hash to its build receipt; an earlier installer does not establish acceptance of newer changes.
@@ -46,7 +48,7 @@ Record the source revision (`git rev-parse HEAD`), whether the checkout has chan
 Get-ChildItem release/RealBud-*-setup.exe | Get-FileHash -Algorithm SHA256
 ```
 
-A dirty checkout must be recorded as a working-tree candidate, not attributed solely to its HEAD commit. Keep the `.exe`, `.exe.blockmap` and `latest.yml` together for release preparation. Do not upload update metadata as part of this local build procedure.
+A dirty checkout must be recorded as a working-tree candidate, not attributed solely to its HEAD commit. Keep the `.exe`, `.exe.blockmap` and exact qualification/lifecycle receipts together as rehearsal/candidate evidence. Exclude `latest.yml` from distributed candidate artifacts. This procedure does not permit update metadata, tags or public installer promotion.
 
 ## 4. Verify on a disposable Windows runner
 

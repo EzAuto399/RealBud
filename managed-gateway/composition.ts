@@ -8,6 +8,8 @@
  * freshly provisioned device answering `connector_not_configured`.
  */
 import { GatewayError, requireThat } from './contracts.ts';
+import { dirname } from 'node:path';
+import { assertRuntimeStateActive, pathInsideStateRoot, RESTORE_HOLD_SETTING, runtimeStateRoot } from './runtime-state-lock.ts';
 import type { UsageLedger } from './ledger.ts';
 import type { HttpTransport, ComposioOrgClient } from './composio-org.ts';
 import type { ModelviaOperatorClient } from './modelvia-keys.ts';
@@ -65,6 +67,17 @@ export const LIVE_APPROVAL_ENV = ['REALBUD_SELLER_BASIS_APPROVAL_REF', 'REALBUD_
  */
 export function composeCareCollection(options: { env: NodeJS.ProcessEnv; ledger: UsageLedger; fetch: HttpTransport }): CareCollection {
   const { env, ledger } = options;
+  // A restored snapshot can contain pending provider outboxes. Configuration
+  // flags cannot release it; no runtime adapter is composed until a future
+  // authenticated reconciliation contract exists.
+  requireThat(!ledger.db.get('SELECT value FROM settings WHERE key=?', RESTORE_HOLD_SETTING), 'gateway_restored_state_held', 503);
+  if (ledger.db.stateRoot) {
+    const root = ledger.db.stateRoot; assertRuntimeStateActive(root);
+    for (const [name, directory] of [['REALBUD_GATEWAY_CONNECTOR_REGISTRY', false], ['REALBUD_GATEWAY_SECRETS_DIR', true]] as const) {
+      const path = (env[name] ?? '').trim(); if (!path) continue;
+      requireThat(pathInsideStateRoot(path, root) && runtimeStateRoot(directory ? path : dirname(path)) === root, 'gateway_state_scope_mismatch', 503);
+    }
+  }
   const value = (name: string) => (env[name] ?? '').trim();
   const mode = value('REALBUD_PAYMENT_MODE') || 'local';
   requireThat(mode === 'local' || mode === 'sandbox' || mode === 'live', 'care_collection_unconfigured:REALBUD_PAYMENT_MODE', 503);

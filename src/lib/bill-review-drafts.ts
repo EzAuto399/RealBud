@@ -14,6 +14,7 @@ export const draftValue = (draft: BillReviewDraft): BillReviewDraftValue => ({
   billState: draft.billState, reason: draft.reason, seriesId: draft.seriesId, arrivalDate: draft.arrivalDate,
   proposalRequest: draft.proposalRequest ? { ...draft.proposalRequest } : null,
   ...(draft.financialReview ? { financialReview: { ...draft.financialReview } } : {}),
+  ...(draft.forwardedOriginalSource !== undefined ? { forwardedOriginalSource: draft.forwardedOriginalSource ? { ...draft.forwardedOriginalSource } : null } : {}),
 });
 
 /** Memory holds unacknowledged edits across view changes. Durable copies go only

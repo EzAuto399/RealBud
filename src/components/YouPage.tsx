@@ -10,7 +10,10 @@ import { useWorkspaceScroll } from "@/lib/workspace-view-state";
 import { ChannelMark } from "./ChannelMark";
 import { CopyButton } from "./CopyButton";
 import { scrollYouTarget, youHashTarget } from "@/lib/you-navigation";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { companyApi } from "@/lib/company-api";
+import { readOfficeDraftContext, type OfficeDraftContext } from "@/lib/office-draft-journal";
+import { createOfficeDraftRequests } from "@/lib/office-draft-requests";
 import { LayoutGrid, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
@@ -120,7 +123,7 @@ function workerDiagnosticsText(hermes: HermesStatus | null | undefined, version?
   return lines.join("\n");
 }
 
-export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
+export function YouPage({ section, onServiceAdministration }: { section?: "phone" | "office"; onServiceAdministration?: () => void } = {}) {
   const { state, dispatch, refreshHermes } = useStore();
   const scrollRef = useWorkspaceScroll("you", !section);
   const { snapshot: officeSnapshot } = useOfficeSources();
@@ -133,6 +136,40 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
   const [lawWatch, setLawWatch] = useState<LawWatch | null>(null);
   const [lawWatchError, setLawWatchError] = useState("");
   const [officeGroup, setOfficeGroup] = useState("basics");
+  const companySession = useSyncExternalStore(companyApi.subscribeSession, companyApi.sessionVersion, companyApi.sessionVersion);
+  const [officeIdentity, setOfficeIdentity] = useState<{ context: OfficeDraftContext | null; checking: boolean; error: string }>({ context: null, checking: true, error: "" });
+  const identityRead = useRef(0);
+  const identityActive = useRef(false);
+  const currentIdentity = useRef(officeIdentity); currentIdentity.current = officeIdentity;
+  const officeOperation = useRef(0);
+  const currentDesk = useRef(state.desk); currentDesk.current = state.desk;
+  const readOfficeIdentity = useCallback(async () => {
+    const epoch = companyApi.sessionVersion();
+    const [setup, status] = await Promise.all([api("/api/agency-setup"), companyApi.status()]);
+    if (companyApi.sessionVersion() !== epoch) throw new Error("The office session changed. Check the current identity before editing.");
+    return readOfficeDraftContext(setup, status, epoch);
+  }, []);
+  const loadOfficeIdentity = useCallback(async () => {
+    const request = ++identityRead.current, epoch = companyApi.sessionVersion();
+    setOfficeIdentity(current => ({ context: current.context?.sessionVersion === epoch ? current.context : null, checking: true, error: "" }));
+    try {
+      const context = await readOfficeIdentity();
+      if (identityActive.current && request === identityRead.current && epoch === companyApi.sessionVersion()) setOfficeIdentity({ context, checking: false, error: "" });
+    } catch {
+      if (identityActive.current && request === identityRead.current && epoch === companyApi.sessionVersion()) setOfficeIdentity(current => ({ context: current.context?.sessionVersion === epoch ? current.context : null, checking: false, error: "The private workspace or office session could not be checked. Your typing is kept; check the host connection and try again." }));
+    }
+  }, [readOfficeIdentity]);
+  useEffect(() => {
+    identityActive.current = true;
+    if (section !== "phone" && state.connected) void loadOfficeIdentity();
+    else setOfficeIdentity({ context: null, checking: false, error: "Connect this app window before editing office details." });
+    return () => { identityActive.current = false; identityRead.current++; };
+  }, [section, state.connected, companySession, loadOfficeIdentity]);
+  const openServiceAdministration = onServiceAdministration ?? (() => {
+    dispatch({ type: "showYou" });
+    if (window.location.hash !== "#you-service-admin") window.location.hash = "#you-service-admin";
+    else scrollYouTarget("you-service-admin");
+  });
   const [announce, setAnnounce] = useState("");
   const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
   const announceTimer = useRef<number | null>(null);
@@ -231,18 +268,40 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
             jurisdictions={agency?.jurisdictions ?? []}
             office={desk.book?.office}
             revision={desk.revision}
+            draftContext={officeIdentity.context?.sessionVersion === companySession ? officeIdentity.context : null}
+            currentSessionVersion={companySession}
+            getCurrentSessionVersion={companyApi.sessionVersion}
+            identityChecking={officeIdentity.checking}
+            identityError={officeIdentity.error}
+            onRetryIdentity={() => { void loadOfficeIdentity(); }}
             profileName={state.config?.profile?.name}
-            onReload={() => api("/api/desk", undefined, { timeoutMs: 15_000 }).then(snapshot => dispatch({ type: "deskSnapshot", snapshot }))}
-            onSave={(input) =>
-              api(
-                "/api/desk/agency",
-                {
-                  method: "PATCH",
-                  body: JSON.stringify({ name: input.name, jurisdictions: input.jurisdictions, office: input.office, expectedRevision: input.expectedRevision }),
-                },
-                { timeoutMs: 15_000 },
-              ).then((snapshot) => dispatch({ type: "deskSnapshot", snapshot }))
-            }
+            onReload={async () => {
+              const original = officeIdentity.context;
+              if (!original || officeIdentity.checking || officeIdentity.error) throw new Error("Check the current office identity before reloading. Your typing is kept.");
+              const operation = ++officeOperation.current;
+              await createOfficeDraftRequests({ context: original,
+                request: (path, init) => api(path, init, { timeoutMs: 15_000 }), readIdentity: readOfficeIdentity,
+                currentContext: () => currentIdentity.current.context, currentEpoch: companyApi.sessionVersion,
+                active: () => identityActive.current && operation === officeOperation.current && !currentIdentity.current.checking && !currentIdentity.current.error,
+                currentRevision: () => currentDesk.current?.revision ?? null,
+                accept: snapshot => { currentDesk.current = snapshot; dispatch({ type: "deskSnapshot", snapshot }); },
+              }).reload();
+            }}
+            onSave={async input => {
+              const original = officeIdentity.context;
+              if (!original || officeIdentity.checking || officeIdentity.error) throw new Error("Check the current office identity before saving. Your typing is kept.");
+              const operation = ++officeOperation.current;
+              await createOfficeDraftRequests({ context: original,
+                request: (path, init) => api(path, init, { timeoutMs: 15_000 }), readIdentity: readOfficeIdentity,
+                currentContext: () => currentIdentity.current.context, currentEpoch: companyApi.sessionVersion,
+                active: () => identityActive.current && operation === officeOperation.current && !currentIdentity.current.checking && !currentIdentity.current.error,
+                currentRevision: () => currentDesk.current?.revision ?? null,
+                accept: snapshot => { currentDesk.current = snapshot; dispatch({ type: "deskSnapshot", snapshot }); },
+              }).save(input).catch(cause => {
+                if (identityActive.current && companyApi.sessionVersion() === original.sessionVersion) setOfficeIdentity(previous => ({ ...previous, checking: false, error: "The private workspace or office session could not be checked. Your typing is kept; check the current identity before saving." }));
+                throw cause;
+              });
+            }}
           />
         ) : deskError ? (
           <Card title="This office">
@@ -261,7 +320,7 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
       </>;
   const officeGroups = [
     { id: "basics", label: "Office basics", content: officeBasics },
-    { id: "people", label: "People & departments", content: <><CompanySetupCard /><div className="px-1 text-[13px] leading-relaxed text-ink-muted"><p className="font-medium text-ink">Hermios CRM workspace</p><p className="mt-1">Each person connects their own Hermios account from Desk → Hermios or Connected apps. Bud uses only that person's verified workspace and access; office membership never connects a CRM account for anyone else. Department access to CRM records is coming next.</p></div></> },
+    { id: "people", label: "People & departments", content: <><CompanySetupCard onServiceAdministration={openServiceAdministration} /><div className="px-1 text-[13px] leading-relaxed text-ink-muted"><p className="font-medium text-ink">Hermios CRM workspace</p><p className="mt-1">Each person connects their own Hermios account from Desk → Hermios or Connected apps. Bud uses only that person's verified workspace and access; office membership never connects a CRM account for anyone else. Department access to CRM records is coming next.</p></div></> },
     { id: "account", label: "Account & usage", content: <><section id={section ? undefined : "you-website"} tabIndex={-1} aria-label="Website account"><WebsiteLinkCard /></section><AiUsageCard /></> },
     { id: "remote", label: "Remote access", content: <><WebsiteRequestsCard /><RemoteApproversCard /><RemoteWorkCard /></> },
   ];

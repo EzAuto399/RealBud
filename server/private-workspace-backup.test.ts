@@ -11,6 +11,8 @@ import { emptyV3 } from '../shared/desk-v3.ts';
 import { WorkflowDatabase } from './workflow-database.ts';
 import { defaultAgencySettings } from './agency-setup.ts';
 import { createMailIngestionService } from './mail-ingestion.ts';
+import { SourceBillRegister, previewBillSource } from './source-bills.ts';
+import { billSenderEnvelopeDigest } from './source-bill-rules.ts';
 import { BankReferenceStore } from './bank-reference-store.ts';
 import { createTenantDirectoryStore } from './tenant-directory.ts';
 import { DeskStore, emptyV2 } from './desk-store.ts';
@@ -79,6 +81,25 @@ async function populated() {
 }
 
 describe('portable private business backup', () => {
+  it('restores optional staff classification and original sender evidence under a different private key without stripping provenance', async () => {
+    const source = await fixture(), target = await fixture(), db = new WorkflowDatabase({ dir: source.directory, key: source.key });
+    const register = new SourceBillRegister(db, { dataDir: source.directory, now: () => 2000 });
+    const original = { accountId: 'fictional-mail', receiptId: 'original-receipt', threadId: 'original-thread', message: { id: 'cd', at: 1000, from: 'supplier@example.test', subject: 'Actual fictional invoice', body: 'Fictional original bill', bodyTruncated: false, attachments: [], authResults: 'mx.google.com; dmarc=pass header.from=example.test' } };
+    const forwarded = { ...original, receiptId: 'forward-receipt', threadId: 'forward-thread', message: { ...original.message, id: 'ab', at: 1500, from: 'office@forwarder.test', subject: 'Fwd: Actual fictional invoice', body: '---------- Forwarded message ---------\nFictional original bill' } };
+    const evidence = previewBillSource(original), saved = register.accept({ expectedSourceDigest: previewBillSource(forwarded).digest, sourceReviewed: true, maintenanceClassificationReviewed: true, originalSourceReviewed: true,
+      forwardedOriginalSource: { itemId: 'a'.repeat(64), messageId: 'cd', expectedSourceDigest: evidence.digest, expectedEnvelopeDigest: billSenderEnvelopeDigest(evidence) },
+      facts: { propertyId: 'fictional-property', kind: 'Maintenance', vendor: 'Fictional supplier', amountCents: 12345, currency: 'AUD', invoiceDate: null, dueDate: null, note: '', maintenanceClassification: 'maintenance' }, reviewReason: 'Staff checked the original and forwarded bill' }, forwarded, 'fictional-staff', { itemId: 'a'.repeat(64), source: original });
+    db.close();
+    const { backup, receipt } = await source.service.exportBackup(passphrase);
+    expect(JSON.stringify(backup)).not.toContain('Fictional original bill');
+    await target.service.stageRestore({ backup, passphrase, expectedDigest: receipt.digest });
+    await applyStagedPrivateRestore({ directory: target.directory, key: target.key });
+    const restored = new WorkflowDatabase({ dir: target.directory, key: target.key });
+    try { expect(new SourceBillRegister(restored, { dataDir: target.directory }).getOccurrence(saved.id)).toEqual(saved); }
+    finally { restored.close(); }
+    const tampered = changedBackup(backup, value => { const row = value.records.find(row => row.kind === 'bill-occurrence') as any; const privateKey = Buffer.from(value.keyHex, 'hex'); try { const saved = decryptJson(privateKey, row.payload) as any; saved.forwardedSenderReview.originalSource.message.from = 'spoofed@fake.test'; row.payload = encryptJson(privateKey, saved); } finally { privateKey.fill(0); } });
+    await expect((await fixture()).service.previewBackup(tampered, passphrase)).rejects.toThrow(/recovery|bill/);
+  });
   it('retains portfolio sources and completed results across different-key restore without automatic dispatch', async () => {
     const source = await fixture(), target = await fixture();
     const original = JSON.stringify(batchBackupFixture(), null, 2) + '\n';

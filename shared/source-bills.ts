@@ -10,6 +10,7 @@ export interface BillMailSource {
   };
 }
 export interface BillSourceEvidence extends BillMailSource { digest: string; identity: string }
+export type BillMaintenanceClassification = 'unclassified' | 'maintenance' | 'not-maintenance';
 export interface BillFacts {
   propertyId: string; kind: string; vendor: string; amountCents: number | null; currency: 'AUD';
   invoiceDate: string | null; dueDate: string | null; note: string;
@@ -18,12 +19,15 @@ export interface BillFacts {
   /** Reviewed labels: the supplier reference (e.g. REI) and what the invoice
    * charges for. Neither is inferred supplier identity or payment proof. */
   supplierReference?: string | null; workDescription?: string | null;
+  /** Staff's explicit maintenance decision, independent of payment approval.
+   * Missing legacy values remain undecided; model output is never this review. */
+  maintenanceClassification?: BillMaintenanceClassification;
 }
 /** Comparison only: retain stored legacy facts and their original audit hashes. */
 export function sameBillFacts(a: BillFacts, b: BillFacts): boolean {
   return (['propertyId', 'kind', 'vendor', 'note'] as const).every(key => a[key].trim() === b[key].trim()) &&
     (['amountCents', 'currency', 'invoiceDate', 'dueDate'] as const).every(key => a[key] === b[key]) &&
-    (['invoiceNumber', 'invoiceVersion', 'supplierReference', 'workDescription'] as const).every(key => (a[key]?.trim() ?? null) === (b[key]?.trim() ?? null));
+    (['invoiceNumber', 'invoiceVersion', 'supplierReference', 'workDescription'] as const).every(key => (a[key]?.trim() ?? null) === (b[key]?.trim() ?? null)) && (a.maintenanceClassification ?? 'unclassified') === (b.maintenanceClassification ?? 'unclassified');
 }
 export type SourceBillState = 'received' | 'in-process' | 'hold' | 'cancelled';
 /** Human-reviewed claims, never a connector receipt or permission to act. */
@@ -53,12 +57,20 @@ export interface BillDuplicateReview {
   version: 1; reviewDigest: string; candidates: BillDuplicateReference[];
   reviewedAt: number; reviewedBy: string; reason: string;
 }
+/** Source-bound staff link to an actual saved original message. The host supplies
+ * all envelope evidence and review identity; quoted body text never qualifies. */
+export interface BillForwardedSenderReview {
+  version: 1; forwardedSourceDigest: string; originalItemId: string;
+  originalSource: BillSourceEvidence; originalEnvelopeDigest: string;
+  reviewedAt: number; reviewedBy: string; reviewReason: string;
+}
 export interface BillOccurrenceVersion {
   revision: number; facts: BillFacts; state: SourceBillState; source: BillSourceEvidence;
   seriesId: string | null; expectedArrivalDate: string | null;
   reviewedAt: number; reviewedBy: string; reviewReason: string;
   duplicateReview?: BillDuplicateReview;
   financialReview?: BillFinancialReview;
+  forwardedSenderReview?: BillForwardedSenderReview;
 }
 export interface SourceBillOccurrence extends BillOccurrenceVersion {
   id: string; createdAt: number; history: BillOccurrenceVersion[];

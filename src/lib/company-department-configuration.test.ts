@@ -108,6 +108,26 @@ describe('department configuration history', () => {
 });
 
 describe('department configuration save receipt boundary', () => {
+  it.each([400,401,403,404,405,409,422])('marks only a first initial HTTP refusal %s as definitely not recorded', async status => {
+    const request = vi.fn().mockRejectedValue({ status }); const error = await createCompanyApi(request).saveDepartmentConfiguration(input).catch(cause => cause);
+    expect(error.departmentConfigurationFirstRefusal).toBe(true); expect(request).toHaveBeenCalledTimes(1);
+  });
+  it.each([410,408,429,500,503,undefined])('keeps initial uncertain HTTP/transport outcome %s unclassified', async status => {
+    const request = vi.fn().mockRejectedValue({ status, departmentConfigurationFirstRefusal: true }); const error = await createCompanyApi(request).saveDepartmentConfiguration(input).catch(cause => cause);
+    expect(error.departmentConfigurationFirstRefusal).toBeUndefined();
+  });
+  it.each([403,409,422])('does not turn ACK refusal %s into first-request no-effect evidence', async status => {
+    const request = vi.fn().mockResolvedValueOnce(saved()).mockRejectedValueOnce({ status }); const error = await createCompanyApi(request).saveDepartmentConfiguration(input).catch(cause => cause);
+    expect(error.departmentConfigurationFirstRefusal).toBeUndefined(); expect(request.mock.calls.map(call => call[0])).toEqual(['/api/company/departments/configuration/save',ackPath]);
+  });
+  it.each([403,409])('keeps exact replay refusal %s uncertain, regardless of prior queue acknowledgement', async status => {
+    const request = vi.fn().mockRejectedValue({ status }); const error = await createCompanyApi(request).resumeDepartmentOperation({ path:'/api/company/departments/configuration/save',input }).catch(cause => cause);
+    expect(error.departmentConfigurationFirstRefusal).toBeUndefined(); expect(JSON.parse(request.mock.calls[0][1].body)).toEqual(input);
+  });
+  it('does not mark a malformed success as a definitive first refusal', async () => {
+    const error = await createCompanyApi(vi.fn().mockResolvedValue({ ...saved(), receiptId:id(99) })).saveDepartmentConfiguration(input).catch(cause=>cause);
+    expect(error.departmentConfigurationFirstRefusal).toBeUndefined();
+  });
   it.each([false, true])('acknowledges only the exact validated request (replayed=%s)', async replayed => {
     const response = { ...saved(), replayed }, request = vi.fn().mockResolvedValueOnce(response).mockResolvedValueOnce({ ok: true });
     const client = createCompanyApi(request, storage()), changed = vi.fn(); client.subscribeDepartmentChanges(changed);

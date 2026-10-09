@@ -106,7 +106,11 @@ try {
   snap = (await importReviewedCsv(csv)).body;
   check("import flips the book live", snap?.mode === "live" && snap.hands === "csv");
   check("csv source has last-checked", snap.sources?.some((s) => s.kind === "csv" && typeof s.lastCheckedAt === "number"));
+  const agencyBefore = (await api("GET", "/api/desk")).body;
+  if (typeof agencyBefore?.workspaceId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(agencyBefore.workspaceId)) throw new Error('The current private workspace could not be checked before naming the office.');
   const named = await api("PATCH", "/api/desk/agency", {
+    expectedWorkspaceId: agencyBefore.workspaceId,
+    expectedRevision: agencyBefore.revision,
     name: "Harbour PM",
     jurisdictions: ["ACT"],
     office: {

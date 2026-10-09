@@ -38,6 +38,8 @@ export interface CompanyStatus {
   remoteHost?: boolean;
   departurePending?: 'leave' | 'disconnect';
   company?: CompanySummary;
+  /** Versioned precondition support, exposed without minting member authority. */
+  hostCompany?: { version: 1; companyId: string };
   member?: CompanyMemberSummary;
   limitations: string[];
 }

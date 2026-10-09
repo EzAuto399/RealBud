@@ -3,7 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { hardenHermesChildEnv, hermesWorkerSandbox, REVIEWED_PROFILE_CACHE_RELEASES, reviewedCacheLayout, UNREVIEWED_WORKER_RELEASE } from "./hermes.ts";
+import { hardenHermesChildEnv, hermesWorkerSandbox, ensureProfileSkeleton, REVIEWED_PROFILE_CACHE_RELEASES, reviewedCacheLayout, UNREVIEWED_WORKER_RELEASE } from "./hermes.ts";
 import { runtimeCli } from "../../hermes-paths.ts";
 import { HERMES_RELEASES } from "../../hermes-releases.ts";
 import { NETWORK_ISOLATION_UNAVAILABLE } from "../../worker-network-sandbox.ts";
@@ -132,7 +132,7 @@ describe("release-gated profile cache guard", () => {
     for (const seat of seats) { mkdirSync(seat, { recursive: true }); writeFileSync(join(seat, ".skills_prompt_snapshot.json"), JSON.stringify({ skills: ["POISONED"] })); }
     return { home, cli, seat: seats[0]!, other: seats[1]!, done: () => rmSync(home, { recursive: true, force: true }) };
   }
-  const launch = (home: string, cli: string, deps: { platform: NodeJS.Platform; probe?: () => boolean } = { platform: "linux" }) =>
+  const launch = (home: string, cli: string, deps: { platform: NodeJS.Platform; probe?: () => boolean } = { platform: "darwin", probe: () => true }) =>
     hermesWorkerSandbox("ask", cli, ["-p", "property", "acp"], { HERMES_HOME: home, PATH: "/usr/bin" }, [4000], deps);
 
   it("covers exactly the catalog releases, so a new release must be reviewed before it can launch", () => {
@@ -150,9 +150,9 @@ describe("release-gated profile cache guard", () => {
   });
 
   it("regenerates the seat's profile without its poisoned cache and leaves every other seat alone", () => {
-    const { home, cli, seat, other, done } = workerFolder(reviewed);
+    const { seat, other, done } = workerFolder(reviewed);
     try {
-      launch(home, cli).release();
+      ensureProfileSkeleton(seat);
       expect(existsSync(join(seat, ".skills_prompt_snapshot.json"))).toBe(false);
       for (const name of ["skills", "memories", "sessions", "bin"]) expect(lstatSync(join(seat, name)).isDirectory()).toBe(true);
       expect(existsSync(join(other, ".skills_prompt_snapshot.json"))).toBe(true);

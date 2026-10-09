@@ -13,9 +13,23 @@ The gateway runs on Fly (Sydney) from `deploy.sh` and `fly.toml`. The website ru
 
 For the first **customer-paid** office, Modelvia refuses a new customer with `billingCompanyId` under this scoped credential. RealBud returns 409 `modelvia_billing_binding_operator_required` and leaves the attempted customer creation unapplied. A Modelvia global operator must verify that a Modelvia billing account exists with the reviewed RealBud office company id, then create that customer once under client `realbud` with `billingCompanyId` set to that exact id. Verify the immutable binding and billing account before retrying the same RealBud office AI access request. The gateway never falls back to a global credential. A customer already bound to another office is refused with 409 `modelvia_billing_account_bound`; do not retry against another office id.
 
+## State volume check (before deploying the runtime-state lease release)
+
+From this release every ledger client takes a lease on the ledger's folder (`$REALBUD_GATEWAY_DATA`, `/data` on Fly) and admits it only when it is a real folder (never a link) owned by the process user, with no group or other access. The ledger path does not move: it stays `/data/ledger.sqlite`. Before the first deploy of this release, read the volume as it is (read-only, nothing changes):
+
+```sh
+fly ssh console -a realbud-managed-gateway -C "id -u"
+fly ssh console -a realbud-managed-gateway -C "stat -c '%a %u:%g %F %n' /data /data/ledger.sqlite /data/ledger.sqlite-wal /data/ledger.sqlite-shm /data/connectors.json /data/secrets"
+fly ssh console -a realbud-managed-gateway -C "ls -la /data/secrets"
+```
+
+Expect `id -u` = `0` (the image sets no `USER`), every entry owned by `0:0`, `directory` or `regular file` (never `symbolic link`), `600` on every file (the ledger, its `-wal`/`-shm`, `connectors.json` and each `REALBUD_COMPOSIO_*` file) and `700` on `/data/secrets`. `/data` itself may read `755` (a Fly volume root): the gateway tightens an owned folder whose only problem is group/other access to `700` at boot and logs `{"gatewayState":"tightened_to_owner_only","directory":"/data"}` once. A FILE open to group/other is never tightened: the gateway refuses it (`gateway_state_file_permissions`) because its contents may already have been read. Find out why before you `chmod 600` it by hand. Another owner or a link is refused (`gateway_state_permissions`); fix ownership, never point the gateway around it.
+
+After the deploy, `/ready` must answer 200 and the log must carry no `gateway_state_*` code. A restart needs no cleanup: a lease left by the previous process (node is PID 1 in every container boot) carries that process's boot id and is reclaimed; a live lease of the running process never is. A lease naming another host (the machine id is the hostname, so a replaced machine on the same volume) is never reclaimed automatically and refuses boot with `gateway_state_in_use`: with the gateway stopped, read `/data/.realbud-gateway-leases/*`, confirm that host no longer runs, then remove those files. `restoreGatewayBackup` needs an empty target folder; a volume root that holds `lost+found` is not empty, so a restore onto a fresh volume needs a target subfolder and a matching `REALBUD_GATEWAY_DATA` (owner decision; not changed here).
+
 ## Order of operations
 
-1. **Deploy.** Export the variables below, then run `managed-gateway/deploy.sh`. It validates every variable before touching Fly, names each missing one without echoing a value, stages the secrets over stdin and deploys once. It generates no secret: every value is a stable one recovered from protected storage, so a redeploy rotates nothing.
+1. **Deploy.** On the first deploy of the lease release, run the [state volume check](#state-volume-check-before-deploying-the-runtime-state-lease-release) first. Export the variables below, then run `managed-gateway/deploy.sh`. It validates every variable before touching Fly, names each missing one without echoing a value, stages the secrets over stdin and deploys once. It generates no secret: every value is a stable one recovered from protected storage, so a redeploy rotates nothing.
 2. **Check readiness.** `curl -fsS "$REALBUD_GATEWAY_URL/ready"`. A 200 response means provisioning is composed. A 503 response names the variable still to set, never its value. Both responses report `modelviaOperator` and `operatorAccess` (`configured|missing`). The legacy `modelviaOperator` field reports only the scoped credential's local presence. `/ready` makes no network call and cannot prove Modelvia accepted it. The startup log line also reports `careCollection` (`off|sandbox|live`).
 3. **Create each office's service entitlement** with the operator route (same operator token as [Office AI access](#office-ai-access); no SSH):
 

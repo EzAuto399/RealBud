@@ -18,7 +18,7 @@ import { applyManagedModelProfile, applyPropertyPack } from "./hermes-pack.ts";
 import { hermesCli } from "./hermes-pin.ts";
 import { resetRuntimeSelectionForTests } from "./hermes-runtime-selection.ts";
 import { BUD_WORK_FOLDER, seedVault, vaultDir } from "./vault.ts";
-import { BROKER_PORT_POOL_SIZE, BROKER_PORTS_EXHAUSTED, NETWORK_ISOLATION_UNAVAILABLE, PRIVATE_HOME_PATHS, SANDBOX_EXEC, regexLiteral, SANDBOX_TEST_WRITABLE, sandboxedLaunch, scriptInterpreter, setWorkerLaunchesHeld, stopSandboxedChildren, trackSandboxedChild, trustedPath, WORKERS_HELD, workerLaunchesHeld, startBrokerPortPool, workerSandboxProfile } from "./worker-network-sandbox.ts";
+import { BROKER_PORT_POOL_SIZE, BROKER_PORTS_EXHAUSTED, NETWORK_ISOLATION_UNAVAILABLE, PRIVATE_HOME_PATHS, SANDBOX_EXEC, regexLiteral, SANDBOX_TEST_WRITABLE, sandboxedLaunch, scriptInterpreter, setWorkerLaunchesHeld, stopSandboxedChildren, trackSandboxedChild, trustedPath, WORKERS_HELD, WORKER_PLATFORM_HELD, workerLaunchesHeld, startBrokerPortPool, workerSandboxProfile } from "./worker-network-sandbox.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-acp-cli.ts");
 const cleanup: Array<() => void | Promise<void>> = [];
@@ -187,12 +187,18 @@ describe("sandboxed launch", () => {
     expect(existsSync(env.TMPDIR!)).toBe(false);
   });
 
-  it("leaves the launch unchanged on other platforms", () => {
-    for (const platform of ["linux", "win32"] as const) {
-      const other: Record<string, string | undefined> = {};
-      expect(sandboxedLaunch("/synthetic/hermes", ["acp"], other, { loopbackPorts: [4000], writable: [] }, { platform, probe: () => { throw new Error("not probed"); } })).toMatchObject({ command: "/synthetic/hermes", args: ["acp"] });
-      expect(other.TMPDIR).toBeUndefined();
-    }
+  it("refuses an unsupported platform before probing or allocating worker temp", () => {
+    const other: Record<string, string | undefined> = {};
+    expect(() => sandboxedLaunch("/synthetic/hermes", ["acp"], other, { loopbackPorts: [4000], writable: [] }, { platform: "linux", probe: () => { throw new Error("not probed"); } })).toThrow(WORKER_PLATFORM_HELD);
+    expect(other.TMPDIR).toBeUndefined();
+  });
+
+  // Owner decision, 9 Oct 2026: Windows runs Bud without network isolation.
+  it("launches unchanged on Windows without probing a sandbox or allocating worker temp", () => {
+    const env: Record<string, string | undefined> = {};
+    const launch = sandboxedLaunch("/synthetic/hermes", ["acp"], env, { loopbackPorts: [4000], writable: [] }, { platform: "win32", probe: () => { throw new Error("not probed"); } });
+    expect([launch.command, launch.args]).toEqual(["/synthetic/hermes", ["acp"]]);
+    expect(env.TMPDIR).toBeUndefined();
   });
 
   it.runIf(SEATBELT)("refuses to start rather than run unconfined when sandbox-exec is missing or rejects the profile", () => {
@@ -302,12 +308,13 @@ describe("live sandboxed children", () => {
 });
 
 describe("Hermes worker launch off macOS", () => {
-  it("starts the program unchanged, with no Seatbelt profile or temp override", () => {
+  it("refuses before making a profile or changing the worker environment", () => {
     seedVault();
     const root = scratch("rb-plain-home-");
-    for (const platform of ["linux", "win32"] as const) {
+    for (const platform of ["linux"] as const) {
       const env: Record<string, string | undefined> = { HERMES_HOME: root };
-      expect(hermesNetworkSandbox("/synthetic/hermes", ["acp"], env, [4000], "ask", { platform })).toMatchObject({ command: "/synthetic/hermes", args: ["acp"] });
+      expect(() => hermesNetworkSandbox("/synthetic/hermes", ["acp"], env, [4000], "ask", { platform })).toThrow(WORKER_PLATFORM_HELD);
+      expect(existsSync(join(root, "profiles"))).toBe(false);
       expect(env.TMPDIR).toBeUndefined();
     }
   });

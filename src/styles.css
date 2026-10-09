@@ -4,6 +4,25 @@
 @import "./desk.css";
 @import "./workspace.css";
 
+/* Normal selected-row metadata needs the stronger shared ink token. */
+.workspace-surface .rb-context-item.is-current :is(.text-ink-muted, .text-ink-secondary, .rb-context-count),
+.workspace-surface .bg-selected :is(.text-ink-muted, .text-ink-secondary) {
+  color: var(--color-ink-secondary-strong);
+}
+
+/* Tactile controls keep the same project colors and offer a static opt-out. */
+.workspace-surface :is(.pm-control, .pm-decision, .rb-context-item):not([data-static]) {
+  transition-property: scale, background-color, color;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+.workspace-surface :is(.pm-control, .pm-decision, .rb-context-item):active:not(:disabled):not([data-static]) { scale: 0.96; }
+.workspace-surface :is(.pm-control, .pm-decision, .rb-context-item) > .lucide { stroke-width: 1.5; }
+.workspace-surface :is(.pm-control, .pm-decision, .rb-context-item).font-semibold > .lucide { stroke-width: 2; }
+@media (prefers-reduced-motion: reduce) {
+  .workspace-surface :is(.pm-control, .pm-decision, .rb-context-item):not([data-static]) { transition: none; scale: 1; }
+}
+
 /* Warm Operational Ledger — DESIGN.md. Existing class names stay as aliases. */
 @theme {
   --animate-panel-in: panel-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
@@ -323,18 +342,12 @@ label > input[type="checkbox"] {
   from { transform: translateY(4px); opacity: 0.72; }
   to { transform: translateY(0); opacity: 1; }
 }
-/* "Thinking…" label sheen while the model reasons */
+/* A quiet pulse keeps the working label readable in the existing ink palette. */
 @keyframes shimmer {
-  from { background-position: 200% 50%; }
-  to { background-position: -200% 50%; }
+  0%, 100% { opacity: 0.72; }
+  50% { opacity: 1; }
 }
-.thinking-shimmer {
-  background: linear-gradient(90deg, var(--color-ink-secondary) 40%, var(--color-ink) 50%, var(--color-ink-secondary) 60%);
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
+.thinking-shimmer { color: var(--color-ink); }
 @media (prefers-reduced-motion: no-preference) {
   .bud-setup-step[data-state="current"] {
     animation: bud-step-in 0.28s cubic-bezier(0.22, 1, 0.36, 1);
@@ -342,7 +355,7 @@ label > input[type="checkbox"] {
 }
 @media (prefers-reduced-motion: reduce) {
   .animate-caret, .animate-msg-in, .animate-shimmer, .animate-panel-in, .animate-pop-in, .animate-view-in { animation: none; }
-  .thinking-shimmer { background: none; color: var(--color-ink-secondary); }
+  .thinking-shimmer { background: none; color: var(--color-ink); }
   /* Progress must stay visible under reduced motion; a slower turn is the
      static-equivalent that still says "working". */
   .animate-spin { animation-duration: 2.4s; }

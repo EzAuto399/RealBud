@@ -5,7 +5,7 @@
 // sends or calls Property Inspect: "accepted" means accepted into this draft plan.
 import { join } from 'node:path';
 import { DATA_DIR } from './config.ts';
-import { draftInspectionPlan, type InspectionPlan, type InspectionProperty, type ManualChange, type PinnedAppointment } from './inspection-plan.ts';
+import { draftInspectionPlan, inspectionTimesOverlap, type InspectionPlan, type InspectionProperty, type ManualChange, type PinnedAppointment } from './inspection-plan.ts';
 import type { InspectionHistoryStore, HistoryProperty } from './inspection-history.ts';
 import type { InspectionOfficeRules, InspectionRulesStore } from './inspection-rules.ts';
 import { readPrivateJson, writePrivateJson } from './private-json.ts';
@@ -98,7 +98,9 @@ export function createInspectionBookingsStore(options: { file?: string; now?: ()
       const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
       if (!rules.workingDays.includes(weekday)) fail('That day is not a working day in the inspection rules.', 400);
       if (rules.closedDates.includes(date)) fail('The office is closed that day.', 400);
-      if (state.draft.plan.appointments.some(x => x.id !== a.id && x.date === date && x.time === time && x.inspector === a.inspector)) fail(`${a.inspector} already has an inspection at ${time} that day.`, 409);
+      const others = state.draft.plan.appointments.filter(x => x.id !== a.id && x.date === date && x.inspector === a.inspector);
+      if (others.length >= rules.dailyCapacity) fail(`${a.inspector} already has ${others.length} inspections that day; the daily limit is ${rules.dailyCapacity}. Choose another day.`, 409);
+      if (others.some(x => inspectionTimesOverlap(x.time, time, rules))) fail(`${a.inspector} already has an inspection or travel allowance at ${time} that day. Choose a free time.`, 409);
       state.manual = [...state.manual.filter(m => m.propertyId !== a.propertyId), { kind: 'move', id: a.id, propertyId: a.propertyId, date, time, inspector: a.inspector, ...(a.externalId ? { externalId: a.externalId } : {}) }];
       return save(state, input.base, state.draft.planStart);
     }),
@@ -107,26 +109,27 @@ export function createInspectionBookingsStore(options: { file?: string; now?: ()
 export type InspectionBookingsStore = ReturnType<typeof createInspectionBookingsStore>;
 
 /** Desk properties + saved history → planner input. No history means no dates, so the planner holds it. */
+const planningProperties = (properties: HistoryProperty[], h: Awaited<ReturnType<InspectionHistoryStore['read']>>): InspectionProperty[] => properties.map(p => {
+  const rec = h.records[p.id];
+  return { id: p.id, address: p.address, area: rec?.area || 'No area set',
+    ...(rec?.lastCompleted ? { lastCompleted: rec.lastCompleted } : {}), ...(rec?.lastPlanned ? { lastPlanned: rec.lastPlanned } : {}),
+    ...(rec?.accessNote ? { accessNote: rec.accessNote } : {}) };
+});
 export async function planBase(properties: HistoryProperty[], history: InspectionHistoryStore, rules: InspectionRulesStore): Promise<PlanBase> {
   const [h, r] = await Promise.all([history.read(), rules.read()]);
-  return {
-    rules: r.rules,
-    properties: properties.map(p => {
-      const rec = h.records[p.id];
-      return { id: p.id, address: p.address, area: rec?.area || 'No area set',
-        ...(rec?.lastCompleted ? { lastCompleted: rec.lastCompleted } : {}), ...(rec?.lastPlanned ? { lastPlanned: rec.lastPlanned } : {}),
-        ...(rec?.accessNote ? { accessNote: rec.accessNote } : {}) };
-    }),
-  };
+  return { rules: r.rules, properties: planningProperties(properties, h) };
 }
 
 /** The monthly Inspection draft loop: refreshes the saved draft from Desk, history
  * and rules (accepted and moved visits stay pinned) and says it is ready. Books nothing. */
 export async function runInspectionDraft(host: { bookings: InspectionBookingsStore; history: InspectionHistoryStore; rules: InspectionRulesStore;
   properties: () => HistoryProperty[]; today: () => Promise<string> }): Promise<{ ok: true; status: 'awaiting-approval' | 'completed'; detail: string }> {
-  const base = await planBase(host.properties(), host.history, host.rules);
-  if (!base.properties.length) return { ok: true, status: 'completed', detail: 'No properties to plan yet. Add properties on Desk; the next draft includes them.' };
-  const { plan } = (await host.bookings.draft({ planStart: await host.today(), base })).draft!;
+  const properties = host.properties();
+  if (!properties.length) return { ok: true, status: 'completed', detail: 'No properties to plan yet. Add properties on Desk; the next draft includes them.' };
+  const [history, planStart] = await Promise.all([host.history.read(), host.today()]);
+  const prepared = planningProperties(properties, history);
+  const saved = await host.rules.withSnapshot(current => host.bookings.draft({ planStart, base: { properties: prepared, rules: current.rules } }));
+  const { plan } = saved.draft!;
   const toAccept = plan.appointments.filter(a => a.status === 'draft').length;
   return { ok: true, status: 'awaiting-approval', detail: `New inspection draft ready to review: ${toAccept} to accept, ${plan.holds.length} held. Nothing is booked.` };
 }
@@ -146,9 +149,17 @@ export function createInspectionsApi(host: { bookings: InspectionBookingsStore; 
     if (method !== 'POST') return { status: 405, body: { error: 'Use POST for this inspection plan change.' } };
     if (host.recovery()) fail('Recover the private book before changing the inspection plan.', 503);
     if (action === 'history/import') return { status: 200, body: await host.history.importCsv({ csv: input.csv, properties: host.properties(), expectedRevision: input.expectedRevision }) };
-    const base = await planBase(host.properties(), host.history, host.rules);
-    if (action === 'draft') return { status: 200, body: await host.bookings.draft({ planStart: input.planStart ?? host.today(), base }) };
-    if (action === 'accept') return { status: 200, body: await host.bookings.accept({ ids: input.ids, expectedRevision: input.expectedRevision, base }) };
-    return { status: 200, body: await host.bookings.move({ id: input.id, date: input.date, time: input.time, expectedRevision: input.expectedRevision, base }) };
+    // Read unrelated inputs before the lease. No bookings operation calls rules
+    // in reverse order; the lease covers its async load and durable file commit.
+    const properties = host.properties(), history = await host.history.read();
+    const prepared = planningProperties(properties, history), planStart = action === 'draft' ? input.planStart ?? host.today() : undefined;
+    const saved = await host.rules.withSnapshot(current => {
+      if (host.recovery()) return fail('Recover the private book before changing the inspection plan.', 503);
+      const base: PlanBase = { properties: prepared, rules: current.rules };
+      if (action === 'draft') return host.bookings.draft({ planStart, base });
+      if (action === 'accept') return host.bookings.accept({ ids: input.ids, expectedRevision: input.expectedRevision, base });
+      return host.bookings.move({ id: input.id, date: input.date, time: input.time, expectedRevision: input.expectedRevision, base });
+    });
+    return { status: 200, body: saved };
   };
 }

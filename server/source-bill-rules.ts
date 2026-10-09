@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { BillFacts, BillMailSource, BillSourceEvidence, BillOccurrenceVersion, SourceBillOccurrence, BillSeriesVersion, BillRecurrenceSeries, BillCalendarEntry, SourceBillState, BillDuplicateMatch, BillFinancialObservation, BillFinancialReview, BillPaymentTerms } from '../shared/source-bills.ts';
+import type { BillFacts, BillMailSource, BillSourceEvidence, BillOccurrenceVersion, SourceBillOccurrence, BillSeriesVersion, BillRecurrenceSeries, BillCalendarEntry, SourceBillState, BillDuplicateMatch, BillFinancialObservation, BillFinancialReview, BillPaymentTerms, BillForwardedSenderReview } from '../shared/source-bills.ts';
 import { sameBillFacts } from '../shared/source-bills.ts';
 import { validBillDate, addBillDays, anchoredBillMonth, billDateInZone } from '../shared/bill-dates.ts';
 
@@ -50,14 +50,44 @@ export function previewBillSource(value: BillMailSource): BillSourceEvidence {
   const authResults = message.authResults === undefined ? {} : { authResults: text(message.authResults, 4096) };
   return { ...canonical, message: { ...canonical.message, ...replyTo, ...authResults }, receiptId, digest: hash(canonical), identity: hash([accountId, threadId, canonical.message.id]) };
 }
+/** Legacy evidence hashes remain unchanged. New sender reviews separately bind
+ * the exact trusted envelope, including headers excluded from the old digest. */
+export function billSenderEnvelopeDigest(source: BillSourceEvidence): string {
+  return hash([source.digest, source.accountId, source.threadId, source.message.id, source.message.from, source.message.replyTo ?? null, source.message.authResults ?? null]);
+}
+export const isForwardedBillSource = (source: BillSourceEvidence) => /^\s*(?:fw|fwd)\s*:/i.test(source.message.subject) || /^(?:\s*[-=]+\s*)?(?:forwarded message|begin forwarded message)\b/im.test(source.message.body);
+export function forwardedSenderReview(input: Record<string, unknown>, forwarded: BillSourceEvidence, actor: string, time: number, original?: { itemId: string; source: BillMailSource }): BillForwardedSenderReview | undefined {
+  if (input.forwardedOriginalSource === undefined || input.forwardedOriginalSource === null) return undefined;
+  const reference = object(input.forwardedOriginalSource, ['itemId', 'messageId', 'expectedSourceDigest', 'expectedEnvelopeDigest']);
+  if (Object.keys(reference).length !== 4 || typeof reference.itemId !== 'string' || !/^[a-f0-9]{64}$/.test(reference.itemId) || typeof reference.messageId !== 'string' || !/^[a-fA-F0-9]{1,128}$/.test(reference.messageId)) return fail('Choose an actual saved original message, never a pasted sender or quoted header.');
+  if (input.originalSourceReviewed !== true) return fail('Separately confirm that you reviewed the actual original message and its relationship to this forwarded bill.');
+  if (!original || original.itemId !== reference.itemId) return fail('The actual original source is unavailable. Keep the sender qualified until it can be checked.', 409);
+  const source = previewBillSource(original.source);
+  if (source.message.id !== reference.messageId || source.digest !== reference.expectedSourceDigest || billSenderEnvelopeDigest(source) !== reference.expectedEnvelopeDigest) return fail('The original source or sender envelope changed. Reopen and review it before saving.', 409);
+  if (source.accountId !== forwarded.accountId) return fail('The original message must belong to the same private Gmail account.', 409);
+  if (!isForwardedBillSource(forwarded) || isForwardedBillSource(source) || source.identity === forwarded.identity || source.message.at > forwarded.message.at) return fail('Choose the actual earlier original message. Another forwarded copy cannot verify its original sender.', 409);
+  return { version: 1, forwardedSourceDigest: forwarded.digest, originalItemId: original.itemId, originalSource: source, originalEnvelopeDigest: billSenderEnvelopeDigest(source), reviewedAt: time, reviewedBy: actor, reviewReason: text(input.reviewReason, 1000).trim() };
+}
+export function validateForwardedSenderReview(value: unknown, forwarded: BillSourceEvidence, reviewedAt: number) {
+  const review = object(value, ['version', 'forwardedSourceDigest', 'originalItemId', 'originalSource', 'originalEnvelopeDigest', 'reviewedAt', 'reviewedBy', 'reviewReason']);
+  if (Object.keys(review).length !== 8 || review.version !== 1 || review.forwardedSourceDigest !== forwarded.digest || typeof review.originalItemId !== 'string' || !/^[a-f0-9]{64}$/.test(review.originalItemId) || !record(review.originalSource)) recovery();
+  const storedOriginal = review.originalSource as Record<string, unknown>;
+  const source = previewBillSource(storedOriginal as unknown as BillMailSource);
+  if (source.digest !== storedOriginal.digest || source.identity !== storedOriginal.identity || review.originalEnvelopeDigest !== billSenderEnvelopeDigest(source) || source.accountId !== forwarded.accountId || source.identity === forwarded.identity || isForwardedBillSource(source) || !isForwardedBillSource(forwarded) || source.message.at > forwarded.message.at || at(review.reviewedAt) > reviewedAt) recovery();
+  text(review.reviewedBy, 200); text(review.reviewReason, 1000);
+}
 function facts(value: unknown): BillFacts {
-  const f = object(value, ['propertyId', 'kind', 'vendor', 'amountCents', 'currency', 'invoiceDate', 'dueDate', 'note', 'invoiceNumber', 'invoiceVersion', 'supplierReference', 'workDescription']);
+  const f = object(value, ['propertyId', 'kind', 'vendor', 'amountCents', 'currency', 'invoiceDate', 'dueDate', 'note', 'invoiceNumber', 'invoiceVersion', 'supplierReference', 'workDescription', 'maintenanceClassification']);
   if (f.currency !== 'AUD') return fail('This bill workflow currently supports AUD. Confirm the source currency before accepting.');
   if (f.amountCents !== null && (!Number.isSafeInteger(f.amountCents) || Number(f.amountCents) < 0 || Number(f.amountCents) > 999_999_999_999)) return fail('Enter a non-negative bill amount in whole cents.');
   const result: BillFacts = { propertyId: text(f.propertyId, 200).trim(), kind: text(f.kind, 80).trim(), vendor: text(f.vendor, 160).trim(), amountCents: f.amountCents as number | null, currency: 'AUD',
     invoiceDate: nullableDate(f.invoiceDate), dueDate: nullableDate(f.dueDate), note: text(f.note, 1000, true).trim() };
   for (const [key, max] of [['invoiceNumber', 120], ['invoiceVersion', 80], ['supplierReference', 120], ['workDescription', 1000]] as const) {
     if (Object.hasOwn(f, key)) result[key] = f[key] === null ? null : text(f[key], max).trim();
+  }
+  if (Object.hasOwn(f, 'maintenanceClassification')) {
+    if (!['unclassified', 'maintenance', 'not-maintenance'].includes(String(f.maintenanceClassification))) return fail('Choose an undecided, maintenance or not-maintenance staff classification.');
+    result.maintenanceClassification = f.maintenanceClassification as BillFacts['maintenanceClassification'];
   }
   if (result.invoiceVersion && !result.invoiceNumber) return fail('Confirm an invoice number before recording its version.');
   if (result.invoiceDate && result.dueDate && result.dueDate < result.invoiceDate) return fail('The due date precedes the invoice date. Resolve the source dates before accepting.');
@@ -126,7 +156,7 @@ function pattern(value: Record<string, unknown>): Pick<BillSeriesVersion, 'inter
   return { intervalMonths: value.intervalMonths as 1 | 3 | 12, anchorDate: date(value.anchorDate), windowBeforeDays: Number(value.windowBeforeDays), windowAfterDays: Number(value.windowAfterDays), timeZone };
 }
 function validateVersion(value: unknown) {
-  const v = object(value, ['revision', 'facts', 'state', 'source', 'seriesId', 'expectedArrivalDate', 'reviewedAt', 'reviewedBy', 'reviewReason', 'duplicateReview', 'financialReview']);
+  const v = object(value, ['revision', 'facts', 'state', 'source', 'seriesId', 'expectedArrivalDate', 'reviewedAt', 'reviewedBy', 'reviewReason', 'duplicateReview', 'financialReview', 'forwardedSenderReview']);
   positive(v.revision); facts(v.facts); state(v.state); at(v.reviewedAt); text(v.reviewedBy, 200); text(v.reviewReason, 1000);
   if (!record(v.source)) recovery();
   const storedSource = v.source as Record<string, unknown>;
@@ -135,6 +165,7 @@ function validateVersion(value: unknown) {
   if (v.seriesId !== null) text(v.seriesId, 100);
   nullableDate(v.expectedArrivalDate);
   if ((v.seriesId === null) !== (v.expectedArrivalDate === null)) recovery();
+  if (Object.hasOwn(v, 'forwardedSenderReview')) validateForwardedSenderReview(v.forwardedSenderReview, v.source as unknown as BillSourceEvidence, Number(v.reviewedAt));
   if (Object.hasOwn(v, 'financialReview')) validateFinancialReview(v.financialReview, Number(v.revision), Number(v.reviewedAt));
   if (Object.hasOwn(v, 'duplicateReview')) {
     const review = object(v.duplicateReview, ['version', 'reviewDigest', 'candidates', 'reviewedAt', 'reviewedBy', 'reason']);
@@ -179,7 +210,7 @@ function validRegister(value: unknown): Register {
     if (r.version !== 1 || !Array.isArray(r.occurrences) || r.occurrences.length > 500 || !Array.isArray(r.series) || r.series.length > 100) recovery();
     const rows = r.occurrences as SourceBillOccurrence[], series = r.series as BillRecurrenceSeries[];
     for (const row of rows) {
-      object(row, ['id', 'createdAt', 'history', 'revision', 'facts', 'state', 'source', 'seriesId', 'expectedArrivalDate', 'reviewedAt', 'reviewedBy', 'reviewReason', 'duplicateReview', 'financialReview']);
+      object(row, ['id', 'createdAt', 'history', 'revision', 'facts', 'state', 'source', 'seriesId', 'expectedArrivalDate', 'reviewedAt', 'reviewedBy', 'reviewReason', 'duplicateReview', 'financialReview', 'forwardedSenderReview']);
       if (!/^source-bill:[a-f0-9]{64}$/.test(row.id)) recovery();
       at(row.createdAt); validateVersion(versionOf(row));
       if (!Array.isArray(row.history) || row.history.length > 50 || row.revision !== row.history.length + 1) recovery();

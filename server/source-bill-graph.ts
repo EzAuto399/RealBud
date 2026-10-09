@@ -36,7 +36,7 @@ export const originId = (occurrenceId: string) => `bill-origin:${hash(occurrence
 
 export function validateOccurrence(value: unknown): SourceBillOccurrence {
   try {
-    const row = exact(value, ['id', 'createdAt', 'history', 'revision', 'facts', 'state', 'source', 'seriesId', 'expectedArrivalDate', 'reviewedAt', 'reviewedBy', 'reviewReason', ...(['duplicateReview', 'financialReview'].filter(key => value && typeof value === 'object' && Object.hasOwn(value, key)))]) as unknown as SourceBillOccurrence;
+    const row = exact(value, ['id', 'createdAt', 'history', 'revision', 'facts', 'state', 'source', 'seriesId', 'expectedArrivalDate', 'reviewedAt', 'reviewedBy', 'reviewReason', ...(['duplicateReview', 'financialReview', 'forwardedSenderReview'].filter(key => value && typeof value === 'object' && Object.hasOwn(value, key)))]) as unknown as SourceBillOccurrence;
     if (!occurrenceId(row.id)) recovery();
     at(row.createdAt); validateVersion(versionOf(row));
     if (!Array.isArray(row.history) || row.history.length > 50 || row.revision !== row.history.length + 1) recovery();
@@ -46,6 +46,11 @@ export function validateOccurrence(value: unknown): SourceBillOccurrence {
     for (const v of [...row.history, row]) {
       exact(v.source, ['accountId', 'threadId', 'message', 'receiptId', 'digest', 'identity']);
       exact(v.source.message, ['id', 'at', 'from', 'subject', 'body', 'bodyTruncated', 'attachments', ...['replyTo', 'authResults'].filter(k => Object.hasOwn(v.source.message, k))]);
+      if (v.forwardedSenderReview) {
+        const original = v.forwardedSenderReview.originalSource;
+        exact(original, ['accountId', 'threadId', 'message', 'receiptId', 'digest', 'identity']);
+        exact(original.message, ['id', 'at', 'from', 'subject', 'body', 'bodyTruncated', 'attachments', ...['replyTo', 'authResults'].filter(k => Object.hasOwn(original.message, k))]);
+      }
       if (v.source.accountId !== row.source.accountId || (v.seriesId !== null && !seriesId(v.seriesId))) recovery();
     }
     return row;

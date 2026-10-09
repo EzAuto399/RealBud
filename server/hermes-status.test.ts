@@ -54,7 +54,7 @@ describe("hermesStatus", () => {
   });
 
   it("is not ready until the hands test passes", async () => {
-    const status = await hermesStatus({ root: home, cli: PINNED_HERMES, platform: "linux" });
+    const status = await hermesStatus({ root: home, cli: PINNED_HERMES, platform: "darwin" });
     expect(status.cli.installed).toBe(true);
     expect(status.cli.matchesPin).toBe(true);
     expect(status.pack.installed).toBe(true);
@@ -120,7 +120,7 @@ describe("hermesStatus", () => {
   it("flags the pack as missing when SOUL.md is absent", async () => {
     const bare = mkdtempSync(join(tmpdir(), "omb-hermes-bare-"));
     try {
-      const status = await hermesStatus({ root: bare, cli: PINNED_HERMES, platform: "linux" });
+      const status = await hermesStatus({ root: bare, cli: PINNED_HERMES, platform: "darwin" });
       expect(status.cli.matchesPin).toBe(true);
       expect(status.pack.installed).toBe(false);
       expect(status.ready).toBe(false);

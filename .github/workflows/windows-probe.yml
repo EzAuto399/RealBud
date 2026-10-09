@@ -342,17 +342,17 @@ jobs:
           if ($runId -notmatch '^\d+$' -or $expected -notmatch '^[0-9a-f]{64}$' -or $source -notmatch '^[0-9a-f]{40}$') { throw 'Exact run and digest inputs required.' }
           $metadata = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$runId/artifacts" | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw 'Artifact metadata lookup failed.' }
-          $selected = @($metadata.artifacts | Where-Object { $_.name -eq 'windows-installer' })
+          $selected = @($metadata.artifacts | Where-Object { $_.name -eq 'windows-installer' -or $_.name -eq ('windows-rehearsal-' + $source) -or $_.name -eq ('windows-signed-ci-candidate-' + $source) })
           if ($selected.Count -ne 1 -or $selected[0].expired -or $selected[0].workflow_run.head_sha -ne $source) { throw 'Requested installer artifact/source is unavailable or mismatched.' }
           $destination = Join-Path $env:RUNNER_TEMP 'realbud-team-installer'
           if (Test-Path -LiteralPath $destination) { throw 'Artifact directory already exists.' }
-          gh run download $runId --repo $env:GITHUB_REPOSITORY --name windows-installer --dir $destination
+          gh run download $runId --repo $env:GITHUB_REPOSITORY --name $selected[0].name --dir $destination
           if ($LASTEXITCODE -ne 0) { throw 'Exact artifact download failed.' }
           $installers = @(Get-ChildItem -LiteralPath $destination -Filter 'RealBud-*-setup.exe' -File)
           if ($installers.Count -ne 1) { throw 'Expected exactly one installer executable.' }
           $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $installers[0].FullName).Hash.ToLowerInvariant()
           if ($actual -ne $expected) { throw 'Installer digest mismatch; nothing will be installed.' }
-          [ordered]@{ schema = 1; runId = $runId; artifactId = [string]$selected[0].id; artifactName = 'windows-installer'; expired = $false
+          [ordered]@{ schema = 1; runId = $runId; artifactId = [string]$selected[0].id; artifactName = [string]$selected[0].name; expired = $false
             compiledSourceRevision = $source; installerSha256 = $actual; installerBytes = $installers[0].Length; expiresAt = $selected[0].expires_at
           } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $destination 'artifact.json')
       - name: Install, prove native office lifecycle, and uninstall
@@ -457,17 +457,17 @@ jobs:
           $metadataText = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$runId/artifacts" 2>$null
           if ($LASTEXITCODE -ne 0) { throw 'Artifact metadata lookup failed.' }
           $metadata = $metadataText | ConvertFrom-Json
-          $selected = @($metadata.artifacts | Where-Object { $_.name -eq 'windows-installer' })
+          $selected = @($metadata.artifacts | Where-Object { $_.name -eq 'windows-installer' -or $_.name -eq ('windows-rehearsal-' + $source) -or $_.name -eq ('windows-signed-ci-candidate-' + $source) })
           if ($selected.Count -ne 1 -or $selected[0].expired -or $selected[0].workflow_run.head_sha -ne $source) { throw 'Requested installer artifact/source is unavailable or mismatched.' }
           $destination = Join-Path $env:RUNNER_TEMP 'realbud-restricted-startup-installer'
           if (Test-Path -LiteralPath $destination) { throw 'Artifact directory already exists.' }
-          gh run download $runId --repo $env:GITHUB_REPOSITORY --name windows-installer --dir $destination 2>$null
+          gh run download $runId --repo $env:GITHUB_REPOSITORY --name $selected[0].name --dir $destination 2>$null
           if ($LASTEXITCODE -ne 0) { throw 'Exact artifact download failed.' }
           $installers = @(Get-ChildItem -LiteralPath $destination -Filter 'RealBud-*-setup.exe' -File)
           if ($installers.Count -ne 1) { throw 'Expected exactly one installer executable.' }
           $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $installers[0].FullName).Hash.ToLowerInvariant()
           if ($actual -ne $expected) { throw 'Installer digest mismatch; nothing will be installed.' }
-          [ordered]@{ schema = 1; runId = $runId; artifactId = [string]$selected[0].id; artifactName = 'windows-installer'; expired = $false
+          [ordered]@{ schema = 1; runId = $runId; artifactId = [string]$selected[0].id; artifactName = [string]$selected[0].name; expired = $false
             compiledSourceRevision = $source; installerSha256 = $actual; installerBytes = $installers[0].Length; expiresAt = $selected[0].expires_at
           } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $destination 'artifact.json')
       - name: Install, record startup diagnostics, and uninstall

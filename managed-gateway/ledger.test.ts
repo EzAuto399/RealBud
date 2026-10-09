@@ -1,6 +1,6 @@
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -105,7 +105,7 @@ test('credits cannot exceed settled charges or mutate prior ledger events',async
 });
 test('restart preserves reservations and history without retaining prompt text',async()=>{
   const dir=mkdtempSync(join(tmpdir(),'realbud-ledger-')); cleanups.push(()=>rmSync(dir,{recursive:true,force:true}));
-  const path=join(dir,'gateway.sqlite'); const f=fixture(path);
+  const path=join(dir,'ledger.sqlite'); const f=fixture(path);
   const r=f.ledger.reserve(f.grant(),'fixture-host-key','opaque-hmac','idem',f.provider.bound(f.request)).record; f.ledger.dispatch(r.id,f.grant(),f.provider.id); f.close();
   const db=new LedgerDatabase(path); cleanups.push(()=>db.close()); const ledger=new UsageLedger(db,()=>FIXTURE_TIME); ledger.recover();
   assert.equal(ledger.request(r.id).state,'unknown'); assert.equal(ledger.exposure('company-a','2026-09'),165000000n);
@@ -123,10 +123,11 @@ test('lowered caps and revoked entitlements block admission without deleting his
 });
 test('foreign databases and unknown schema versions are rejected without migration',()=>{
   const dir=mkdtempSync(join(tmpdir(),'realbud-foreign-db-'));cleanups.push(()=>rmSync(dir,{recursive:true,force:true}));
-  const path=join(dir,'office.sqlite');const foreign=new DatabaseSync(path);foreign.exec("CREATE TABLE office_record(value TEXT); INSERT INTO office_record VALUES('preserve me');");foreign.close();
+  const path=join(dir,'ledger.sqlite');const foreign=new DatabaseSync(path);foreign.exec("CREATE TABLE office_record(value TEXT); INSERT INTO office_record VALUES('preserve me');");foreign.close();chmodSync(path,0o600);
   assert.throws(()=>new LedgerDatabase(path),/foreign_or_unsupported_database/);
   const verify=new DatabaseSync(path);try{assert.equal(verify.prepare('SELECT value FROM office_record').get()!.value,'preserve me');assert.equal(verify.prepare("SELECT count(*) AS n FROM sqlite_master WHERE name='events'").get()!.n,0);}finally{verify.close();}
-  const ownPath=join(dir,'gateway.sqlite');const own=new LedgerDatabase(ownPath);own.sql.exec('PRAGMA user_version=99');own.close();assert.throws(()=>new LedgerDatabase(ownPath),/foreign_or_unsupported_database/);
+  const ownDir=mkdtempSync(join(tmpdir(),'realbud-owned-db-'));cleanups.push(()=>rmSync(ownDir,{recursive:true,force:true}));
+  const ownPath=join(ownDir,'ledger.sqlite');const own=new LedgerDatabase(ownPath);own.sql.exec('PRAGMA user_version=99');own.close();assert.throws(()=>new LedgerDatabase(ownPath),/foreign_or_unsupported_database/);
 });
 test('tampered ledger history fails startup verification',()=>{
   const dir=mkdtempSync(join(tmpdir(),'realbud-corrupt-ledger-'));cleanups.push(()=>rmSync(dir,{recursive:true,force:true}));const path=join(dir,'ledger.sqlite');

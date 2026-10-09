@@ -370,3 +370,60 @@ test('findCustomer reports the billing account a customer-paid customer is bound
   const t = transport(() => ({ body: { accounts: [{ id: 'realbud-office-a', clientId: 'realbud', active: true, monthlyCapNanoAud: '1', maxConcurrent: 1, billingCompanyId: 'office-a' }] } }));
   assert.deepEqual(await client(t).findCustomer('realbud-office-a'), { active: true, monthlyCapNanoAud: '1', maxConcurrent: 1, billingCompanyId: 'office-a' });
 });
+
+function resaleTransport(options: { policies?: Record<string, unknown>[]; changeSaved?: (saved: Record<string, unknown>) => unknown; date?: boolean } = {}) {
+  const policies = options.policies ?? [];
+  let time = CLOCK;
+  let t: ReturnType<typeof transport>;
+  t = transport((url, method) => {
+    const path = new URL(url).pathname;
+    const headers: Record<string,string> = options.date === false ? {} : { date: new Date(time).toUTCString() };
+    if (path === '/v1/operator/customers') return { headers, body: { accounts: [{ id: 'cus-office', name: 'Fictional office', active: true, monthlyCapNanoAud: '100000000000', maxConcurrent: 2, allowedModels: ['auto'], version: 1, clientId: 'realbud', payer: 'client' }] } };
+    if (path === '/v1/operator/clients') return { headers, body: { accounts: [{ id: 'realbud', billingMode: 'client' }] } };
+    if (path === '/v1/operator/commercial-policies' && method === 'GET') return { headers, body: { policies } };
+    if (path === '/v1/operator/commercial-policies' && method === 'POST') { const saved = { ...t.seen.at(-1)!.body! }; policies.push(saved); return { headers, body: options.changeSaved?.(saved) ?? saved }; }
+    throw new Error('unexpected_synthetic_policy_route');
+  });
+  return { t, policies, sdk: client(t), setTime: (at: number) => { time = at; } };
+}
+const acceptedResale = { clientMarkupBasisPoints: 3000, acceptanceReference: 'fictional-agreement@owner-acceptance-one' };
+
+test('resale sync verifies exact provider reference and scope; equal rate with another acceptance appends a policy without repricing history', async () => {
+  const f = resaleTransport();
+  const first = await f.sdk.syncResaleTerms!('cus-office', acceptedResale);
+  assert.deepEqual(first, { state: 'active', created: true, policyId: f.policies[0].id, clientMarkupBasisPoints: 3000, customerId: 'cus-office', clientId: 'realbud', customerBilling: 'resale', acceptanceReference: acceptedResale.acceptanceReference, effectiveAt: CLOCK, verifiedAt: CLOCK });
+  const original = structuredClone(f.policies[0]);
+  const repeated = await f.sdk.syncResaleTerms!('cus-office', acceptedResale);
+  assert.equal(repeated.created, false); assert.equal(f.policies.length, 1);
+  f.setTime(CLOCK + 1000);
+  const changed = await f.sdk.syncResaleTerms!('cus-office', { ...acceptedResale, acceptanceReference: 'fictional-agreement@owner-acceptance-two' });
+  assert.equal(changed.created, true); assert.equal(changed.supersedes, original.id); assert.equal(f.policies.length, 2); assert.deepEqual(f.policies[0], original);
+});
+
+test('resale policy saved one millisecond after verified provider time is pending until a fresh exact read proves active', async () => {
+  const f = resaleTransport(); await f.sdk.syncResaleTerms!('cus-office', acceptedResale);
+  const newTerms = { ...acceptedResale, acceptanceReference: 'fictional-agreement@owner-acceptance-two' };
+  const pending = await f.sdk.syncResaleTerms!('cus-office', newTerms);
+  assert.equal(pending.state, 'pending'); assert.equal(pending.effectiveAt, CLOCK + 1); assert.equal(pending.verifiedAt, CLOCK);
+  const retryPending = await f.sdk.syncResaleTerms!('cus-office', newTerms);
+  assert.equal(retryPending.state, 'pending'); assert.equal(retryPending.created, false); assert.equal(f.policies.length, 2);
+  f.setTime(CLOCK + 1000);
+  const active = await f.sdk.syncResaleTerms!('cus-office', newTerms);
+  assert.equal(active.state, 'active'); assert.equal(active.created, false); assert.equal(f.policies.length, 2);
+});
+
+test('resale sync refuses provider readback with foreign customer/client/reference/rate/billing/effective state', async () => {
+  for (const [field, value] of [['customerId', 'cus-other'], ['clientId', 'other-client'], ['acceptanceReference', 'other-acceptance'], ['clientMarkupBasisPoints', 2000], ['customerBilling', 'client_funded'], ['state', 'draft'], ['effectiveAt', CLOCK + 60000]] as const) {
+    const f = resaleTransport({ changeSaved: saved => ({ ...saved, [field]: value }) });
+    await assert.rejects(f.sdk.syncResaleTerms!('cus-office', acceptedResale), /modelvia_terms_scope_mismatch/, field);
+  }
+});
+
+test('historical policy receipt is strictly read-only and refuses missing, ambiguous, foreign or differently priced reference', async () => {
+  const f=resaleTransport();await f.sdk.syncResaleTerms!('cus-office',acceptedResale);const saved=structuredClone(f.policies[0]);
+  const before=f.t.seen.filter(call=>call.method==='POST').length;
+  const historical=await f.sdk.resalePolicyReceipt!('cus-office',acceptedResale);assert.equal(historical.historical,true);assert.equal(historical.state,'active');assert.equal(f.t.seen.filter(call=>call.method==='POST').length,before);
+  f.policies.push({...saved,id:'duplicated-reference'});await assert.rejects(f.sdk.resalePolicyReceipt!('cus-office',acceptedResale),/modelvia_terms_ambiguous/);f.policies.pop();
+  for(const [field,value] of [['customerId','cus-foreign'],['clientId','other-client'],['acceptanceReference','other-ref'],['clientMarkupBasisPoints',2500],['customerBilling','client_funded'],['customerBilling',undefined]] as const){f.policies[0]={...saved,[field]:value};await assert.rejects(f.sdk.resalePolicyReceipt!('cus-office',acceptedResale),/modelvia_terms_not_confirmed|modelvia_terms_scope_mismatch/,field);}
+  assert.equal(f.t.seen.filter(call=>call.method==='POST').length,before);
+});

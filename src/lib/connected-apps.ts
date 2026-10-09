@@ -13,6 +13,14 @@ export interface ConnectedAppOperation {
   startedAt: string;
   finishedAt?: string;
   detail?: string;
+  revision?: number;
+  repeatOf?: string;
+  reconciliation?: { outcome: 'sent' | 'not-sent'; at: string; source: 'manual-app-inspection' };
+  /** True when the receipt carries a saved account identity (exact-account recovery applies). */
+  identified?: boolean;
+  /** The owner marked as checked an unconfirmed receipt RealBud cannot check:
+   * one without account details, or one from an earlier company or gateway. */
+  acknowledgement?: { at: string };
 }
 
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -100,15 +108,46 @@ export function readConnectedAppOperations(value: unknown): ConnectedAppOperatio
   const statuses = new Set(["started", "succeeded", "failed", "unknown", "denied"]);
   return value.operations.slice(0, 200).map((entry): ConnectedAppOperation => {
     if (!record(entry) || !label(entry.id) || !timestamp(entry.startedAt) || !statuses.has(String(entry.status)) || !Array.isArray(entry.toolSlugs)) throw new Error("Recent app activity was incomplete.");
+    if (entry.revision !== undefined && (!Number.isSafeInteger(entry.revision) || Number(entry.revision) < 0)) throw new Error('Recent app recovery was incomplete.');
+    const reconciliation = entry.reconciliation;
+    if (reconciliation !== undefined && (!record(reconciliation) || !['sent', 'not-sent'].includes(String(reconciliation.outcome)) || reconciliation.source !== 'manual-app-inspection' ||
+      !Number.isSafeInteger(reconciliation.at) || Number(reconciliation.at) < 0 || !Number.isFinite(new Date(Number(reconciliation.at)).getTime()) || !['unknown', 'failed'].includes(String(entry.status)))) throw new Error('Recent app recovery was incomplete.');
+    const acknowledgement = entry.acknowledgement;
+    if (acknowledgement !== undefined && (!record(acknowledgement) || acknowledgement.source !== 'owner-checked-app' || !Number.isSafeInteger(acknowledgement.at) || Number(acknowledgement.at) < 0 ||
+      !Number.isFinite(new Date(Number(acknowledgement.at)).getTime()) || !(entry.effectDigest === undefined ? entry.status === 'unknown' : ['unknown', 'failed'].includes(String(entry.status))))) throw new Error('Recent app recovery was incomplete.');
     return {
       id: label(entry.id), threadId: label(entry.threadId), toolName: label(entry.toolName, 160),
       toolSlugs: entry.toolSlugs.map(slug => label(slug, 160)).filter(Boolean).slice(0, 50),
       status: entry.status as ConnectedAppOperation["status"], startedAt: timestamp(entry.startedAt),
       ...(timestamp(entry.finishedAt) ? { finishedAt: timestamp(entry.finishedAt) } : {}),
       ...(label(entry.detail, 600) ? { detail: label(entry.detail, 600) } : {}),
+      ...(entry.revision === undefined ? {} : { revision: Number(entry.revision) }),
+      ...(label(entry.repeatOf) ? { repeatOf: label(entry.repeatOf) } : {}),
+      ...(record(reconciliation) ? { reconciliation: { outcome: reconciliation.outcome as 'sent' | 'not-sent', at: new Date(Number(reconciliation.at)).toISOString(), source: 'manual-app-inspection' as const } } : {}),
+      ...(typeof entry.effectDigest === 'string' ? { identified: true } : {}),
+      ...(record(acknowledgement) ? { acknowledgement: { at: new Date(Number(acknowledgement.at)).toISOString() } } : {}),
     };
   }).sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
 }
+
+/** An unconfirmed outcome with no saved account details: only the owner's
+ * "checked in the app" releases it. Failures are final and are not held. */
+export const needsOwnerCheck = (operation: ConnectedAppOperation): boolean => operation.status === 'unknown' && !operation.identified && !operation.acknowledgement;
+/** Held receipts the owner can resolve here: the check above, or an
+ * identified mail outcome not yet recorded or marked checked. */
+export const needsAttention = (operation: ConnectedAppOperation): boolean => needsOwnerCheck(operation) ||
+  (operation.identified === true && (operation.status === 'unknown' || operation.status === 'failed') && !operation.reconciliation && !operation.acknowledgement);
+/** The server's code when Inspect finds a receipt recorded under an earlier
+ * company or managed gateway (server/connected-app-recovery.ts). */
+export const EARLIER_CONNECTION_CODE = 'mail_receipt_earlier_connection';
+/** An identified unconfirmed send that Inspect refused as recorded under an
+ * earlier connection: only the owner's check in the app can settle it. */
+export const needsEarlierConnectionCheck = (operation: ConnectedAppOperation, refusedAsEarlier: ReadonlySet<string>): boolean =>
+  operation.identified === true && (operation.status === 'unknown' || operation.status === 'failed') && !operation.reconciliation && !operation.acknowledgement && refusedAsEarlier.has(operation.id);
+/** Every receipt that needs the owner comes first, so an older hold is never
+ * hidden behind newer activity; then the most recent others. */
+export const operationsToShow = (operations: ConnectedAppOperation[], recent = 5): ConnectedAppOperation[] =>
+  [...operations.filter(needsAttention), ...operations.filter(operation => !needsAttention(operation)).slice(0, recent)];
 
 export const APP_OPERATION_LABELS: Record<ConnectedAppOperation["status"], string> = {
   started: "In progress", succeeded: "Result returned", failed: "Failed", unknown: "Outcome needs checking", denied: "Not allowed",

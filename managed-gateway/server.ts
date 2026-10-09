@@ -38,7 +38,7 @@ requireThat(
   portalSecret.length >= 32,
   "REALBUD_GATEWAY_PORTAL_SECRET required (>=32 chars)",
 );
-mkdirSync(dirname(dbPath), { recursive: true });
+mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 });
 
 // The ledger database holds service entitlements (tenants), provisioning
 // records, the connector link journal, the care-fee terms, invoices and

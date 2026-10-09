@@ -71,6 +71,22 @@ const deferred = <T>() => {
 };
 
 describe("automatic Bud setup after an approved office link", () => {
+  it("holds missing OS isolation before any install, profile, ping or retry and keeps attempt history", async () => {
+    const h = harness();
+    const held = { ...status(), workerIsolation: { state: 'held' as const, platform: 'win32', detail: 'Platform worker held.' } };
+    h.deps.status = vi.fn(async () => held);
+    const history = { version: 1, attempts: 2, nextRetryAt: null, held: 'held_failed', stageRetried: true, step: 1 };
+    plantPrivateFile(join(dir, AUTO_SETUP_FILE), JSON.stringify(history));
+    const before = readFileSync(join(dir, AUTO_SETUP_FILE), 'utf8');
+    const setup = createWorkerAutoSetup(h.deps);
+    await setup.ensure('provisioned');
+    await setup.ensure('boot');
+    await setup.ensure('periodic');
+    expect(setup.status()).toMatchObject({ state: 'held', code: 'held_unavailable', step: 0 });
+    expect(h.calls).toEqual([]);
+    expect(h.timers).toEqual([]);
+    expect(readFileSync(join(dir, AUTO_SETUP_FILE), 'utf8')).toBe(before);
+  });
   it("does nothing on a computer that is not provisioned", async () => {
     const h = harness({ active: false });
     const setup = createWorkerAutoSetup(h.deps);

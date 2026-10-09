@@ -91,6 +91,7 @@ function safeError(cause: unknown, operation: Operation): Error {
   else if (status === 409 && code === 'claim_busy') message = 'This work still has an active claim. Wait for it to finish or expire, then refresh. No recovery decision was saved.';
   else if (status === 409 && code === "departure_pending") message = "An office departure is pending. Use Finish leaving or Finish disconnecting to check its result before changing office settings.";
   else if (status === 409 && code === "enrollment_recovery_required") message = "Your previous attempt may already have succeeded. Choose Sign in and use the username and password from that attempt to finish. Do not use another invitation.";
+  else if (status === 409 && code === "host_update_required") message = "The office host needs the current RealBud update before this computer can join or sign in. Ask the office owner to update RealBud on the host computer, then try again. Your local work is kept.";
   else if (status === 409 && code === "host_identity_mismatch") message = "This host is serving a different office from the one saved on this computer. Ask the owner to check the host setup. Your local work is kept; retrying will not change the saved office.";
   else if (status === 409 && code === "seat_identity_conflict") message = "This RealBud workspace already belongs to another member. Sign in as the original member, or use a separate workspace for another person. Your local work is kept.";
   else if (status === 422 && operation === "work") message = "Shared work needs service recovery. The original record is preserved. Contact service administration; retrying will not repair it.";
@@ -153,9 +154,16 @@ export function createCompanyApi(request: Request, storage?: SessionStorage) {
     try { const result = await call('/api/company/department-outbox/ack', 'department', { requestId }); if (!object(result) || result.ok !== true) throw incomplete(); }
     finally { if (notify) notifyDepartmentChange(); }
   };
-  const departmentMutation = async (operation: DepartmentOutboxOperation): Promise<DepartmentCaseMutation | DepartmentLifecycleResult | DepartmentConfigurationSaved> => {
+  const departmentMutation = async (operation: DepartmentOutboxOperation, firstConfigurationAttempt = false): Promise<DepartmentCaseMutation | DepartmentLifecycleResult | DepartmentConfigurationSaved> => {
     try {
-      const result = await call(operation.path, 'department', operation.input);
+      let result;
+      try { result = await call(operation.path, 'department', operation.input); }
+      catch (cause) {
+        // This is client-authored stage evidence, never read from a server body.
+        // ACK/validation failures and explicit replays cannot prove no effect.
+        if (firstConfigurationAttempt && cause instanceof Error && [400, 401, 403, 404, 405, 409, 422].includes(Number((cause as { status?: unknown }).status))) Object.assign(cause, { departmentConfigurationFirstRefusal: true });
+        throw cause;
+      }
       if (!object(result) || result.receiptId !== operation.input.requestId || typeof result.replayed !== 'boolean') throw incomplete();
       if (operation.path === '/api/company/departments/configuration/save') {
         if (!remoteExact(result, ['department','configuration','receiptId','replayed']) || !department(result.department) || result.department.id !== operation.input.departmentId ||
@@ -219,7 +227,7 @@ export function createCompanyApi(request: Request, storage?: SessionStorage) {
       return result as unknown as DepartmentConfigurationHistory;
     },
     async saveDepartmentConfiguration(input: SaveDepartmentConfigurationInput): Promise<DepartmentConfigurationSaved> {
-      return await departmentMutation({ path: '/api/company/departments/configuration/save', input: normalizeSaveDepartmentConfiguration(input) }) as DepartmentConfigurationSaved;
+      return await departmentMutation({ path: '/api/company/departments/configuration/save', input: normalizeSaveDepartmentConfiguration(input) }, true) as DepartmentConfigurationSaved;
     },
     async departmentPreparationCatalog(departmentId: string): Promise<DepartmentWorkCatalog> {
       if (!companyExecutionUuid(departmentId)) throw incomplete();

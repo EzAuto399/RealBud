@@ -4,14 +4,31 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import type { CustomerPack } from '../shared/customer-packs.ts';
-import { austinAccountsCustomerPack, austinCustomerPack, austinPropertyCustomerPack, austinReiFiles } from './customer-pack-definition.ts';
+import { austinAccountsCustomerPack, austinCustomerPack, austinPropertyCustomerPack, austinReiFiles, latestAustinCustomerPack, latestAustinAccountsCustomerPack } from './customer-pack-definition.ts';
 import { officeCoreCustomerPack } from './office-core-pack.ts';
-import { validateCustomerPack } from './customer-packs.ts';
+import { admitPack, validateCustomerPack } from './customer-packs.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const support = join(root, 'pack', 'workflows', 'austin-accounts', 'support', 'rei-cloud-navigation');
 
 describe('Austin office pack definition', () => {
+  it('publishes truthful W2 guidance as new revisions while preserving exact historical trust', () => {
+    for (const [old, latest, revision] of [[austinCustomerPack(), latestAustinCustomerPack(), 7], [austinAccountsCustomerPack(), latestAustinAccountsCustomerPack(), 3]] as const) {
+      expect(latest.revision).toBe(revision);
+      expect(admitPack(old, [])).toEqual(old);
+      expect(admitPack(latest, [])).toEqual(latest);
+      for (const id of ['wf-austin-accounts-invoice-review', 'wf-austin-accounts-bill-exceptions']) {
+        expect(old.recipes.find(r => r.id === id)!.steps.join('\n')).toContain('Weekly W2 orchestration is not implemented');
+        const steps = latest.recipes.find(r => r.id === id)!.steps.join('\n');
+        expect(steps).toContain('Weekly W2 has a host-owned runner');
+        expect(steps).toContain('Calendar facts come from human-reviewed bills and approved patterns');
+        expect(steps).toContain('REI effects stay simulated');
+      }
+      expect(latest.skills).toEqual(old.skills);
+      expect(latest.workflows).toEqual(old.workflows);
+      expect(() => admitPack({ ...old, title: 'Unreviewed changed historical bytes' }, [])).toThrow();
+    }
+  });
   it('loads the published JSON, already validated and canonical, at its pinned digest', () => {
     const published = readFileSync(join(root, 'pack', 'workflows', 'austin-office', 'realbud-austin-office-v1.json'), 'utf8');
     expect(published).toBe(`${JSON.stringify(validateCustomerPack(austinCustomerPack()), null, 2)}\n`);

@@ -15,11 +15,13 @@ const sectionsInfo = [
   { key: "phone", label: "Phone", detail: "Continue on the go", icon: Smartphone },
   { key: "office", label: "Office", detail: "People & preferences", icon: Building2 },
 ] as const;
-export function WorkspaceSetup({ target, origin, onTarget, onClose, onSchedule, onAsk, error, onDismissError }: {
+export function WorkspaceSetup({ target, origin, onTarget, onClose, onSchedule, onAsk, onServiceAdministration, error, onDismissError }: {
   target: WorkspaceSetupTarget; origin: string; onTarget: (target: WorkspaceSetupTarget) => void; onClose: () => void; onSchedule: () => void; onAsk: () => void;
   error?: string | null; onDismissError?: () => void;
+  onServiceAdministration: () => void;
 }) {
-  // Keep entered setup fields only for this open panel; never persist credentials.
+  // Keep credential fields only for this open panel. Office wording has its own
+  // memory-only, identity-bound journal so closing setup cannot erase typing.
   const [visited, setVisited] = useState<WorkspaceSetupTarget[]>([target]);
   useEffect(() => { setVisited(current => current.includes(target) ? current : [...current, target]); }, [target]);
   const sections = [...new Set([...visited, target])];
@@ -43,7 +45,7 @@ export function WorkspaceSetup({ target, origin, onTarget, onClose, onSchedule, 
         <BudSetupCard administration active={target === "bud"} id="workspace-bud" onShowAsk={onAsk} onSchedule={onSchedule} onServiceAdministration={onClose}
           onBack={origin === "Work" ? onAsk : onClose} backLabel={`Back to ${origin}`} />
         <div className="workspace-setup-next"><p>Choose what Bud can work with.</p><button className="pm-control" type="button" onClick={() => onTarget("apps")}>Connect apps & websites</button><button className="pm-control" type="button" onClick={() => onTarget("office")}>Office & department access</button></div>
-      </> : section === "apps" ? <><ConnectedAppsCard onAsk={onAsk} onBrowser={showBrowser} /><BrowserCard id="apps-work-browser" onAsk={onAsk} /></> : <YouPage section={section} />}
+      </> : section === "apps" ? <><ConnectedAppsCard onAsk={onAsk} onBrowser={showBrowser} /><BrowserCard id="apps-work-browser" onAsk={onAsk} /></> : <YouPage section={section} onServiceAdministration={onServiceAdministration} />}
     </div>)}
   </AskWorkspaceSheet>;
 }

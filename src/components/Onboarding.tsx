@@ -16,6 +16,8 @@ import { SETUP_STEP_COUNT } from "@/lib/setup-sequence";
 import type { YouRecoveryTarget } from "@/lib/you-navigation";
 import type { OnboardingState } from '@shared/onboarding';
 import { api, useStore } from "@/state/store";
+import { companyApi } from "@/lib/company-api";
+import { readWorkspaceDeskSnapshot } from "@/lib/office-draft-requests";
 import { MausAvatar } from "./Avatar";
 import { ConnectOfficeView, useConnectOffice } from "./ConnectOffice";
 
@@ -57,6 +59,9 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
   const [recoveryBlocked, setRecoveryBlocked] = useState(false);
   const edited = useRef(false);
   const pending = useRef(false);
+  const active = useRef(true);
+  const savedContext = useRef(saved); savedContext.current = saved;
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const connect = useConnectOffice(name.trim());
   const emailOk = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
   const canContinue = name.trim().length > 0 && emailOk && busy === null;
@@ -123,20 +128,41 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
     setError("");
     setRecoveryBlocked(false);
     let enteredDesk = false;
+    const opening = { scope: saved.scope, revision: saved.revision, epoch: companyApi.sessionVersion() };
+    const checkCurrent = () => {
+      if (!active.current || savedContext.current.scope !== opening.scope || savedContext.current.revision !== opening.revision || companyApi.sessionVersion() !== opening.epoch) throw new Error('The setup session changed. The old reply could not be admitted; reopen setup and check the current saved book before continuing.');
+    };
     try {
+      const checkedDesk = (value: unknown) => {
+        const snapshot = readWorkspaceDeskSnapshot(value); checkCurrent();
+        // Pair the physical book with the saved welcome form before adopting
+        // its workspace ID. A refreshed session may already point at another
+        // workspace while this window still holds the original person's typing.
+        if (snapshot.onboardingScope !== opening.scope) throw new Error('The saved setup and private book no longer match. The old reply could not be admitted; reopen setup and check the current saved book before continuing.');
+        return snapshot;
+      };
       // Read afresh before writing: store hydration may still be pending, and
       // a restored book's existing contact must never be overwritten.
-      const currentDesk = await finishRequest('/api/desk');
+      const currentDesk = checkedDesk(await finishRequest('/api/desk'));
+      const workspaceId = currentDesk.workspaceId;
+      const currentBook = async () => {
+        const next = checkedDesk(await finishRequest('/api/desk'));
+        if (next.workspaceId !== workspaceId) throw new Error('The private workspace changed. The old reply could not be admitted; reopen setup and check saved office details before continuing.');
+        return next;
+      };
       if (typeof currentDesk?.book?.office?.pmUser !== 'string') throw new Error('Your saved office contact could not be checked. Try again before continuing.');
       if (!officeContactNamed(currentDesk)) {
-        const snapshot = await finishRequest("/api/desk/agency", {
+        const snapshot = readWorkspaceDeskSnapshot(await finishRequest("/api/desk/agency", {
           method: "PATCH",
           // The sample book's own contact when no name was typed; first-run.ts never counts it as a person.
-          body: JSON.stringify({ office: { pmUser: name.trim() || SAMPLE_PROFILE_NAME } }),
-        });
-        dispatch({ type: "deskSnapshot", snapshot });
+          body: JSON.stringify({ office: { pmUser: name.trim() || SAMPLE_PROFILE_NAME }, expectedWorkspaceId: workspaceId, expectedRevision: currentDesk.revision }),
+        })); checkCurrent();
+        if (snapshot.workspaceId !== workspaceId) throw new Error('The saved office reply belongs to another private workspace. Reopen setup and inspect saved details before continuing.');
+        const checked = await currentBook(); checkCurrent(); dispatch({ type: "deskSnapshot", snapshot: checked });
       }
-      setSaved(await createFirstRunApi(finishRequest).save(saved, 'complete'));
+      await currentBook(); checkCurrent();
+      const completed = await createFirstRunApi(finishRequest).save(saved, 'complete'); checkCurrent();
+      await currentBook(); checkCurrent(); setSaved(completed);
       track("onboarding_completed", { engines_available: -1, mic: "n/a" });
       enteredDesk = true;
       enterWorkspace(email.trim() ? "submitted" : "skipped", destination);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { austinCustomerPack } from './customer-pack-definition.ts';
+import { latestAustinCustomerPack as austinCustomerPack } from './customer-pack-definition.ts';
 import { prepareJobPrompt } from './job-executor.ts';
 import { validateCustomerPack } from './customer-packs.ts';
 import type { Recipe } from '../shared/contracts.ts';
@@ -41,7 +41,8 @@ describe('connected Gmail operating cadence and review destinations', () => {
       expect(prompt).toContain('new bills and justified missing-bill follow-ups for RealBud calendar/schedules');
       expect(prompt).toContain('source IDs to avoid duplicates');
       expect(prompt).toContain('in-app notification to Kevin explaining findings and gaps');
-      expect(prompt).toContain('Weekly W2 orchestration is not implemented');
+      expect(prompt).toContain('Weekly W2 has a host-owned runner');
+      expect(prompt).toContain('Calendar facts come from human-reviewed bills and approved patterns');
       expect(prompt).toContain('Return proposals; only host receipts prove calendar writes or in-app notification');
       expect(prompt).toContain('A generic recipe clock is no substitute');
       expect(prompt).toContain('REI effects stay simulated');

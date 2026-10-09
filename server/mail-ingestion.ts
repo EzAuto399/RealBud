@@ -84,6 +84,7 @@ export interface MailAuthority {
     settings: AgencySetupSettings;
     settingsRevision: number;
 }
+export interface MailReviewAuthority { workspaceId: string; setupRevision: number; accountId: string | null }
 export type MailCollectionPurpose = 'morning-priorities' | 'bills-calendar';
 interface Options {
     directory: string;
@@ -93,6 +94,9 @@ interface Options {
     authorize: (purpose: MailCollectionPurpose) => Promise<MailAuthority>;
     scan: (authority: MailAuthority, request: MailScanRequest, signal: AbortSignal) => Promise<MailScanResult>;
     now?: () => number;
+    /** Supplies the current host scope under its settings queue. The work is a
+     * synchronous local CAS, never a source/provider read. */
+    withReviewContext?: <T>(work: (context: MailReviewAuthority) => T) => Promise<T>;
     database?: WorkflowDatabase | (() => WorkflowDatabase);
 }
 /** Individual encrypted heads share the workflow transaction boundary. A durable
@@ -742,28 +746,33 @@ export function createMailIngestionService(options: Options) {
     async function update(id: string, body: unknown) {
         if (object(body) && Object.hasOwn(body, 'notNoise'))
             return notNoise(id, body);
-        if (!object(body) || Object.keys(body).some(k => !['expectedRevision', 'status', 'snoozedUntil', 'priority', 'owner', 'note', 'disposition', 'nextAction'].includes(k)))
+        if (!object(body) || Object.keys(body).some(k => !['expectedRevision', 'status', 'snoozedUntil', 'priority', 'owner', 'note', 'disposition', 'nextAction', 'expectedWorkspaceId', 'expectedSetupRevision', 'expectedAccountId'].includes(k)))
             fail('Choose the saved task revision and the fields to update.', 400);
-        return locked(() => {
+        const contextKeys = ['expectedWorkspaceId', 'expectedSetupRevision', 'expectedAccountId'];
+        const hasContext = contextKeys.some(key => Object.hasOwn(body, key));
+        if (hasContext && (!contextKeys.every(key => Object.hasOwn(body, key)) || typeof body.expectedWorkspaceId !== 'string' || !body.expectedWorkspaceId ||
+            !Number.isSafeInteger(body.expectedSetupRevision) || Number(body.expectedSetupRevision) < 0 || typeof body.expectedAccountId !== 'string' || !body.expectedAccountId))
+            fail('Provide the complete current workspace, setup and Gmail account for this review.', 400);
+        return locked(async () => {
             storage.run(recover);
-            return storage.run(() => {
+            const commit = (context?: MailReviewAuthority) => storage.run(() => {
                 const item = storage.item(id);
-                if (!item)
-                    fail('That mail task is unavailable.', 404);
-                if (body.expectedRevision !== item.revision)
-                    fail('This task changed. Refresh it before saving.');
-                const next = { ...item, ...Object.fromEntries(Object.entries(body).filter(([k]) => k !== 'expectedRevision')), reviewed: true, newEvidence: false, updatedAt: now(), revision: item.revision + 1 };
-                if (next.status !== 'snoozed')
-                    next.snoozedUntil = null;
-                // Undoing a Jev screen is an ordinary disposition edit.
-                if (next.disposition !== 'noise')
-                    delete next.screenedBy;
+                if (!item) fail('That mail task is unavailable.', 404);
+                if (hasContext && (!context || context.workspaceId !== options.workspaceId || context.workspaceId !== body.expectedWorkspaceId ||
+                    context.setupRevision !== body.expectedSetupRevision || context.accountId !== body.expectedAccountId || item.accountId !== context.accountId))
+                    fail('The private workspace, agency setup or selected Gmail account changed. Your review was not saved; refresh its source.', 409);
+                if (body.expectedRevision !== item.revision) fail('This task changed. Refresh it before saving.');
+                const next = { ...item, ...Object.fromEntries(Object.entries(body).filter(([k]) => k !== 'expectedRevision' && !contextKeys.includes(k))), reviewed: true, newEvidence: false, updatedAt: now(), revision: item.revision + 1 };
+                if (next.status !== 'snoozed') next.snoozedUntil = null;
+                if (next.disposition !== 'noise') delete next.screenedBy;
                 if (!validItem(next) || next.status === 'snoozed' && (next.snoozedUntil! <= now() || next.snoozedUntil! > now() + 365 * 86400000))
                     fail('Check the task fields and choose a future snooze time.', 400);
-                storage.saveItem(next);
-                storage.saveRegister(storage.register());
+                storage.saveItem(next); storage.saveRegister(storage.register());
                 return { workspace: storage.metadata(), item: next };
             });
+            if (!hasContext) return commit();
+            if (!options.withReviewContext) fail('The current private review scope could not be checked. Your review was not saved.', 409);
+            return options.withReviewContext!(commit);
         });
     }
     /** "Not noise" on a Jev-screened conversation: it goes back, unreviewed, to

@@ -3,8 +3,11 @@ import { useBudStatusMonitor } from "@/lib/bud-status-monitor";
 import { openDeskTasks } from "@/lib/desk-view-state";
 import { HumanHandoffPanel } from "@/components/HumanHandoffPanel";
 import { hasPropertyEdits } from "@/lib/property-edits";
+import { hasUnsavedMailReviews } from "@/lib/mail-review-drafts";
+import { hasUnsavedOfficeDrafts } from "@/lib/office-draft-journal";
+import { hasUnsavedDepartmentConfigurationDrafts } from '@/lib/department-configuration-draft-journal';
 import { hasUnpersistedBillDrafts } from "@/lib/bill-review-drafts";
-import { youHashTarget, youRecoveryTarget } from "@/lib/you-navigation";
+import { scrollYouTarget, youHashTarget, youRecoveryTarget } from "@/lib/you-navigation";
 import { NAVIGATION_CANCELLED } from "@/lib/navigation-guard";
 import { lazy, useCallback, useEffect, useRef, useState } from "react";
 import { WorkspaceScreen } from "@/components/WorkspaceScreen";
@@ -60,7 +63,7 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
   const deskCaseEdits = useRef(new Map<string, CaseEdit>());
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
-      if (!hasPropertyEdits() && !hasUnpersistedBillDrafts() && deskCaseEdits.current.size === 0) return;
+      if (!hasPropertyEdits() && !hasUnpersistedBillDrafts() && !hasUnsavedMailReviews() && !hasUnsavedOfficeDrafts() && !hasUnsavedDepartmentConfigurationDrafts() && deskCaseEdits.current.size === 0) return;
       event.preventDefault(); event.returnValue = "";
     };
     window.addEventListener("beforeunload", warn);
@@ -106,6 +109,12 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
       previous.element.focus();
     }
   }, [setup, state.activeView]);
+  const openServiceAdministration = () => {
+    setSetup(null);
+    dispatch({ type: "showYou" });
+    if (window.location.hash !== "#you-service-admin") window.location.hash = "#you-service-admin";
+    else requestAnimationFrame(() => scrollYouTarget("you-service-admin"));
+  };
   const previousView = useRef(state.activeView);
   /** Set while a navigation came from the address bar, so the mirror effect below
    *  does not immediately write the same value back into history. */
@@ -268,7 +277,7 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
         </div>
       </DesktopShell>
       {!setup && <ShellPalette />}
-      {setup && <WorkspaceScreen key="setup" label="setup" onClose={() => setSetup(null)}><WorkspaceSetup target={setup} error={state.error} onDismissError={() => dispatch({ type: "error", message: null })} origin={state.activeView === "desk" ? "Desk" : state.activeView === "schedule" ? "Schedule" : state.activeView === "you" ? "Workspace" : "Work"} onTarget={setSetup} onClose={() => setSetup(null)} onAsk={() => { setSetup(null); dispatch({ type: "showAsk" }); }} onSchedule={() => { setSetup(null); dispatch({ type: "showRoutines" }); }} /></WorkspaceScreen>}
+      {setup && <WorkspaceScreen key="setup" label="setup" onClose={() => setSetup(null)}><WorkspaceSetup target={setup} error={state.error} onDismissError={() => dispatch({ type: "error", message: null })} origin={state.activeView === "desk" ? "Desk" : state.activeView === "schedule" ? "Schedule" : state.activeView === "you" ? "Workspace" : "Work"} onTarget={setSetup} onServiceAdministration={openServiceAdministration} onClose={() => setSetup(null)} onAsk={() => { setSetup(null); dispatch({ type: "showAsk" }); }} onSchedule={() => { setSetup(null); dispatch({ type: "showRoutines" }); }} /></WorkspaceScreen>}
       </>}
     </div>
   );

@@ -1,5 +1,5 @@
 import { privateTempRoot } from './testing/private-fixture.ts';
-import { readdirSync, statSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -50,6 +50,32 @@ describe('inspection rules store', () => {
     expect(() => validateInspectionRules({ ...defaultInspectionRules(), extra: 1 })).toThrow('need exactly');
     await expect(rules.save({ expectedRevision: 0, rules: { ...defaultInspectionRules(), dayStart: '25:00' } })).rejects.toMatchObject({ status: 400, message: expect.stringContaining('09:00') });
     expect((await rules.read()).revision).toBe(0);
+  });
+
+  it('holds rule edits until the leased local commit finishes and uses the current queued revision', async () => {
+    const { file, store: rules } = await store();
+    const saved = await rules.save({ expectedRevision: 0, rules: { ...defaultInspectionRules(), inspectors: ['fictional-inspector-A'] } });
+    let begin!: () => void, finish!: () => void;
+    const started = new Promise<void>(resolve => { begin = resolve; }), released = new Promise<void>(resolve => { finish = resolve; });
+    const commit = rules.withSnapshot(async state => { begin(); await released; return state; });
+    await started;
+    let editCompleted = false;
+    const edit = rules.save({ expectedRevision: saved.revision, rules: { ...saved.rules, dailyCapacity: 2 } }).then(state => { editCompleted = true; return state; });
+    try {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(editCompleted).toBe(false);
+      expect(JSON.parse(readFileSync(file, 'utf8')).revision).toBe(saved.revision);
+    } finally { finish(); }
+    expect((await commit).rules.dailyCapacity).toBe(saved.rules.dailyCapacity);
+    const edited = await edit;
+    expect(await rules.withSnapshot(async state => state)).toEqual(edited);
+  });
+
+  it('releases a rejected snapshot lease so the next rules edit can finish', async () => {
+    const { store: rules } = await store();
+    await expect(rules.withSnapshot(async () => { throw new Error('fictional plan commit refused'); })).rejects.toThrow('fictional plan commit refused');
+    const saved = await rules.save({ expectedRevision: 0, rules: { ...defaultInspectionRules(), inspectors: ['fictional-inspector-A'] } });
+    expect(saved.revision).toBe(1);
   });
 
   it('serves GET/PUT and holds writes during recovery', async () => {

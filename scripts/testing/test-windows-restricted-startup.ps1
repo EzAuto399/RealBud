@@ -22,7 +22,7 @@ $Installer = (Resolve-Path -LiteralPath $Installer).Path
 $ArtifactReceipt = (Resolve-Path -LiteralPath $ArtifactReceipt).Path
 $artifact = Get-Content -Raw -LiteralPath $ArtifactReceipt | ConvertFrom-Json
 if ($artifact.schema -ne 1 -or $artifact.compiledSourceRevision -ne $CompiledSourceSha -or $artifact.installerSha256 -ne $ExpectedInstallerSha256 -or
-    $artifact.expired -ne $false -or $artifact.artifactName -ne 'windows-installer' -or $artifact.runId -notmatch '^\d+$' -or $artifact.artifactId -notmatch '^\d+$') { throw 'Installer provenance refused.' }
+    $artifact.expired -ne $false -or ($artifact.artifactName -ne 'windows-installer' -and $artifact.artifactName -cne ('windows-rehearsal-' + $CompiledSourceSha) -and $artifact.artifactName -cne ('windows-signed-ci-candidate-' + $CompiledSourceSha)) -or $artifact.runId -notmatch '^\d+$' -or $artifact.artifactId -notmatch '^\d+$') { throw 'Installer provenance refused.' }
 $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Installer).Hash.ToLowerInvariant()
 if ($actualHash -ne $ExpectedInstallerSha256) { throw 'Installer hash mismatch; nothing was installed.' }
 $ReceiptDirectory = [IO.Path]::GetFullPath($ReceiptDirectory)
