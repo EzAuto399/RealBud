@@ -4,6 +4,7 @@ import {
   ConnectorError, createMcpConnector, McpToolError, nextPageToken,
   type ConnectorCall, type McpConnectorConfig, type McpConnectorOptions,
 } from './mcp-connector-core.ts';
+import { oplog } from './oplog.ts';
 
 /**
  * Redbark preset on the generic connector core: the office's bank feed, read
@@ -117,15 +118,26 @@ export function createRedbarkConnection(options: McpConnectorOptions) {
   async function listBankTransactions(input: { account: string; from: string; to: string }): Promise<BankTransactions> {
     if (!object(input) || typeof input.account !== 'string' || !REDBARK_ACCOUNT_ID.test(input.account) || !isLocalDate(input.from) || !isLocalDate(input.to) ||
         input.from > input.to || spanDays(input.from, input.to) > BANK_RANGE_DAYS) throw new BankFeedError('invalid_range', RANGE_MESSAGE);
+    // Which step failed, for the one log line below: every failure reads the
+    // same to Bud, and without this a timeout, a refused argument and a row
+    // RealBud could not verify looked alike on a customer PC (10 Oct).
+    let stage: 'accounts' | 'transactions' | 'rows' = 'accounts';
+    const started = Date.now();
     try {
       return await connector.read(async call => {
+        stage = 'accounts';
         const account = (await readAccounts(call)).find(row => row.id === input.account);
         if (!account) throw new BankFeedError('invalid_range', RANGE_MESSAGE);
         const rows = new Map<string, BankTransaction>(), seen = new Set<string>();
         let page: string | null = null, pages = 0, truncated = false;
         do {
           if (++pages > MAX_PAGES) throw new McpToolError('invalid');
-          const list = await call('list_transactions', page ? { page } : { account: input.account, from: input.from, to: input.to, include_pending: 'false', limit: 100 });
+          stage = 'transactions';
+          // Only the documented MCP arguments (redbark.com/docs/mcp/tools).
+          // `include_pending` belongs to the REST API; pending rows are dropped
+          // below either way.
+          const list = await call('list_transactions', page ? { page } : { account: input.account, from: input.from, to: input.to, limit: 100 });
+          stage = 'rows';
           for (const item of listData(list)) {
             const row = bankTransaction(item, input.account);
             if (!row) continue;
@@ -140,7 +152,14 @@ export function createRedbarkConnection(options: McpConnectorOptions) {
         const transactions = [...rows.values()].sort((a, b) => b.postDate.localeCompare(a.postDate));
         return { account, from: input.from, to: input.to, transactions, truncated };
       });
-    } catch (error) { throw feedError(error); }
+    } catch (error) {
+      const failed = feedError(error);
+      const code = (error as { code?: unknown } | null)?.code;
+      // Step, error code and time only: never arguments, rows or Redbark's text.
+      oplog('connector', 'The bank feed read failed.', { connector: 'redbark', stage,
+        code: typeof code === 'string' && /^[a-z_]{1,40}$/.test(code) ? code : 'unknown', ms: Date.now() - started });
+      throw failed;
+    }
   }
 
   return { connector, listBankAccounts, listBankTransactions };

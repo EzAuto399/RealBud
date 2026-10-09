@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import type { IncomingMessage } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { REDBARK_AUTH_ORIGIN, REDBARK_SCOPES } from '../shared/redbark-connection.ts';
 import { BankFeedError, createRedbarkConnection, REDBARK_CONNECTOR } from './redbark-connection.ts';
 import { createPrivateVault } from './private-vault.ts';
+import { setOpLogPath } from './oplog.ts';
 import { fictionalConnectorService } from './testing/fictional-mcp-connector.ts';
 
 // Redbark's real scope list (public protected-resource metadata, 2026-10-02).
@@ -70,13 +71,26 @@ describe('Redbark preset', () => {
         { id: 'txn_fict2', postDate: '2026-09-12', description: 'Fictional row 2', reference: null, direction: 'debit', amountCents: -1252, currency: 'AUD' },
         { id: 'txn_fict1', postDate: '2026-09-11', description: 'Fictional row 1', reference: 'REF1', direction: 'credit', amountCents: 9901, currency: 'AUD' },
       ] });
-    expect(fake.s.calls.find(call => call.name === 'list_transactions')?.args).toEqual({ context: expect.any(String), account: 'acct_fict1', from: '2026-09-01', to: '2026-09-30', include_pending: 'false', limit: 100 });
+    // Only Redbark's documented MCP arguments: an unknown one is refused as
+    // invalid_arguments, which read as "could not be read right now" (10 Oct).
+    expect(fake.s.calls.find(call => call.name === 'list_transactions')?.args).toEqual({ context: expect.any(String), account: 'acct_fict1', from: '2026-09-01', to: '2026-09-30', limit: 100 });
   });
 
   it('refuses a sign that contradicts direction', async () => {
     const { feed } = await connected();
     rows = [txn(2, { amount: { amount: 500, currency: 'aud' } })];
     await expect(feed.listBankTransactions({ account: 'acct_fict1', from: '2026-09-01', to: '2026-09-30' })).rejects.toMatchObject({ code: 'unavailable' });
+  });
+
+  it('logs the failed step, code and time, never the account, range or rows', async () => {
+    const log = join(mkdtempSync(join(tmpdir(), 'rb-oplog-')), 'realbud.log');
+    setOpLogPath(log);
+    const { feed } = await connected();
+    rows = [txn(2, { amount: { amount: 500, currency: 'aud' } })];
+    await expect(feed.listBankTransactions({ account: 'acct_fict1', from: '2026-09-01', to: '2026-09-30' })).rejects.toMatchObject({ code: 'unavailable' });
+    const text = readFileSync(log, 'utf8');
+    expect(JSON.parse(text.trim().split('\n').at(-1)!)).toMatchObject({ event: 'connector', connector: 'redbark', stage: 'rows', code: 'invalid', ms: expect.any(Number) });
+    expect(text).not.toMatch(/acct_fict1|2026-09-01|Fictional/);
   });
 
   it.each([
