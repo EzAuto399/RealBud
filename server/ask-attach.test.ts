@@ -148,14 +148,18 @@ describe.skipIf(process.platform !== "win32")("native Windows attachment privacy
     }
   });
 
-  it.each(["root", "vault", "ask-uploads"])("refuses an inherited %s descriptor without repairing it", windowsAdmissionTimeout(12), segment => {
+  // An older install's folder that only inherits this account's and SYSTEM's
+  // grants is protected and admitted (windows-private-admission.ts); a folder
+  // with any other grant is still refused (windows-private-admission-windows.test.ts).
+  it.each(["root", "vault", "ask-uploads"])("repairs an inherited %s descriptor that holds only private grants", windowsAdmissionTimeout(12), segment => {
     const outer = fresh(), dir = segment === "root" ? join(outer, "legacy") : outer;
-    const rejected = segment === "root" ? dir : segment === "vault" ? join(dir, "vault") : join(dir, "vault", "ask-uploads");
+    const inherited = segment === "root" ? dir : segment === "vault" ? join(dir, "vault") : join(dir, "vault", "ask-uploads");
     if (segment === "ask-uploads") privateDir(join(dir, "vault"));
-    mkdirSync(rejected);
-    expect(() => saveAskAttachment(dir, input)).toThrow(/private attachment folder/);
-    expect(readdirSync(rejected)).toEqual([]);
-    expect(() => windowsFilePrivacySync(rejected, "directory")).toThrow(/inheritance-not-protected/);
+    mkdirSync(inherited);
+    expect(() => windowsFilePrivacySync(inherited, "directory")).toThrow(/inheritance-not-protected/);
+    const saved = saveAskAttachment(dir, input);
+    expect(readFileSync(saved.path).toString("base64")).toBe(input.contentBase64);
+    expect(() => windowsFilePrivacySync(inherited, "directory")).not.toThrow();
   });
 
   it("refuses a junction without creating a copy in its target", windowsAdmissionTimeout(5), () => {

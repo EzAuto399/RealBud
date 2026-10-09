@@ -1,5 +1,7 @@
 // Provisioning/config I/O, separate from the unadmitted native memory journal.
-// Existing ACLs are verify-only. New empty objects become private before bytes.
+// Existing ACLs are verified; the one repair is an object that only inherits
+// private grants (windows-private-admission.ts). New empty objects become
+// private before bytes.
 import { randomUUID } from 'node:crypto';
 import {
   closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync,
@@ -7,13 +9,15 @@ import {
 } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fsyncDir } from './atomic.ts';
-import { windowsFilePrivacyBatchSync, windowsFilePrivacySync, type WindowsFilePrivacyOperation } from './windows-file-privacy.ts';
+import { type WindowsFilePrivacyOperation } from './windows-file-privacy.ts';
+import { admitPrivateObjectsSync } from './windows-private-admission.ts';
 
 const MAX_BYTES = 2 * 1024 * 1024;
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
 // windowsFilePrivacyBatchSync refuses a longer list, so a caller with more
 // admissions than this pays for another process rather than being refused.
 const MAX_ADMISSIONS = 64;
+const PROFILE_ROLE = "Bud's private profile";
 
 class ProfileStorageError extends Error {
   readonly status = 409;
@@ -64,7 +68,8 @@ function recheckParents(chain: Array<[string, BigIntStats]>): void {
   }
 }
 
-/** Create missing owned directories one at a time; never repair existing ACLs. */
+/** Create missing owned directories one at a time; an existing one is only
+ * verified, or repaired when it merely inherits private grants. */
 export function ensureProfileDirectory(path: string): void {
   checked(() => ensureDirectories([path], false));
 }
@@ -128,11 +133,23 @@ function ensureDirectories(paths: string[], defer: boolean): void {
   }
 }
 
-/** One process per MAX_ADMISSIONS; an empty list never launches one. */
-function admit(operations: WindowsFilePrivacyOperation[]): void {
+/** One process per MAX_ADMISSIONS; an empty list never launches one. Returns
+ * the paths whose inherited-only descriptor was repaired. */
+function admit(operations: WindowsFilePrivacyOperation[]): Set<string> {
+  const repaired = new Set<string>();
   for (let index = 0; index < operations.length; index += MAX_ADMISSIONS) {
-    windowsFilePrivacyBatchSync(operations.slice(index, index + MAX_ADMISSIONS));
+    const chunk = operations.slice(index, index + MAX_ADMISSIONS);
+    for (const at of admitPrivateObjectsSync(chunk, PROFILE_ROLE)) repaired.add(chunk[at]!.path);
   }
+  return repaired;
+}
+
+/** A repair rewrites only the descriptor, which moves ctime: the file must
+ * still be the same object with the same size, links and content time. */
+function afterRepair(path: string, before: BigIntStats): BigIntStats {
+  const now = lstatSync(path, { bigint: true }); ordinary(now, false);
+  if (!same(before, now) || before.size !== now.size || before.nlink !== now.nlink || before.mtimeNs !== now.mtimeNs) fail();
+  return now;
 }
 
 // A Windows admission is bracketed by identical stats taken before and after
@@ -155,7 +172,7 @@ function settleDirectory(path: string, chain: Chain, before: BigIntStats): void 
 export function verifyProfileDirectory(path: string): void {
   checked(() => {
     const { chain, before } = stageDirectory(path);
-    windowsFilePrivacySync(path, 'directory');
+    admit([{ path, kind: 'directory', action: 'verify' }]);
     settleDirectory(path, chain, before);
   });
 }
@@ -207,11 +224,12 @@ export function readProfileFiles(paths: string[]): Array<Buffer | null> {
   return checked(() => {
     if (!Array.isArray(paths)) fail();
     const staged = paths.map(path => { pathCheck(path); return { path, ...stageFile(path) }; });
-    admit(staged.flatMap((entry): WindowsFilePrivacyOperation[] =>
+    const repaired = admit(staged.flatMap((entry): WindowsFilePrivacyOperation[] =>
       entry.before ? [{ path: entry.path, kind: 'file', action: 'verify' }] : []));
     return staged.map(entry => {
       if (!entry.before) { recheckParents(entry.chain); return null; }
-      return readAdmittedFile(entry.path, entry.chain, entry.before).data;
+      const before = repaired.has(entry.path) ? afterRepair(entry.path, entry.before) : entry.before;
+      return readAdmittedFile(entry.path, entry.chain, before).data;
     });
   });
 }
@@ -308,13 +326,14 @@ function publishAll(entries: ProfileFileWrite[], pending: Pending[]): ProfileWri
       item.chain = target.chain; item.before = target.before;
       if (target.before) operations.push({ path: item.path, kind: 'file', action: 'verify' });
     }
-    admit(operations);
+    const repaired = admit(operations);
     for (const directory of directories) {
       const entry = staged.get(directory)!;
       settleDirectory(directory, entry.chain, entry.before);
     }
     for (const item of pending) {
       if (item.before) {
+        if (repaired.has(item.path)) item.before = afterRepair(item.path, item.before);
         const snapshot = readAdmittedFile(item.path, item.chain, item.before);
         item.previous = snapshot.data; item.existing = snapshot.stat;
       } else recheckParents(item.chain);

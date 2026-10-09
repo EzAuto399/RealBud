@@ -120,12 +120,33 @@ try {
 } catch { exit 1 }
 `;
 
-function powershell(script: string, paths: string[]): string {
+// An inheritable grant on a test-owned folder, so a plain mkdir inside it gets
+// an unprotected descriptor that inherits it. 'administrators' reproduces the
+// grants a folder inherits from a Windows user profile (SYSTEM, Administrators,
+// the account); 'everyone' is a deliberately unsafe extra principal.
+export const ADD_INHERITABLE_GRANT = `
+$ErrorActionPreference = 'Stop'
+try {
+  if ($env:REALBUD_TEST_PROFILE_COUNT -ne '1') { exit 9 }
+  $path = $env:REALBUD_TEST_PROFILE_PATH_0
+  if ([string]::IsNullOrEmpty($path) -or -not [System.IO.Directory]::Exists($path)) { exit 9 }
+  if ($env:REALBUD_TEST_GRANT -eq 'administrators') { $who = 'S-1-5-32-544'; $rights = [System.Security.AccessControl.FileSystemRights]::FullControl }
+  elseif ($env:REALBUD_TEST_GRANT -eq 'everyone') { $who = 'S-1-1-0'; $rights = [System.Security.AccessControl.FileSystemRights]::Read }
+  else { exit 9 }
+  $item = [System.IO.DirectoryInfo]::new($path)
+  $acl = $item.GetAccessControl()
+  $sid = [System.Security.Principal.SecurityIdentifier]::new($who)
+  $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($sid, $rights, 'ContainerInherit,ObjectInherit', 'None', [System.Security.AccessControl.AccessControlType]::Allow))
+  $item.SetAccessControl($acl)
+} catch { exit 1 }
+`;
+
+function powershell(script: string, paths: string[], extra: NodeJS.ProcessEnv = {}): string {
   if (process.platform !== 'win32' || paths.length < 1 || paths.length > 16) throw new Error('Windows fixture witness unavailable.');
   paths.forEach(assertOwned);
   const systemRoot = process.env.SystemRoot;
   if (!systemRoot || !isAbsolute(systemRoot) || systemRoot.includes('\0')) throw new Error('Windows fixture witness unavailable.');
-  const env: NodeJS.ProcessEnv = { ...process.env, REALBUD_TEST_PROFILE_COUNT: String(paths.length) };
+  const env: NodeJS.ProcessEnv = { ...process.env, ...extra, REALBUD_TEST_PROFILE_COUNT: String(paths.length) };
   // Keep Windows PowerShell 5.1 away from PowerShell 7 module roots, as the product does;
   // environment names are case-insensitive on Windows, so drop every spelling first.
   for (const name of Object.keys(env)) if (name.toLowerCase() === 'psmodulepath') delete env[name];
@@ -160,3 +181,8 @@ export function parseProfileAclWitness(stdout: string, count: number): ProfileAc
 
 /** Deliberately unsafe ACL, restricted to paths below roots this helper created. */
 export function addFixtureUsersRead(path: string): void { powershell(ADD_USERS_READ, [path]); }
+
+/** An inheritable grant on a test-owned folder (see ADD_INHERITABLE_GRANT). */
+export function addFixtureInheritableGrant(path: string, grant: 'administrators' | 'everyone'): void {
+  powershell(ADD_INHERITABLE_GRANT, [path], { REALBUD_TEST_GRANT: grant });
+}

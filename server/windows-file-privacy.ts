@@ -8,8 +8,10 @@ const execFileAsync = promisify(execFile);
 
 // Windows mode bits are not an ACL. Use the built-in ACL API without placing a
 // secret, verifier, or interpolated path in a command, its output, or arguments.
-// Existing paths are verify-only. Newly owned directories and files may be restricted
-// before content is written. This does not protect secrets from the OS admin.
+// Existing paths are verify-only, except `repair` (see Admit), which protects an
+// existing object whose only fault is unprotected inheritance of grants that are
+// already private. Newly owned directories and files may be restricted before
+// content is written. This does not protect secrets from the OS admin.
 //
 // A cold powershell.exe costs seconds, so one process applies a whole ordered
 // list: operation i reads REALBUD_WINDOWS_FILE_PRIVACY_{PATH,KIND,ACTION} with
@@ -45,19 +47,39 @@ function Report($reportStage, $reportIndex, $reportRecord) {
   try { $fqid = ([string]$reportRecord.FullyQualifiedErrorId) -replace '[^A-Za-z0-9_.,:-]', ''; if ($fqid.Length -gt 120) { $fqid = $fqid.Substring(0, 120) }; if ($fqid.Length -eq 0) { $fqid = '-' } } catch { }
   $script:detail = "[windows-acl] stage=$reportStage index=$reportIndex type=$type hresult=$hresult win32=$win32 fqid=$fqid"
 }
+# The admission policy for one descriptor, protection aside: 0 when its owner
+# and every allow rule, inherited ones included, are this account, SYSTEM or
+# Administrators, no deny rule is present, and this account has full control
+# of the object itself; otherwise the numeric refusal.
+function Judge($descriptor, $sid, $allowed) {
+  if ($allowed -notcontains $descriptor.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { return 2 }
+  $usable = $false
+  foreach ($rule in $descriptor.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+    # This is a conservative private-storage admission policy, not an effective
+    # access calculation over the current token's enabled and deny-only groups.
+    if ($rule.AccessControlType -eq 'Deny') { return 10 }
+    if ($rule.AccessControlType -eq 'Allow') {
+      if ($allowed -notcontains $rule.IdentityReference.Value) { return 3 }
+      $targetGrant = ($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0
+      if ($targetGrant -and $rule.IdentityReference.Value -eq $sid.Value -and (($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl)) { $usable = $true }
+    }
+  }
+  if (-not $usable) { return 4 }
+  return 0
+}
 # One admission; returns its numeric result (0 admitted). Every value it reads
 # is assigned inside this call, so nothing survives into the next operation.
 function Admit($path, $kind, $action, $index) {
 $script:detail = ''
 if ([string]::IsNullOrEmpty($path)) { return 9 }
 if ($kind -ne 'directory' -and $kind -ne 'file') { return 9 }
-if ($action -ne 'restrict' -and $action -ne 'verify') { return 9 }
+if ($action -ne 'restrict' -and $action -ne 'verify' -and $action -ne 'repair') { return 9 }
 $directory = $kind -eq 'directory'
 $acl = $null
 $actual = $null
 $cursor = $path
 $target = $true
-$usable = $false
+$apply = $action -eq 'restrict'
 $stage = 20
 try {
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
@@ -79,7 +101,22 @@ while ($true) {
   if ([string]::IsNullOrEmpty($parent) -or $parent -eq $cursor) { break }
   $cursor = $parent
 }
-if ($action -eq 'restrict') {
+if ($action -eq 'repair') {
+  # Repair only an existing object that verification refuses for unprotected
+  # inheritance alone: its inherited rules already pass Judge, so protecting
+  # it with the restrict descriptor below narrows access and never widens it.
+  # Any other refusal is returned before the descriptor is touched.
+  $stage = 25
+  if ($directory) { $actual = ([System.IO.DirectoryInfo]::new($path)).GetAccessControl() }
+  else { $actual = ([System.IO.FileInfo]::new($path)).GetAccessControl() }
+  $stage = 26
+  if (-not $actual.AreAccessRulesProtected) {
+    $judged = @(Judge $actual $sid $allowed)[-1]
+    if ($judged -ne 0) { return $judged }
+    $apply = $true
+  }
+}
+if ($apply) {
   $stage = 23
   if ($directory) { $acl = [System.Security.AccessControl.DirectorySecurity]::new() }
   else { $acl = [System.Security.AccessControl.FileSecurity]::new() }
@@ -104,18 +141,8 @@ if ($directory) { $actual = ([System.IO.DirectoryInfo]::new($path)).GetAccessCon
 else { $actual = ([System.IO.FileInfo]::new($path)).GetAccessControl() }
 $stage = 26
 if (-not $actual.AreAccessRulesProtected) { return 5 }
-if ($allowed -notcontains $actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { return 2 }
-foreach ($rule in $actual.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
-  # This is a conservative private-storage admission policy, not an effective
-  # access calculation over the current token's enabled and deny-only groups.
-  if ($rule.AccessControlType -eq 'Deny') { return 10 }
-  if ($rule.AccessControlType -eq 'Allow') {
-    if ($allowed -notcontains $rule.IdentityReference.Value) { return 3 }
-    $targetGrant = ($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0
-    if ($targetGrant -and $rule.IdentityReference.Value -eq $sid.Value -and (($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl)) { $usable = $true }
-  }
-}
-if (-not $usable) { return 4 }
+$judged = @(Judge $actual $sid $allowed)[-1]
+if ($judged -ne 0) { return $judged }
 } catch {
   # Never emit the exception object: native messages can contain a path or an
   # identity. Only the stage, the index, the type name and numeric codes.
@@ -198,11 +225,13 @@ const OTHER_FAILURES = [
 type PrivacyFailure = (typeof NATIVE_FAILURES)[keyof typeof NATIVE_FAILURES] | (typeof OTHER_FAILURES)[number];
 const FAILURES: ReadonlySet<string> = new Set([...Object.values(NATIVE_FAILURES), ...OTHER_FAILURES]);
 
-/** One ordered admission. `verify` never repairs; `restrict` owns a new object. */
+/** One ordered admission. `verify` never repairs; `restrict` owns a new object;
+ * `repair` protects an existing object only when its unprotected, inherited
+ * grants already pass verification (server/windows-private-admission.ts). */
 export type WindowsFilePrivacyOperation = {
   path: string;
   kind: 'file' | 'directory';
-  action: 'restrict' | 'verify';
+  action: 'restrict' | 'verify' | 'repair';
 };
 /** `applied` is false only where this policy does not run (not win32). */
 export type WindowsFilePrivacyResult = WindowsFilePrivacyOperation & { applied: boolean };
@@ -318,7 +347,7 @@ function privacyInvocation(operations: WindowsFilePrivacyOperation[]): Invocatio
       literal.includes('\0') ||
       !isAbsolute(literal) ||
       (kind !== 'file' && kind !== 'directory') ||
-      (action !== 'restrict' && action !== 'verify')
+      (action !== 'restrict' && action !== 'verify' && action !== 'repair')
     ) {
       throw new WindowsFilePrivacyError('invalid-path-or-kind', null, false, index, operations.length);
     }
@@ -455,7 +484,7 @@ async function hostBatch(invocation: Invocation, planned: WindowsFilePrivacyOper
 
 function hostAdmission(
   invocation: { executable: string; args: string[]; env: NodeJS.ProcessEnv },
-  literal: string, kind: 'file' | 'directory', action: 'restrict' | 'verify',
+  literal: string, kind: 'file' | 'directory', action: WindowsFilePrivacyOperation['action'],
 ): Promise<{ result: number; detail: string }> {
   const target = host ??= startHost(invocation);
   return new Promise((resolve, reject) => {

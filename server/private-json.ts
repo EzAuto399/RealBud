@@ -3,6 +3,7 @@ import { lstat, mkdir, readFile, open, rename, rmdir, unlink } from 'node:fs/pro
 import { dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
+import { admitPrivateObject } from './windows-private-admission.ts';
 import { fsyncDir, renameReplacing } from './atomic.ts';
 
 const admitting = new Map<string, Promise<void>>();
@@ -23,8 +24,11 @@ export function privateDirectory(path: string): Promise<void> {
 
 async function admitDirectory(path: string): Promise<void> {
   const created = await mkdirPrivate(path);
-  await tightenOwnerOnly(path, await lstat(path), 'directory', folderRoles.get(resolve(path)) ?? 'A RealBud storage folder');
-  if (!created) await windowsFilePrivacy(path, 'directory');
+  const role = folderRoles.get(resolve(path)) ?? 'A RealBud storage folder';
+  await tightenOwnerOnly(path, await lstat(path), 'directory', role);
+  // An existing folder that only inherits private grants is protected and
+  // admitted (windows-private-admission.ts); any other ACL refusal stands.
+  if (!created) await admitPrivateObject(path, 'directory', role);
 }
 
 /** A refusal whose message is plain and path-free, so callers may show it. */
@@ -41,7 +45,8 @@ const OWNER_ONLY: Record<PrivateKind, number> = { directory: 0o700, file: 0o600 
  * owned by this account whose only problem is group/other access (copied,
  * restored, migrated from a legacy folder, loosened by an IT tool) is
  * tightened and admitted; a too-open file is refused (see below). Links, foreign owners and wrong types stay refused.
- * Windows ACLs are checked by windowsFilePrivacy instead. Returns the mode to
+ * Windows ACLs are checked by admitPrivateObject instead, which applies the
+ * same rule to an owned object that only inherits private grants. Returns the mode to
  * set, or undefined when nothing needs changing. */
 function ownerOnlyRepair(stat: Stats, kind: PrivateKind, role: string): number | undefined {
   if (stat.isSymbolicLink()) throw new PrivateStorageError(`${role} is a shortcut to another location, so RealBud will not use it. Replace it with the real ${kind === 'directory' ? 'folder' : 'file'}.`);
@@ -128,7 +133,9 @@ async function readPrivateText(path: string, maxBytes: number): Promise<string |
     const stat = await lstat(path);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error('Private state file needs recovery.');
     await tightenOwnerOnly(path, stat, 'file', 'A RealBud storage file');
-    await windowsFilePrivacy(path, 'file');
+    // Unlike a too-open POSIX file, a file that only inherits grants of this
+    // account, SYSTEM and Administrators was never open to anyone else.
+    await admitPrivateObject(path, 'file', 'A RealBud storage file');
     if (stat.size > maxBytes) throw Object.assign(new Error('Private state file needs recovery.'), { damaged: true });
     return await readFile(path, 'utf8');
   } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }

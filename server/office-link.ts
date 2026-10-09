@@ -7,14 +7,71 @@ import { lstatSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { writeFileAtomic } from "./atomic.ts";
-import { readServiceProvisioning, WORKER_MODEL_ENV_NAMES } from "./worker-model-access.ts";
+import { PREFLIGHT_STEPS, readServiceProvisioning, WORKER_MODEL_ENV_NAMES, type PreflightStep } from "./worker-model-access.ts";
 import { workerModelAccessSnapshot } from "./hermes-runtime-env.ts";
 import { windowsFilePrivacy } from "./windows-file-privacy.ts";
+import { admitPrivateObject } from "./windows-private-admission.ts";
+import { CONTACT_SUPPORT } from "../shared/support.ts";
 import { currentUsagePeriod, isProvisioningSkipReasonText, isProvisioningSkipped, parseInstallationProvisioning, parseInstallationUsage, USAGE_PERIOD,
   type InstallationProvisioning, type InstallationUsageState } from "../shared/office-link.ts";
 import { isLinkRequestInput, isLinkRequestIssued, isLinkStatus, type LinkCancelInput, type LinkRequestInput, type LinkStatus, type LinkStatusInput } from "../shared/installation-link.ts";
 import { PrivateStorageError } from "./private-json.ts";
 import { OFFICE_PACKS_MAX_BYTES, parseOfficePacks, type OfficePacksSource } from "../shared/customer-packs.ts";
+
+/** The store a refused preflight step was admitting, in plain words. */
+const PREFLIGHT_STORES: Record<PreflightStep, string> = {
+  "prior record": "RealBud's saved service setup on this computer",
+  vault: "RealBud's private key store on this computer",
+  "profile folder": "Bud's private profile folder on this computer",
+  "profile file": "a file in Bud's private profile on this computer",
+  config: "Bud's profile settings on this computer",
+  "data folder": "RealBud's data folder on this computer",
+};
+/** Why Windows refused a store, for the ACL refusals a person can act on. */
+const WINDOWS_ACL_REASONS: Record<string, string> = {
+  "grant-not-allowed": "another account on this computer can open it",
+  "deny-rule-present": "a Windows rule blocks access to it",
+  "owner-not-allowed": "it belongs to another account",
+  "target-full-control-missing": "your Windows account can't fully control it",
+  "inheritance-not-protected": "it takes its permissions from the folder above it",
+  "target-reparse-point": "it is a shortcut to another location",
+  "ancestor-reparse-point": "a folder above it is a shortcut to another location",
+  "target-kind-mismatch": "it is not the kind of item RealBud expects there",
+};
+const SAFE_NAME = /^[A-Za-z][A-Za-z0-9]{0,39}$/;
+const SAFE_CATEGORY = /^[a-z][a-z-]{0,39}$/;
+/** The cause chain, outermost first, bounded so a cycle cannot loop. */
+function causeChain(error: unknown): unknown[] {
+  const chain: unknown[] = [];
+  for (let at = error; at !== undefined && at !== null && chain.length < 8 && !chain.includes(at); at = (at as { cause?: unknown }).cause) chain.push(at);
+  return chain;
+}
+/**
+ * A refused provisioning preflight as fixed product copy plus one log line.
+ * Only a PrivateStorageError's message (plain and path-free by construction)
+ * is ever repeated; a Windows ACL refusal is described from its category and
+ * the step's store, never from its message; anything else keeps the generic
+ * text. The log line holds the step, error names and the ACL token only.
+ */
+export function preflightRefusal(error: unknown): { message: string; log: { step: PreflightStep | "unknown"; errors: string; acl?: string } } {
+  const chain = causeChain(error);
+  const tagged = chain.map(item => (item as { preflightStep?: unknown }).preflightStep).find(value => value !== undefined);
+  const step = PREFLIGHT_STEPS.find(value => value === tagged);
+  const errors = chain.map(item => item instanceof Error && SAFE_NAME.test(item.name) ? item.name : "Error").join("<-");
+  const windows = chain.find((item): item is Error & { category: unknown } => item instanceof Error && item.name === "WindowsFilePrivacyError");
+  const category = typeof windows?.category === "string" && SAFE_CATEGORY.test(windows.category) ? windows.category : undefined;
+  const log = { step: step ?? "unknown" as const, errors, ...(windows ? { acl: `[windows-acl:${category ?? "unknown"}]` } : {}) };
+  const plain = chain.find((item): item is PrivateStorageError => item instanceof PrivateStorageError);
+  if (plain) return { message: `${plain.message} Your work is kept.`, log };
+  if (windows) {
+    const store = step ? PREFLIGHT_STORES[step] : "RealBud's private storage on this computer";
+    const reason = category ? WINDOWS_ACL_REASONS[category] : undefined;
+    const said = reason ? `${store[0]!.toUpperCase()}${store.slice(1)} has Windows permissions RealBud can't use: ${reason}.`
+      : `Windows couldn't check the permissions on ${store}.`;
+    return { message: `${said} Your work is kept. ${CONTACT_SUPPORT} before trying office setup again.`, log };
+  }
+  return { message: "This computer's saved settings or private service storage need recovery. Your work is kept. Repair the local storage before retrying office setup.", log };
+}
 
 /** CLI diagnostics include local paths and update notices; only the product
  * version belongs in the website report. */
@@ -208,8 +265,8 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
     if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > 4096 || (process.platform !== "win32" && ((st.mode & 0o077) !== 0 || st.uid !== process.getuid?.()))) throw new Error("The saved website link needs private-file recovery.");
     const parent = lstatSync(directory);
     if (!parent.isDirectory() || parent.isSymbolicLink() || (process.platform !== "win32" && ((parent.mode & 0o077) !== 0 || parent.uid !== process.getuid?.()))) throw new Error("The website link needs a private data directory.");
-    await windowsFilePrivacy(directory, "directory");
-    await windowsFilePrivacy(path, "file");
+    await admitPrivateObject(directory, "directory", "RealBud's office link folder");
+    await admitPrivateObject(path, "file", "RealBud's office link file");
     let saved: Saved;
     try { saved = JSON.parse(readFileSync(path, "utf8")) as Saved; }
     catch { throw new Error("The saved website link needs recovery."); }
@@ -222,7 +279,8 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
     const created = mkdirSync(directory, { recursive: true, mode: 0o700 });
     const dir = lstatSync(directory);
     if (!dir.isDirectory() || dir.isSymbolicLink() || (process.platform !== "win32" && ((dir.mode & 0o077) !== 0 || dir.uid !== process.getuid?.()))) throw new Error("The website link needs a private data directory.");
-    await windowsFilePrivacy(directory, "directory", !!created);
+    if (created) await windowsFilePrivacy(directory, "directory", true);
+    else await admitPrivateObject(directory, "directory", "RealBud's office link folder");
     writeFileAtomic(path, JSON.stringify(value), 0o600);
     await windowsFilePrivacy(path, "file", true);
   }
@@ -373,16 +431,19 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
     if (!env[WORKER_MODEL_ENV_NAMES[0]]) return { issue: "missing" };
     return rejectedModelKeyId === record.keyId ? { keyId: record.keyId, issue: "rejected" } : { keyId: record.keyId };
   }
+  let lastPreflightLog = "";
   async function preflightProvisioning(installationId: string) {
     try { await options.provisioning?.preflight?.(installationId); }
     catch (error) {
       // Local recovery errors may contain paths or credential-bearing parser
-      // text. Only a private-storage refusal, which is plain and path-free by
-      // construction, is passed through; otherwise keep one actionable message.
-      const reason = error instanceof Error && error.cause instanceof PrivateStorageError ? error.cause : error instanceof PrivateStorageError ? error : undefined;
-      throw Object.assign(new Error(reason ? `${reason.message} Your work is kept.` : "This computer's saved settings or private service storage need recovery. Your work is kept. Repair the local storage before retrying office setup."),
-        { status: 503, code: "service_provisioning_local_recovery" });
+      // text, so the message and the log line are built by preflightRefusal.
+      const { message, log } = preflightRefusal(error);
+      // Reports retry on a timer: log a refusal when it changes, not each time.
+      const signature = JSON.stringify(log);
+      if (signature !== lastPreflightLog) { lastPreflightLog = signature; oplog("storage", "Office setup stopped at a local storage check.", log); }
+      throw Object.assign(new Error(message), { status: 503, code: "service_provisioning_local_recovery" });
     }
+    lastPreflightLog = "";
   }
 
   async function link(input: { code?: unknown; label?: unknown }) {
