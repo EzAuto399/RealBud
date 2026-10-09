@@ -3,6 +3,7 @@ import { closeSync, constants, fsyncSync, lstatSync, mkdirSync, openSync, realpa
 import { join, resolve } from "node:path";
 import { ASK_ATTACH_MAX_BYTES, isAskAttachName, safeAskAttachName } from "../shared/ask-attachments.ts";
 import { windowsFilePrivacySync } from "./windows-file-privacy.ts";
+import { admitPrivateObjectsSync } from "./windows-private-admission.ts";
 import { ASK_CSV_REPORT_SUFFIX, inspectAskCsv } from "./ask-csv-inspect.ts";
 export { ASK_ATTACH_MAX_BYTES, isAskAttachName, safeAskAttachName } from "../shared/ask-attachments.ts";
 
@@ -19,8 +20,10 @@ function privateDirectory(path: string, requirePrivate = true): void {
   }
   try {
     // Mode bits do not protect Windows files. Restrict only a directory we
-    // created, while still empty; legacy objects must pass verify-only.
-    windowsFilePrivacySync(resolve(path), "directory", created);
+    // created, while still empty; a legacy one must pass verification, or
+    // only inherit private grants (repaired, windows-private-admission.ts).
+    if (created) windowsFilePrivacySync(resolve(path), "directory", true);
+    else admitPrivateObjectsSync([{ path: resolve(path), kind: "directory", action: "verify" }], "RealBud's attachment folder");
   } catch {
     if (created) {
       try { rmdirSync(path); } catch { /* never remove a nonempty directory */ }

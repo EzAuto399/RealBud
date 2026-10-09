@@ -124,7 +124,7 @@ describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTION
       if (path.includes('.service-provisioning-check-')) throw new privateJson.DiskFullError({ code: 'ENOSPC' });
       return originalWrite(path, value, ...rest);
     });
-    await expect(access.preflight()).rejects.toThrow('needs local storage recovery');
+    await expect(access.preflight()).rejects.toMatchObject({ message: expect.stringContaining('needs local storage recovery'), preflightStep: 'data folder' });
     expect(await access.state()).toEqual({ provisioned: false, withdrawn: false });
   });
 
@@ -135,7 +135,11 @@ describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTION
     if (fault === 'vault') privateFixtureDirectory(join(root, 'company-installation/private'));
     const damaged = fault === 'profile' ? 'agent: [broken\n' : '{broken';
     writePrivateFixtureFile(file, damaged);
-    for (let attempt = 0; attempt < 2; attempt++) await expect(access.preflight('installation-a')).rejects.toThrow('needs local storage recovery');
+    // The office link names the store from this tag (office-link.ts preflightRefusal).
+    const step = { profile: 'config', binding: 'prior record', vault: 'vault' }[fault];
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await expect(access.preflight('installation-a')).rejects.toMatchObject({ message: expect.stringContaining('needs local storage recovery'), preflightStep: step });
+    }
     expect(readFileSync(file, 'utf8')).toBe(damaged);
     expect(await access.state()).toEqual({ provisioned: false, withdrawn: false });
     rmSync(file);

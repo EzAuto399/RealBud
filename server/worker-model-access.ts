@@ -31,6 +31,11 @@ export const WORKER_MODEL_VAULT_ENTRY = "worker-model-access";
  */
 export const WORKER_MODEL_ENV_NAMES = [MANAGED_MODEL_KEY_ENV] as const;
 
+/** Which local store a refused provisioning preflight was admitting, carried
+ * as `preflightStep` on its error so the office link can name it plainly. */
+export const PREFLIGHT_STEPS = ["prior record", "vault", "profile folder", "profile file", "config", "data folder"] as const;
+export type PreflightStep = (typeof PREFLIGHT_STEPS)[number];
+
 export function workerModelEnv(key: string): Record<string, string> {
   return { [MANAGED_MODEL_KEY_ENV]: key };
 }
@@ -253,6 +258,7 @@ export function createWorkerModelAccess(options: WorkerModelAccessOptions) {
     readConfig();
     const probe = join(options.directory, `.service-provisioning-check-${randomUUID()}.json`);
     const vaultProbe = `service-provisioning-check-${randomUUID()}`;
+    let step: PreflightStep = "prior record";
     try {
       const existing = await readServiceProvisioning(options.directory);
       if (installationId !== undefined && existing && existing.state !== "withdrawn" && existing.installationId !== installationId) {
@@ -260,20 +266,27 @@ export function createWorkerModelAccess(options: WorkerModelAccessOptions) {
       }
       // Read the same destinations and parsers apply uses, before an external
       // credential is rotated. The scratch vault entry also admits its key.
+      step = "vault";
       await vault.read(WORKER_MODEL_VAULT_ENTRY);
+      step = "prior record";
       serviceInstallationBinding(options.directory);
+      step = "profile folder";
       const profile = propertyProfileDir(options.hermesRoot);
       ensureProfileDirectory(profile);
+      step = "profile file";
       const config = readProfileFile(join(profile, "config.yaml"));
       readProfileFile(join(profile, ".env"));
+      step = "config";
       managedModelConfig(config?.toString("utf8") ?? "", "https://model-probe.invalid/v1", DEFAULT_MANAGED_MODEL_CHOICE);
+      step = "vault";
       await vault.write(vaultProbe, { version: 1 });
       await vault.remove(vaultProbe);
+      step = "data folder";
       await writePrivateJson(probe, { version: 1 });
       await removePrivateJson(probe);
       if (withdrawalPending) throw new Error("Service withdrawal needs recovery before linking again.");
     } catch (cause) {
-      throw new Error("This computer’s service setup needs local storage recovery. Existing settings are kept.", { cause });
+      throw Object.assign(new Error("This computer’s service setup needs local storage recovery. Existing settings are kept.", { cause }), { preflightStep: step });
     }
   }
 
