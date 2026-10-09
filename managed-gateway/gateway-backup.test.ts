@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, linkSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, linkSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
@@ -186,7 +186,7 @@ test('a process killed during real restore publication leaves the prior hold and
     await exportGatewayBackup(s.config); const target = join(s.outer, 'interrupted');
     const module = new URL('./gateway-backup.ts', import.meta.url).href;
     const program = `import fs from 'node:fs'; import {syncBuiltinESMExports} from 'node:module';
-      const original=fs.linkSync; fs.linkSync=(from,to)=>{original(from,to);if(to===${JSON.stringify(join(target, 'ledger.sqlite'))})process.kill(process.pid,'SIGKILL');};syncBuiltinESMExports();
+      const original=fs.linkSync; fs.linkSync=(from,to)=>{original(from,to);if(to===${JSON.stringify(join(realpathSync(s.outer), 'interrupted', 'ledger.sqlite'))})process.kill(process.pid,'SIGKILL');};syncBuiltinESMExports();
       const {restoreGatewayBackup}=await import(${JSON.stringify(module)}); restoreGatewayBackup(${JSON.stringify({ archive: s.output, keyFile: s.keyFile, directory: target })});`;
     const child = spawnSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', program], { env: process.env }); assert.equal(child.signal, 'SIGKILL');
     assert.equal(JSON.parse(readFileSync(join(target, RESTORE_HOLD_FILE), 'utf8')).state, 'in-progress');
@@ -199,7 +199,7 @@ test('a failed scratch allocation releases maintenance in the reusable API witho
   const s = setup(); try {
     const backupModule = new URL('./gateway-backup.ts', import.meta.url).href, leaseModule = new URL('./runtime-state-lock.ts', import.meta.url).href;
     const program = `import assert from 'node:assert/strict';import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';
-      const original=fs.mkdtempSync;fs.mkdtempSync=(prefix,...args)=>{if(String(prefix).startsWith(${JSON.stringify(join(s.root, '.gateway-backup-'))}))throw Object.assign(Error('synthetic'),{code:'ENOSPC'});return original(prefix,...args);};syncBuiltinESMExports();
+      const original=fs.mkdtempSync;fs.mkdtempSync=(prefix,...args)=>{if(String(prefix).startsWith(${JSON.stringify(join(realpathSync(s.root), '.gateway-backup-'))}))throw Object.assign(Error('synthetic'),{code:'ENOSPC'});return original(prefix,...args);};syncBuiltinESMExports();
       const {exportGatewayBackup}=await import(${JSON.stringify(backupModule)});const {acquireRuntimeStateLease}=await import(${JSON.stringify(leaseModule)});
       await assert.rejects(()=>exportGatewayBackup(${JSON.stringify(s.config)}),{code:'ENOSPC'});const lease=acquireRuntimeStateLease(${JSON.stringify(s.root)},'maintenance');lease.release();`;
     const child = spawnSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', program], { env: process.env }); assert.equal(child.status, 0, child.stderr.toString());

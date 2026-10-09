@@ -138,9 +138,10 @@ export class BillingService {
         const bound=this.ledger.db.get<{customer:string}>('SELECT customer FROM office_modelvia_customer WHERE tenant=?',companyId)?.customer;
         requireThat(bound && (!ai.modelviaCustomerId || ai.modelviaCustomerId===bound),'office_modelvia_customer_mismatch',409);
       }
-      // A care-only deferral contains no AI data or amount. Everything else must
-      // still prove exact pricing after any provider await.
-      if(terms.aiUsage && !(ai && aiInvoices.length===0 && ai.deferredPeriods?.includes(period))) requireOfficeResalePolicies(this.commercialTerms!,this.ledger,companyId,[period,...aiInvoices.map(entry=>entry.period),...(ai?.deferredPeriods??[])],ai?.modelviaCustomerId);
+      // A close that read Modelvia and bills no AI amount (nothing finalized, or
+      // a care-only deferral) has no price to prove. Everything else must still
+      // prove exact pricing after any provider await.
+      const legacyPolicies=terms.aiUsage && !(ai && aiInvoices.length===0) ? requireOfficeResalePolicies(this.commercialTerms!,this.ledger,companyId,[period,...aiInvoices.map(entry=>entry.period),...(ai?.deferredPeriods??[])],ai?.modelviaCustomerId) : [];
       // AI resale only under terms that carry it, and each Modelvia invoice at most once, ever.
       requireThat(!ai || terms.aiUsage,'ai_usage_not_accepted',409);
       for(const entry of aiInvoices) requireThat(!this.ledger.db.get('SELECT modelvia_invoice FROM office_ai_consolidations WHERE modelvia_invoice=?',entry.id),'modelvia_invoice_already_consolidated',409);
@@ -203,6 +204,8 @@ export class BillingService {
       this.commercialTerms!.bindInvoice(invoice);
       queueInvoiceEmail(this.ledger,invoice,terms.customer.billingEmail,accepted.digest);
       this.ledger.db.append(companyId,'local_invoice_closed',null,this.ledger.now(),{invoiceId:invoice.id,totalCents:invoice.totalCents,digest:digest(invoice)});
+      // Pricing admitted only by a pre-proof sync receipt is named on the chain, with the invoice.
+      if(legacyPolicies.length) this.ledger.db.append(companyId,'ai_policy_legacy_receipt_used',null,this.ledger.now(),{invoiceId:invoice.id,period,acceptanceReferences:legacyPolicies});
       // Host-only provenance joins the invoice/outbox commit. Never run this
       // hook for a historical invoice or permit an asynchronous partial commit.
       const createdResult:unknown=report?.onCreated?.(invoice);
@@ -245,7 +248,7 @@ export class BillingService {
       const recorded=manualPayments(this.ledger,inv.id);
       return {id:inv.id,kind:inv.kind,period:inv.period,currency:inv.currency,gstInclusive:inv.gstInclusive,totalCents:inv.totalCents,gstCents:inv.gstCents,paid:paid.has(inv.id),aiUsageCsv:!!inv.aiUsage?.modelviaInvoices.length,
         dueAt:standing.dueAt,status:standing.status,overdue:standing.overdue,paidCents:standing.paidCents,outstandingCents:standing.outstandingCents,
-        receiptKind:paid.has(inv.id)?'square':recorded.length?'recorded':null};
+        receiptKind:paid.has(inv.id)?'square':recorded.some(p=>!p.reversed)?'recorded':null};
     });
   }
   async checkout(actor:PortalPrincipal,invoiceId:string):Promise<HostedCheckout> {

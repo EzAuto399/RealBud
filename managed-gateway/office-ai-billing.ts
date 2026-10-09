@@ -80,14 +80,11 @@ export function closeOfficeMonth(options: OfficeBilling, companyId: string, peri
     if (options.clientFundedCompanies.has(companyId) || (!terms.aiUsage && since === undefined)) return finalize(billing, companyId, period, termsVersion, undefined, 'care_only', close.onCreated);
     const customerId = officeCustomer(ledger, companyId);
     requireThat(customerId, 'office_modelvia_customer_unbound', 409);
-    if (close.deferAi) {
-      // Explicit independent care billing: no provider configuration, read or
-      // pricing activation is needed. Current/unresolved AI remains deferred.
-      requireThat(terms.aiUsage, 'ai_usage_unconsolidated', 409);
-      const periods = [...new Set([period, ...unresolvedDeferredPeriods(ledger, companyId).filter(p => p < period)])].sort();
-      return finalize(billing, companyId, period, termsVersion, { invoices: [], deferredPeriods: periods, modelviaCustomerId: customerId, chargeDetail: officeChargeDetail(ledger, companyId) }, 'deferred', close.onCreated);
-    }
-    requireOfficeResalePolicies(billing.commercialTerms!, ledger, companyId, [period, ...unresolvedDeferredPeriods(ledger, companyId)], customerId);
+    // `deferAi` still reads Modelvia, as it did before pricing proofs: an invoice
+    // Modelvia already finalized is consolidated now (its pricing is proved at
+    // finalize), and only a month Modelvia has not invoiced yet is deferred.
+    // Without proof, a finalized invoice refuses the close; it is never hidden.
+    if (!close.deferAi) requireOfficeResalePolicies(billing.commercialTerms!, ledger, companyId, [period, ...unresolvedDeferredPeriods(ledger, companyId)], customerId);
     requireThat(options.modelvia, 'modelvia_client_unconfigured', 503);
     const month = await options.modelvia!.customerMonth(customerId, period);
     // Modelvia must not also offer the office a way to pay these invoices.
@@ -113,7 +110,8 @@ export function closeOfficeMonth(options: OfficeBilling, companyId: string, peri
     // Terms without AI resale cannot carry AI that is owed: refuse rather than drop it.
     requireThat(terms.aiUsage || (!due.length && !outstanding.length), 'ai_usage_unconsolidated', 409);
     if (outstanding.length && !close.deferAi) throw new GatewayError('modelvia_invoice_not_finalized', 409);
-    if (!close.deferAi) requireOfficeResalePolicies(billing.commercialTerms!, ledger, companyId, [period, ...due.map(entry => entry.period), ...outstanding], customerId);
+    // A finalized invoice is consolidated, deferral or not: prove its pricing before reading it.
+    if (!close.deferAi || due.length) requireOfficeResalePolicies(billing.commercialTerms!, ledger, companyId, [period, ...due.map(entry => entry.period), ...outstanding], customerId);
     const invoices: AiInvoiceInput[] = [];
     let usedBy: string | undefined;
     for (const entry of due) {

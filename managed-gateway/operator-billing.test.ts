@@ -247,7 +247,7 @@ test('month close from the desk: offices with terms listed as closed, ready or b
   f.db.verify();
 });
 
-test('the operator close wrapper holds default AI for missing, pending or failed policy proof but explicitly closes independent care with zero provider reads',async()=>{
+test('the operator close wrapper holds default AI for missing, pending or failed policy proof; deferAi defers only a month Modelvia has not invoiced, and never a finalized invoice',async()=>{
   for(const state of ['missing','pending','failed'] as const) {
     const f=fixture();cleanups.push(f.close);f.setTime(ISSUE);
     const billing=new BillingService(f.ledger,undefined,{internalCompanyId:INTERNAL});
@@ -267,14 +267,22 @@ test('the operator close wrapper holds default AI for missing, pending or failed
         }});
       assert.equal((await syncOfficeResalePolicy({ledger:f.ledger,modelvia:sdk,clientFundedCompanies:new Set()},'company-a')).state,state);
     }
-    let reads=0;const modelvia={async customerMonth(){reads++;throw new Error('must_not_read_ai');},async customerInvoice(){reads++;throw new Error('must_not_read_ai');},async customerMargins(){reads++;throw new Error('must_not_read_ai');}};
+    // Modelvia has usage for September but no invoice yet; one finalized invoice
+    // can be switched on to prove it is never deferred.
+    let reads=0,finalized=false;
+    const summary={id:'CI-00000777',period:'2026-09',totalCents:'1300',gstCents:'118'};
+    const modelvia={async customerMonth(){reads++;return {invoices:finalized?[summary]:[],customerCheckout:'off' as const,usageExpected:true};},async customerInvoice():Promise<never>{reads++;throw new Error('synthetic_invoice_not_read');},async customerMargins():Promise<never>{reads++;throw new Error('synthetic_margins_not_read');}};
     const options={billing,modelvia,clientFundedCompanies:new Set<string>()};
     const blocker={missing:'ai_policy_not_synced',pending:'ai_policy_pending',failed:'ai_policy_sync_failed'}[state];
     assert.equal(closeList(billing,'2026-09').offices[0].blocker,blocker);
     await assert.rejects(closeMonth(options,OPERATOR,{companyId:'company-a',period:'2026-09',expectedTermsVersion:'resale-v1'}),error=>error instanceof Error && error.message===blocker);
     assert.equal(reads,0);assert.equal(f.db.all('SELECT id FROM invoices').length,0);
+    finalized=true;
+    await assert.rejects(closeMonth(options,OPERATOR,{companyId:'company-a',period:'2026-09',expectedTermsVersion:'resale-v1',deferAi:true}),error=>error instanceof Error && error.message===blocker);
+    assert.equal(f.db.all('SELECT id FROM invoices').length,0);
+    finalized=false;
     const closed=await closeMonth(options,OPERATOR,{companyId:'company-a',period:'2026-09',expectedTermsVersion:'resale-v1',deferAi:true});
-    assert.equal(reads,0);assert.deepEqual([closed.ai,closed.invoice.totalCents,closed.alreadyClosed],['deferred','12500',false]);
+    assert.ok(reads>0);assert.deepEqual([closed.ai,closed.invoice.totalCents,closed.alreadyClosed],['deferred','12500',false]);
     const invoice=billing.invoice(f.owner,closed.invoice.id);assert.deepEqual(invoice.aiUsage!.modelviaInvoices,[]);assert.deepEqual(invoice.aiUsage!.deferredPeriods,['2026-09']);
     const replay=await closeMonth(options,OPERATOR,{companyId:'company-a',period:'2026-09',expectedTermsVersion:'resale-v1',deferAi:true});
     assert.equal(replay.invoice.id,closed.invoice.id);assert.equal(replay.alreadyClosed,true);assert.equal(f.db.all("SELECT seq FROM events WHERE kind='ai_usage_deferred'").length,1);
@@ -363,7 +371,7 @@ test('portal transfer acknowledgment truth remains separate from Square paid pro
 });
 
 
-test('operator care-only audit failure rolls back the invoice, deferral and outbox; retry records the initiating operator once with zero provider reads',async()=>{
+test('operator care-only audit failure rolls back the invoice, deferral and outbox; retry records the initiating operator once',async()=>{
   const f=fixture();cleanups.push(f.close);f.setTime(ISSUE);
   const billing=new BillingService(f.ledger,undefined,{internalCompanyId:INTERNAL});
   const published=billing.commercialTerms!.publish(careTermsDraft(f,'audit-care','12500',{
@@ -372,26 +380,39 @@ test('operator care-only audit failure rolls back the invoice, deferral and outb
   billing.commercialTerms!.accept(f.owner,'2026-09','audit-care',published.digest);
   bindOfficeCustomer(f.ledger,f.tenant.companyId,'synthetic-audit-customer');
   let reads=0;
-  const modelvia={async customerMonth(){reads++;throw new Error('synthetic_provider_not_used');},async customerInvoice(){reads++;throw new Error('synthetic_provider_not_used');},async customerMargins(){throw new Error('synthetic_provider_not_used');}};
+  const modelvia={async customerMonth(){reads++;return {invoices:[],customerCheckout:'off' as const,usageExpected:true};},async customerInvoice():Promise<never>{reads++;throw new Error('synthetic_provider_not_used');},async customerMargins():Promise<never>{throw new Error('synthetic_provider_not_used');}};
   const options={billing,modelvia,clientFundedCompanies:new Set<string>()},input={companyId:f.tenant.companyId,period:'2026-09',expectedTermsVersion:'audit-care',deferAi:true};
   const append=f.db.append.bind(f.db),sequence=f.db.get("SELECT value FROM settings WHERE key='local_invoice_sequence'");
   f.db.append=(tenant,kind,...args)=>{if(kind==='operator_month_closed'){assert.equal(f.db.sql.isTransaction,true);throw new Error('synthetic_operator_audit_fault');}return append(tenant,kind,...args);};
   try { await assert.rejects(closeMonth(options,OPERATOR,input),/synthetic_operator_audit_fault/); }
   finally { f.db.append=append; }
-  assert.equal(reads,0);assert.equal(f.db.all('SELECT id FROM invoices').length,0);
+  assert.equal(reads,1);assert.equal(f.db.all('SELECT id FROM invoices').length,0);
   assert.equal(f.db.all('SELECT invoice FROM invoice_email_outbox').length,0);
   assert.equal(f.db.all('SELECT modelvia_invoice FROM office_ai_consolidations').length,0);
   assert.deepEqual(f.db.get("SELECT value FROM settings WHERE key='local_invoice_sequence'"),sequence);
   assert.equal(f.db.all("SELECT seq FROM events WHERE kind IN ('operator_month_closed','ai_usage_deferred','ai_usage_consolidated','local_invoice_closed')").length,0);f.db.verify();
   const created=await closeMonth(options,OPERATOR,input);
-  assert.equal(created.invoice.totalCents,'12500');assert.equal(created.ai,'deferred');assert.equal(reads,0);
+  assert.equal(created.invoice.totalCents,'12500');assert.equal(created.ai,'deferred');assert.equal(reads,2);
   const original=f.db.get<{body:string}>('SELECT body FROM invoices WHERE id=?',created.invoice.id)!.body;
   const event=f.db.all<{body:string}>("SELECT body FROM events WHERE kind='operator_month_closed'");
   assert.equal(event.length,1);assert.equal(JSON.parse(event[0].body).by,OPERATOR.subject);
   assert.equal(f.db.all("SELECT seq FROM events WHERE kind='ai_usage_deferred'").length,1);
   assert.equal(f.db.all('SELECT invoice FROM invoice_email_outbox').length,1);
   const repeated=await closeMonth(options,{...OPERATOR,subject:'operator:synthetic-other@example.test'},input);
-  assert.equal(repeated.alreadyClosed,true);assert.equal(repeated.invoice.id,created.invoice.id);assert.equal(reads,0);
+  assert.equal(repeated.alreadyClosed,true);assert.equal(repeated.invoice.id,created.invoice.id);assert.equal(reads,2);
   assert.equal(f.db.get<{body:string}>('SELECT body FROM invoices WHERE id=?',created.invoice.id)!.body,original);
   assert.deepEqual(f.db.all("SELECT body FROM events WHERE kind='operator_month_closed'"),event);f.db.verify();
+});
+
+test('a recorded receipt is offered only while a recorded payment stands', () => {
+  const f=fixture();cleanups.push(f.close);f.setTime(ISSUE);
+  const billing=new BillingService(f.ledger,undefined,{internalCompanyId:INTERNAL});
+  const terms=billing.commercialTerms!.publish(careTermsDraft(f,'receipt-v1','12500'));billing.commercialTerms!.accept(f.owner,'2026-09','receipt-v1',terms.digest);
+  const invoice=billing.finalizeCommercialInvoice(f.tenant.companyId,'2026-09','receipt-v1');
+  const kind=()=>billing.portalInvoices(f.owner)[0].receiptKind;
+  assert.equal(kind(),null);
+  recordManualPayment(billing,OPERATOR,invoice.id,{paymentId:'22222222-2222-4222-8222-222222222222',method:'bank_transfer',amountCents:'5000',receivedOn:'2026-10-01'});
+  assert.equal(kind(),'recorded');
+  reverseManualPayment(billing,OPERATOR,invoice.id,'22222222-2222-4222-8222-222222222222',{reason:'Bank returned the transfer'});
+  assert.equal(kind(),null);
 });

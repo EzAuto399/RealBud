@@ -125,19 +125,36 @@ function validSyncProof(result: ResaleSyncResult, accepted: ResaleAcceptance, cu
     && Number.isSafeInteger(result.effectiveAt) && Number.isSafeInteger(result.verifiedAt) && result.verifiedAt! > 0
     && (result.state === 'active' ? result.effectiveAt! <= result.verifiedAt! : result.effectiveAt! > result.verifiedAt!);
 }
-export function resalePolicyState(ledger: UsageLedger, companyId: string, accepted: ResaleAcceptance, customer = policyCustomer(ledger, companyId)): NonNullable<OfficeMarkup['policy']> {
+/** A receipt written before receipts carried provider readback (neither
+ * `boundCustomerId` nor `verifiedAt`): the exact acceptance reference and
+ * markup, reported active by the sync of its day. Its customer can only be the
+ * office's bound one, since an office that accepted resale cannot be rebound
+ * (provisioning.ts `bindOfficeCustomer`). It counts as synced so offices synced
+ * before proof receipts keep closing; each invoice that relies on one records
+ * `ai_policy_legacy_receipt_used`. A newer attempt for the same acceptance
+ * still wins, and the operator's markup sync replaces it with a proof receipt. */
+function legacyReceipt(receipt: Record<string, unknown>, accepted: ResaleAcceptance): boolean {
+  return !Object.hasOwn(receipt, 'boundCustomerId') && !Object.hasOwn(receipt, 'verifiedAt') && receipt.state === 'active' && typeof receipt.policyId === 'string'
+    && receipt.markupBasisPoints === accepted.markupBasisPoints && receipt.clientMarkupBasisPoints === accepted.markupBasisPoints && receipt.acceptanceReference === accepted.acceptanceReference;
+}
+function policyReceipt(ledger: UsageLedger, companyId: string, accepted: ResaleAcceptance, customer: string | undefined): { state: NonNullable<OfficeMarkup['policy']>; legacy?: true } {
   const row = ledger.db.all<{ kind: string; body: string }>('SELECT kind,body FROM events WHERE tenant=? AND kind IN (?,?) ORDER BY seq DESC', companyId, POLICY_SYNCED, POLICY_SYNC_FAILED)
     .find(row => (JSON.parse(row.body) as { acceptanceReference?: string }).acceptanceReference === accepted.acceptanceReference);
-  if (!row) return 'not_synced';
-  if (row.kind === POLICY_SYNC_FAILED) return 'sync_failed';
+  if (!row) return { state: 'not_synced' };
+  if (row.kind === POLICY_SYNC_FAILED) return { state: 'sync_failed' };
   const receipt = JSON.parse(row.body) as ResaleSyncResult & { markupBasisPoints?: number; boundCustomerId?: string };
-  if (!customer || receipt.boundCustomerId !== customer || receipt.markupBasisPoints !== accepted.markupBasisPoints || !validSyncProof(receipt, accepted, customer)) return 'not_synced';
-  return receipt.state === 'active' ? 'synced' : 'sync_pending';
+  if (customer && legacyReceipt(receipt as unknown as Record<string, unknown>, accepted)) return { state: 'synced', legacy: true };
+  if (!customer || receipt.boundCustomerId !== customer || receipt.markupBasisPoints !== accepted.markupBasisPoints || !validSyncProof(receipt, accepted, customer)) return { state: 'not_synced' };
+  return { state: receipt.state === 'active' ? 'synced' : 'sync_pending' };
+}
+export function resalePolicyState(ledger: UsageLedger, companyId: string, accepted: ResaleAcceptance, customer = policyCustomer(ledger, companyId)): NonNullable<OfficeMarkup['policy']> {
+  return policyReceipt(ledger, companyId, accepted, customer).state;
 }
 /** All accepted anchors whose historical requests can be included. A plan's
  * standing month resolves to its genuine owner anchor; a legacy month may have
- * several accepted revisions, whose already admitted request prices stay intact. */
-export function requireOfficeResalePolicies(terms: CommercialTermsStore, ledger: UsageLedger, companyId: string, periods: readonly string[], customer = policyCustomer(ledger, companyId)): void {
+ * several accepted revisions, whose already admitted request prices stay intact.
+ * Returns the acceptance references admitted only by a legacy receipt. */
+export function requireOfficeResalePolicies(terms: CommercialTermsStore, ledger: UsageLedger, companyId: string, periods: readonly string[], customer = policyCustomer(ledger, companyId)): string[] {
   const required = new Map<string, ResaleAcceptance>();
   const events = ledger.db.all<{ body: string }>("SELECT body FROM events WHERE tenant=? AND kind='ai_resale_terms_accepted' ORDER BY seq", companyId).map(row => JSON.parse(row.body) as ResaleAcceptance);
   for (const period of new Set(periods)) {
@@ -154,10 +171,13 @@ export function requireOfficeResalePolicies(terms: CommercialTermsStore, ledger:
     } else if (current?.aiUsage) requireThat(events.some(event => event.period === period && event.version === current.version), 'ai_policy_acceptance_missing', 409);
   }
   requireThat(customer, 'office_modelvia_customer_unbound', 409);
+  const legacy: string[] = [];
   for (const accepted of required.values()) {
-    const state = resalePolicyState(ledger, companyId, accepted, customer);
+    const { state, legacy: onlyLegacy } = policyReceipt(ledger, companyId, accepted, customer);
     requireThat(state === 'synced', state === 'sync_pending' ? 'ai_policy_pending' : state === 'sync_failed' ? 'ai_policy_sync_failed' : 'ai_policy_not_synced', 409);
+    if (onlyLegacy) legacy.push(accepted.acceptanceReference);
   }
+  return legacy.sort();
 }
 
 export type CommercialPricingSync = 'not_required' | 'awaiting_acceptance' | NonNullable<OfficeMarkup['policy']>;

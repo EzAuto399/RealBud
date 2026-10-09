@@ -434,14 +434,15 @@ test('a latest failed sync after awaited Modelvia invoice read aborts the final 
   assert.equal(f.db.all('SELECT invoice FROM invoice_email_outbox').length, 0);
 });
 
-test('newer anchor sync refreshes a formerly pending historical policy by read only, enabling deferred one-time consolidation', async () => {
+test('newer anchor sync refreshes a formerly pending historical policy by read only, enabling one-time consolidation of a later-finalized month', async () => {
   const { f, billing, m, owners, draft, accept, sync } = offices();
   accept('company-a','care-a1',2000); await sync('company-a');
   accept('company-a','care-a2',3000); assert.equal((await sync('company-a')).state,'pending');
   f.setTime(Date.parse('2026-10-01T00:00:00Z'));
   const options={billing,modelvia:m.client,clientFundedCompanies:new Set<string>()};
   await assert.rejects(closeOfficeMonth(options,'company-a','2026-09','care-a2'),/ai_policy_pending/);
-  const care=await closeOfficeMonth(options,'company-a','2026-09','care-a2',{deferAi:true}); assert.equal(care.invoice.totalCents,'12500');assert.equal(care.invoice.aiUsage!.modelviaInvoices.length,0);
+  // Modelvia shows no September usage yet: care closes with no AI to price or defer.
+  const care=await closeOfficeMonth(options,'company-a','2026-09','care-a2',{deferAi:true}); assert.equal(care.invoice.totalCents,'12500');assert.equal(care.ai,'no_ai_usage');assert.equal(care.invoice.aiUsage,undefined);
   m.setServerNow(Date.parse('2026-09-20T00:00:00Z'));m.admit('realbud-company-a',{baseNano:1000000000n,model:'auto',user:'Fictional agent',projectId:null,tokensIn:100,tokensOut:50});
   m.finalize('realbud-company-a','Fictional Agency A','CI-00000995','2026-09');
   const october=billing.commercialTerms!.publish(draft('company-a','care-oct',4000,{period:'2026-10'}));billing.commercialTerms!.accept(owners['company-a'],'2026-10','care-oct',october.digest);

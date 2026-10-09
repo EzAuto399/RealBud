@@ -6,7 +6,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { backup, DatabaseSync } from 'node:sqlite';
 import { canonical, exact, object, requireThat } from './contracts.ts';
 import { validateConnectorDevices } from './connectors.ts';
-import { acquireRuntimeStateLease, privateStateDirectory, publishPrivateStateFile, readPrivateStateFile, RESTORE_HOLD_FILE, RESTORE_HOLD_SETTING, STATE_ID_FILE, stateIdentity, runtimeStateRoot, type RuntimeStateLease } from './runtime-state-lock.ts';
+import { acquireRuntimeStateLease, pathInsideStateRoot, physicalPath, privateStateDirectory, publishPrivateStateFile, readPrivateStateFile, RESTORE_HOLD_FILE, RESTORE_HOLD_SETTING, STATE_ID_FILE, stateIdentity, runtimeStateRoot, type RuntimeStateLease } from './runtime-state-lock.ts';
 
 const LIMIT = 64 * 1024 ** 2, MAX_FILES = 258;
 const digest = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
@@ -26,20 +26,26 @@ function scopeAdmissible(scope: Scope): boolean {
 function configuredScope(config: GatewayBackupConfig, root: string): Scope {
   const path = (value?: string, directory = false) => {
     if (value === undefined) return null;
-    requireThat(isAbsolute(value) && inside(root, resolve(value)), 'gateway_backup_scope_mismatch', 503);
+    const physical = pathInsideStateRoot(value, root); requireThat(physical, 'gateway_backup_scope_mismatch', 503);
     requireThat(runtimeStateRoot(directory ? value : dirname(value)) === root, 'gateway_backup_split_state_root', 503);
-    const result = relative(root, resolve(value)).split(sep).join('/'); requireThat(safeRelative(result), 'gateway_backup_scope_mismatch', 503); return result;
+    const result = relative(root, physical!).split(sep).join('/'); requireThat(safeRelative(result), 'gateway_backup_scope_mismatch', 503); return result;
   };
   const registry = path(config.registry), secrets = path(config.secrets, true);
   const scope = { registry, secrets }; requireThat(scopeAdmissible(scope), 'gateway_backup_scope_mismatch', 503); return scope;
 }
+/** The file itself is never a link; host aliases above it (macOS /var) are not
+ * aliases of the file. readPrivateStateFile also refuses links and hard links. */
 function canonicalFile(path: string, limit: number): Buffer {
-  requireThat(realpathSync(path) === resolve(path), 'gateway_backup_aliased_file', 503);
+  requireThat(realpathSync(path) === join(realpathSync(dirname(resolve(path))), basename(resolve(path))), 'gateway_backup_aliased_file', 503);
   return readPrivateStateFile(path, limit);
 }
 function key(file: string, stateRoot: string, artifact: string): Buffer {
-  requireThat(isAbsolute(file) && isAbsolute(artifact) && !inside(stateRoot, resolve(file)) && resolve(file) !== stateRoot &&
-    !inside(dirname(resolve(artifact)), resolve(file)) && dirname(resolve(file)) !== dirname(resolve(artifact)), 'gateway_backup_key_scope', 503);
+  // Physical spellings throughout: stateRoot is physical, so a raw alias of it
+  // must not place the key "outside" the state it protects.
+  requireThat(isAbsolute(file) && isAbsolute(artifact), 'gateway_backup_key_scope', 503);
+  const keyPath = physicalPath(file), artifactPath = physicalPath(artifact);
+  requireThat(!inside(stateRoot, keyPath) && keyPath !== stateRoot &&
+    !inside(dirname(artifactPath), keyPath) && dirname(keyPath) !== dirname(artifactPath), 'gateway_backup_key_scope', 503);
   const bytes = canonicalFile(file, 32); requireThat(bytes.length === 32, 'gateway_backup_key_invalid', 503); return bytes;
 }
 export function createGatewayRecoveryKey(file: string): { status: 'created'; path: string } {
@@ -123,7 +129,7 @@ function verifyCandidate(snapshot: Snapshot, scratch: string): void {
 export async function exportGatewayBackup(config: GatewayBackupConfig & { keyFile: string; output: string; sourceRevision?: string }): Promise<{ status: 'exported'; path: string; sha256: string }> {
   const captured = canonical(config), root = privateStateDirectory(config.directory); stateIdentity(root);
   const scope = configuredScope(config, root);
-  requireThat(isAbsolute(config.output) && !inside(root, resolve(config.output)), 'gateway_backup_output_scope', 503);
+  requireThat(isAbsolute(config.output) && !inside(root, physicalPath(config.output)), 'gateway_backup_output_scope', 503);
   const recoveryKey = key(config.keyFile, root, config.output);
   let lease: RuntimeStateLease | undefined, scratch: string | undefined;
   try {

@@ -8,14 +8,14 @@
  * freshly provisioned device answering `connector_not_configured`.
  */
 import { GatewayError, requireThat } from './contracts.ts';
-import { dirname, isAbsolute, resolve, sep } from 'node:path';
-import { assertRuntimeStateActive, RESTORE_HOLD_SETTING, runtimeStateRoot } from './runtime-state-lock.ts';
+import { dirname } from 'node:path';
+import { assertRuntimeStateActive, pathInsideStateRoot, RESTORE_HOLD_SETTING, runtimeStateRoot } from './runtime-state-lock.ts';
 import type { UsageLedger } from './ledger.ts';
 import type { HttpTransport, ComposioOrgClient } from './composio-org.ts';
 import type { ModelviaOperatorClient } from './modelvia-keys.ts';
 import { connectorRegistry, ManagedConnectors, type ConnectorOptions } from './connectors.ts';
 import { createGatewayServer, type PortalIdentity } from './http.ts';
-import { composeProvisioning, fileSecretStore, modelviaOperatorState, physicalPath, updateRegistry, type SecretStore } from './provisioning.ts';
+import { composeProvisioning, fileSecretStore, modelviaOperatorState, updateRegistry, type SecretStore } from './provisioning.ts';
 import { composioAuthConfigClient, oauthAppsFromEnv } from './composio-auth-config.ts';
 import { composioAppAdapter } from './composio-apps.ts';
 import { composeOperatorRoutes, composeResaleTermsClient, operatorAccessState } from './office-ai-access.ts';
@@ -75,7 +75,7 @@ export function composeCareCollection(options: { env: NodeJS.ProcessEnv; ledger:
     const root = ledger.db.stateRoot; assertRuntimeStateActive(root);
     for (const [name, directory] of [['REALBUD_GATEWAY_CONNECTOR_REGISTRY', false], ['REALBUD_GATEWAY_SECRETS_DIR', true]] as const) {
       const path = (env[name] ?? '').trim(); if (!path) continue;
-      requireThat(isAbsolute(path) && resolve(path).startsWith(`${root}${sep}`) && physicalPath(path) === resolve(path) && runtimeStateRoot(directory ? path : dirname(path)) === root, 'gateway_state_scope_mismatch', 503);
+      requireThat(pathInsideStateRoot(path, root) && runtimeStateRoot(directory ? path : dirname(path)) === root, 'gateway_state_scope_mismatch', 503);
     }
   }
   const value = (name: string) => (env[name] ?? '').trim();

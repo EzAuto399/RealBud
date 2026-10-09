@@ -25,11 +25,11 @@
  */
 import { composioAuthConfigClient, GMAIL_AUTH_CONFIG_NAME, oauthAppsFromEnv, TOOLKIT_SLUG, type ComposioAuthConfigClient } from './composio-auth-config.ts';
 import { serialized } from './serialized.ts';
-import { withRuntimeStateWriter } from './runtime-state-lock.ts';
+import { physicalPath, withRuntimeStateWriter } from './runtime-state-lock.ts';
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { canonical, exact, GatewayError, id, object, requireThat, type PortalPrincipal } from './contracts.ts';
 import { connectorRegistry, newConnectorCredential, validateConnectorDevices, type ConnectorDevice } from './connectors.ts';
 import { issueDesktopServiceEntitlement, serviceIssuerFromEnv, type DesktopServiceBundle, type ServiceIssuer, type ServiceIssuerState } from './service-entitlement-issuer.ts';
@@ -45,16 +45,9 @@ import { hasCustomerTerms, modelviaKeyClient, ModelviaRotationRefused, type Mode
 // ---------------------------------------------------------------------------
 
 /** Resolve the nearest existing ancestor too: an output file need not exist yet,
- * and aliased parents must not turn two destinations into one. */
-export function physicalPath(path: string): string {
-  let ancestor = resolve(path); const tail: string[] = [];
-  while (!existsSync(ancestor)) {
-    tail.unshift(basename(ancestor)); const parent = dirname(ancestor);
-    if (parent === ancestor) throw new Error('Output location is unavailable.');
-    ancestor = parent;
-  }
-  return join(realpathSync(ancestor), ...tail);
-}
+ * and aliased parents must not turn two destinations into one. One definition,
+ * shared with the runtime-state admission. */
+export { physicalPath };
 
 /** File operations behind every durable publication here; tests inject faults
  * (ENOSPC, a kill) at each boundary. */

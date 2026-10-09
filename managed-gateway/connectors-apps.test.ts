@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ManagedConnectors, newConnectorCredential, validateConnectorDevices, type ConnectorDevice } from './connectors.ts';
+import { MAIL_BINDING_CAPABILITY, ManagedConnectors, newConnectorCredential, validateConnectorDevices, type ConnectorDevice } from './connectors.ts';
 import { composioAuthConfigClient, managedAuthConfigName, oauthAppsFromEnv, type ComposioAuthConfigClient } from './composio-auth-config.ts';
 import { composioAppAdapter, type AppBinding, type ComposioAppAdapter } from './composio-apps.ts';
 import { fixture, reviewedMailParams, gmailProfileTransport } from './testing.ts';
@@ -403,5 +403,83 @@ test('fixed sender profile survives initialize abort, rejects sender overrides a
       await assert.rejects(() => rpc(params), /connector_session_expired/);
     }
     assert.deepEqual(executed, ['acct_gmail_a']);
+  } finally { s.f.close(); }
+});
+
+test('Outlook carries a verified sender and tenant like Gmail; a send with no binding metadata keeps the pre-binding path for one release', async () => {
+  const s = setup(); const warn = console.warn; const warned: string[] = []; console.warn = (line: string) => { warned.push(line); };
+  try {
+    s.set(s.devices().map(d => d.id === 'install-a' ? { ...d, accountId: 'acct_gmail_a', apps: ['gmail', 'outlook'] } : d));
+    let outlookMail: unknown = 'frontdesk@example.test'; const executed: string[] = [], profileReads: string[] = [];
+    const tool = (name: string) => ({ name, description: name, inputSchema: { type: 'object', properties: {} }, policy: 'review' as const });
+    const apps: ComposioAppAdapter = { async authorize() { throw Error('unused'); }, async upsertTrigger() { throw Error('unused'); }, async setTriggerStatus() {},
+      async listAccounts(_binding, slug) { return slug === 'outlook' ? [{ id: 'acct_outlook_a', status: 'ACTIVE' }] : []; },
+      async listTools(_binding, slug) { return [tool(slug === 'outlook' ? 'OUTLOOK_SEND_EMAIL' : 'GMAIL_SEND_EMAIL')]; },
+      async execute(binding, slug, name, args) {
+        if (name === 'OUTLOOK_GET_PROFILE') { profileReads.push(`${binding.accountId}:${JSON.stringify(args)}`); return { content: [{ type: 'text', text: JSON.stringify({ response_data: { id: 'fictional-graph-user', mail: outlookMail, userPrincipalName: 'signin@example.test' } }) }] }; }
+        executed.push(`${slug}:${name}:${binding.accountId}`); return { content: [{ type: 'text', text: '{}' }] };
+      } };
+    const broker = s.make({ apps, access: async binding => ({ checkedAt: '', services: { gmail: { connected: true, status: 'ACTIVE', accounts: [{ id: binding.accountId!, status: 'ACTIVE' }], accountSelectionRequired: false } }, tools: { available: false, names: [] } }) });
+    s.f.ledger.db.run('INSERT INTO connector_office_apps(company,app,state,auth_config,created) VALUES(?,?,?,?,?)', s.f.tenant.companyId, 'outlook', 'ready', 'ac_outlook_managed', s.f.now());
+    const rpc = (id: number, method: string, params?: unknown, session?: string) => broker.handle(s.request(s.a.token, '/v1/connectors/mcp', { jsonrpc: '2.0', id, method, ...(params ? { params } : {}) }, session));
+    const opened = await rpc(1, 'initialize');
+    const result = (opened.body as { result: { capabilities: { experimental: Record<string, unknown> }; realbudMailBindings: { provider: string; accountId: string; companyId?: string; emailAddress?: string }[] } }).result;
+    assert.deepEqual(result.capabilities.experimental[MAIL_BINDING_CAPABILITY], { version: 1, enforcedWhenPresent: true });
+    assert.deepEqual(result.realbudMailBindings.map(({ provider, accountId, companyId, emailAddress }) => ({ provider, accountId, companyId, emailAddress })), [
+      { provider: 'gmail', accountId: 'acct_gmail_a', companyId: 'company-a', emailAddress: 'office@example.test' },
+      { provider: 'outlook', accountId: 'acct_outlook_a', companyId: 'company-a', emailAddress: 'frontdesk@example.test' }]);
+    assert.deepEqual(profileReads, ['acct_outlook_a:{}']);
+    const outlookSend = { name: 'OUTLOOK_SEND_EMAIL', arguments: { to_email: 'tenant@example.test', body: 'Hello', user_id: 'me' } };
+    const reviewed = reviewedMailParams(opened, outlookSend);
+    await rpc(2, 'tools/call', reviewed, opened.session);
+    assert.deepEqual(executed, ['outlook:OUTLOOK_SEND_EMAIL:acct_outlook_a']);
+    await assert.rejects(() => rpc(3, 'tools/call', { ...reviewed, arguments: { ...outlookSend.arguments, from: 'alias@example.test' } }, opened.session), /connector_mail_sender_identity_required/);
+    outlookMail = 'changed@example.test';
+    await assert.rejects(() => rpc(4, 'tools/call', reviewed, opened.session), /connector_mail_sender_identity_changed/);
+    await assert.rejects(() => rpc(5, 'tools/call', { ...outlookSend, _meta: { realbudReviewedMailBinding: 'malformed' } }, opened.session), /connector_mail_review_binding_required/);
+    assert.deepEqual(executed, ['outlook:OUTLOOK_SEND_EMAIL:acct_outlook_a']);
+    // A 0.1.46/0.1.47 desktop attaches no binding: both providers' sends take
+    // the pre-binding path (its own card), and each is logged for retirement.
+    await rpc(6, 'tools/call', outlookSend, opened.session);
+    await rpc(7, 'tools/call', { name: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'tenant@example.test', body: 'Hi' }, _meta: { progressToken: 7 } }, opened.session);
+    assert.deepEqual(executed, ['outlook:OUTLOOK_SEND_EMAIL:acct_outlook_a', 'outlook:OUTLOOK_SEND_EMAIL:acct_outlook_a', 'gmail:GMAIL_SEND_EMAIL:acct_gmail_a']);
+    assert.deepEqual(warned.map(line => JSON.parse(line)), [{ connectorMailSend: 'legacy_unbound', provider: 'outlook' }, { connectorMailSend: 'legacy_unbound', provider: 'gmail' }]);
+  } finally { console.warn = warn; s.f.close(); }
+});
+
+test('an Outlook profile without a usable address leaves Outlook reads working but no reviewed Outlook send', async () => {
+  const s = setup(); try {
+    s.set(s.devices().map(d => d.id === 'install-a' ? { ...d, apps: ['gmail', 'outlook'] } : d));
+    const executed: string[] = [];
+    const apps: ComposioAppAdapter = { async authorize() { throw Error('unused'); }, async upsertTrigger() { throw Error('unused'); }, async setTriggerStatus() {},
+      async listAccounts() { return [{ id: 'acct_outlook_a', status: 'ACTIVE' }]; },
+      async listTools() { return [{ name: 'OUTLOOK_SEND_EMAIL', description: 'send', inputSchema: { type: 'object', properties: {} }, policy: 'review' }, { name: 'OUTLOOK_LIST_MESSAGES', description: 'list', inputSchema: { type: 'object', properties: {} }, policy: 'read' }]; },
+      async execute(_binding, _slug, name) { if (name === 'OUTLOOK_GET_PROFILE') return { content: [{ type: 'text', text: JSON.stringify({ mail: null, userPrincipalName: 'not an address' }) }] }; executed.push(name); return { content: [{ type: 'text', text: '{}' }] }; } };
+    const broker = s.make({ apps });
+    s.f.ledger.db.run('INSERT INTO connector_office_apps(company,app,state,auth_config,created) VALUES(?,?,?,?,?)', s.f.tenant.companyId, 'outlook', 'ready', 'ac_outlook_managed', s.f.now());
+    const rpc = (id: number, method: string, params?: unknown, session?: string) => broker.handle(s.request(s.a.token, '/v1/connectors/mcp', { jsonrpc: '2.0', id, method, ...(params ? { params } : {}) }, session));
+    const opened = await rpc(1, 'initialize');
+    const bindings = (opened.body as { result: { realbudMailBindings: { provider: string; emailAddress?: string }[] } }).result.realbudMailBindings;
+    assert.deepEqual(bindings.map(row => [row.provider, row.emailAddress]), [['outlook', undefined]]);
+    await assert.rejects(() => rpc(2, 'tools/call', { name: 'OUTLOOK_SEND_EMAIL', arguments: {}, _meta: { realbudReviewedMailBinding: bindings[0] } }, opened.session), /connector_mail_sender_identity_required/);
+    await rpc(3, 'tools/call', { name: 'OUTLOOK_LIST_MESSAGES', arguments: {} }, opened.session);
+    assert.deepEqual(executed, ['OUTLOOK_LIST_MESSAGES']);
+  } finally { s.f.close(); }
+});
+
+test('a failing Gmail access read leaves Gmail out of the session while other connected apps continue', async () => {
+  const s = setup(); try {
+    s.set(s.devices().map(d => d.id === 'install-a' ? { ...d, accountId: 'acct_gmail_a', apps: ['gmail', 'xero'] } : d));
+    const broker = s.make({ access: async () => { throw new GatewayError('connector_check_failed', 502); } });
+    s.f.ledger.db.run('INSERT INTO connector_office_apps(company,app,state,auth_config,created) VALUES(?,?,?,?,?)', s.f.tenant.companyId, 'xero', 'ready', 'ac_xero_managed', s.f.now());
+    s.accounts.set('ak_fictional_office_a:ac_xero_managed:installation-install-a', [{ id: 'acct_xero_a', status: 'ACTIVE' }]);
+    const rpc = (id: number, method: string, params?: unknown, session?: string) => broker.handle(s.request(s.a.token, '/v1/connectors/mcp', { jsonrpc: '2.0', id, method, ...(params ? { params } : {}) }, session));
+    const opened = await rpc(1, 'initialize');
+    assert.deepEqual((opened.body as { result: { realbudMailBindings: unknown } }).result.realbudMailBindings, []);
+    const listed = ((await rpc(2, 'tools/list', undefined, opened.session)).body as { result: { tools: { name: string }[] } }).result.tools.map(row => row.name);
+    assert.ok(listed.includes('XERO_LIST_INVOICES') && !listed.some(name => name.startsWith('GMAIL_')), listed.join(','));
+    const reply = await rpc(3, 'tools/call', { name: 'XERO_LIST_INVOICES', arguments: {} }, opened.session);
+    assert.equal((reply.body as { result: { isError?: boolean } }).result.isError, undefined);
+    assert.ok(s.bindings.some(row => row.op === 'execute:XERO_LIST_INVOICES' && row.binding.accountId === 'acct_xero_a'));
   } finally { s.f.close(); }
 });

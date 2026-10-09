@@ -40,6 +40,22 @@ export const MAX_DEVICE_APPS = 64;
 export const DEFAULT_APPS = ['gmail'] as const;
 const appsOf = (device: ConnectorDevice): string[] => device.apps ?? [...DEFAULT_APPS];
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+/** Advertised at session initialize: this gateway verifies a send's reviewed
+ * mail binding whenever the desktop attaches one. */
+export const MAIL_BINDING_CAPABILITY = 'realbud/reviewed-mail-binding';
+/** The primary address from an OUTLOOK_GET_PROFILE result (Graph /me: `mail`,
+ * else the sign-in name a personal account sends as). UNVERIFIED: whether
+ * Composio nests the user under `response_data`; both shapes are read. */
+function outlookAddress(result: Record<string, unknown>): string | undefined {
+  const content = result.content;
+  if (result.isError || !Array.isArray(content) || content.length !== 1 || content[0]?.type !== 'text') return undefined;
+  let value: unknown; try { value = JSON.parse(content[0].text); } catch { return undefined; }
+  const object = (row: unknown): row is Record<string, unknown> => Boolean(row) && typeof row === 'object' && !Array.isArray(row);
+  const user = object(value) && object(value.response_data) ? value.response_data : value;
+  if (!object(user)) return undefined;
+  const address = user.mail ?? user.userPrincipalName;
+  return verifiedMailAddress(address) ? address : undefined;
+}
 const TOKEN = /^rbc_[a-f0-9]{64}$/;
 export function newConnectorCredential() { const token = `rbc_${randomBytes(32).toString('hex')}`; return { token, tokenHash: hash(token) }; }
 
@@ -462,12 +478,19 @@ export class ManagedConnectors {
       current(); return bindings.at(-1)!;
     };
     let gmailProfile: ((profileSignal: AbortSignal) => Promise<string | undefined>) | undefined;
+    let outlookProfile: ((profileSignal: AbortSignal) => Promise<string | undefined>) | undefined;
     const gmailBinding = appsOf(device).includes('gmail') ? this.binding(device, source) : undefined;
     if (gmailBinding) {
       const generation = gmailBinding.accountId ? this.mailGeneration(device, 'gmail', source, gmailBinding.accountId) : null;
-      const access = await (this.options.access ?? getGmailReadOnlyAccess)({ ...gmailBinding, assertAuthority: current }); current();
+      // As before mail bindings: a failing Gmail access read only leaves Gmail
+      // without a verified binding (no reviewed send), and its tools out of a
+      // listing that has other apps; Outlook, Calendar and the rest continue.
+      // An authority change still refuses through current().
+      let access: Awaited<ReturnType<typeof getGmailReadOnlyAccess>> | undefined;
+      try { access = await (this.options.access ?? getGmailReadOnlyAccess)({ ...gmailBinding, assertAuthority: current }); } catch { access = undefined; }
+      current();
       if (gmailBinding.accountId) requireThat(this.mailGeneration(device, 'gmail', source, gmailBinding.accountId) === generation, 'connector_binding_changed', 409);
-      const account = access.services.gmail?.connected ? access.services.gmail.accounts.find(row => row.id === gmailBinding.accountId && row.status === 'ACTIVE') : undefined;
+      const account = access?.services.gmail?.connected ? access.services.gmail.accounts.find(row => row.id === gmailBinding.accountId && row.status === 'ACTIVE') : undefined;
       if (account) {
         const captured = capture('gmail', account);
         // This is the existing fixed Gmail reader: it verifies the OAuth config,
@@ -500,7 +523,22 @@ export class ManagedConnectors {
       const status = await this.appStatus(device, app, signal, current); current();
       if (app === 'outlook' && before) requireThat(this.mailGeneration(device, app, source, before) === generation, 'connector_binding_changed', 409);
       if (status.service.connected && status.binding) others.set(app, { binding: status.binding, tools: status.tools });
-      if (app === 'outlook' && status.service.connected) capture('outlook', status.service.accounts[0]!);
+      if (app === 'outlook' && status.service.connected && status.binding) {
+        const captured = capture('outlook', status.service.accounts[0]!), outlookBinding = status.binding;
+        // Composio's Outlook toolkit has no account-bound fixed reader like
+        // Gmail's, so the generic adapter runs the read-only OUTLOOK_GET_PROFILE
+        // (Microsoft Graph /me) with fixed empty arguments on this connected
+        // account only. Only its primary address is kept, never caller input.
+        outlookProfile = async (profileSignal: AbortSignal) => {
+          let result: Record<string, unknown>;
+          try { result = await this.apps.execute({ ...outlookBinding, assertAuthority: current }, 'outlook', 'OUTLOOK_GET_PROFILE', {}, profileSignal); }
+          catch { current(); return undefined; }
+          current();
+          return outlookAddress(result);
+        };
+        const address = await outlookProfile(signal); current();
+        if (address) captured.emailAddress = address;
+      }
     }
     // Longest namespace wins, so `GOOGLE_CALENDAR_…` is not read as `GOOGLE_…`.
     const namespaces = [...others.keys()].map(app => ({ app, prefix: `${app.toUpperCase().replaceAll('-', '_')}_` })).sort((a, b) => b.prefix.length - a.prefix.length);
@@ -511,7 +549,13 @@ export class ManagedConnectors {
       current();
       if (method === 'initialize') {
         const result = gmail ? await gmail.request(method, params, callSignal) : { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'Bud connected apps', version: '1.0.0' } };
-        current(); return { ...result, realbudMailBindings: parseConnectedMailBindings(bindings) };
+        current();
+        // MCP's experimental capability slot: a desktop reads it before a send;
+        // the desktop broker replaces `capabilities`, so a worker never sees it.
+        const capabilities = (result.capabilities && typeof result.capabilities === 'object' ? result.capabilities : {}) as Record<string, unknown>;
+        const experimental = (capabilities.experimental && typeof capabilities.experimental === 'object' ? capabilities.experimental : {}) as Record<string, unknown>;
+        return { ...result, capabilities: { ...capabilities, experimental: { ...experimental, [MAIL_BINDING_CAPABILITY]: { version: 1, enforcedWhenPresent: true } } },
+          realbudMailBindings: parseConnectedMailBindings(bindings) };
       }
       if (method === 'ping') return {};
       if (method === 'tools/list') {
@@ -530,16 +574,23 @@ export class ManagedConnectors {
       const call = (params && typeof params === 'object' && !Array.isArray(params) ? params : {}) as { name?: unknown; arguments?: unknown; _meta?: unknown };
       requireThat(Object.keys(call).every(key => ['name', 'arguments', '_meta'].includes(key)), 'invalid_connector_call', 400);
       if (typeof call.name === 'string' && unsupportedConnectedMailTool(call.name)) return errorResult('This mail tool has no complete reviewed message/account contract. Use a supported direct mail tool.');
-      if (typeof call.name === 'string' && MAIL_SENDS.has(call.name)) {
+      const meta = call._meta && typeof call._meta === 'object' && !Array.isArray(call._meta) ? call._meta as Record<string, unknown> : undefined;
+      if (typeof call.name === 'string' && MAIL_SENDS.has(call.name) && meta?.realbudReviewedMailBinding === undefined) {
+        // One-release compatibility (TODO remove after 0.1.46/0.1.47 desktops
+        // retire): a send with no binding metadata at all keeps the pre-binding
+        // path for that call, gated by that desktop's own per-message card.
+        // Any metadata present, even malformed, is enforced in full below.
+        console.warn(JSON.stringify({ connectorMailSend: 'legacy_unbound', provider: call.name.startsWith('OUTLOOK_') ? 'outlook' : 'gmail' }));
+      } else if (typeof call.name === 'string' && MAIL_SENDS.has(call.name)) {
         const expected = bindings.find(row => call.name!.toString().startsWith(`${row.provider.toUpperCase()}_`));
         let reviewed: ConnectedMailBinding[];
-        try { reviewed = parseConnectedMailBindings([call._meta && typeof call._meta === 'object' ? (call._meta as Record<string, unknown>).realbudReviewedMailBinding : null]); }
+        try { reviewed = parseConnectedMailBindings([meta?.realbudReviewedMailBinding ?? null]); }
         catch { throw new GatewayError('connector_mail_review_binding_required', 409); }
         requireThat(expected && canonical(reviewed[0]) === canonical(expected), 'connector_mail_review_binding_changed', 409);
         requireThat(expected?.companyId && expected.emailAddress && connectedMailSenderArgsAllowed(call.arguments), 'connector_mail_sender_identity_required', 409);
         // Profile failure/address drift is a pre-adapter refusal; no approved
         // dispatch is sent against a different or unidentified sender.
-        const currentAddress = expected.provider === 'gmail' ? await gmailProfile?.(callSignal) : undefined;
+        const currentAddress = await (expected.provider === 'gmail' ? gmailProfile : outlookProfile)?.(callSignal);
         current(); requireThat(currentAddress === expected.emailAddress, 'connector_mail_sender_identity_changed', 409);
       }
       // Internal broker authority is consumed here; no worker metadata reaches
