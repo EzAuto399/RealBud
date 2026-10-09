@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, linkSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
@@ -116,6 +116,19 @@ test('private key admission refuses links, loose permissions and state/export co
     chmodSync(s.keyFile, 0o644); await assert.rejects(() => exportGatewayBackup(s.config), /gateway_state_file_permissions/); chmodSync(s.keyFile, 0o600);
     const inState = join(s.root, 'key'); writeFileSync(inState, readFileSync(s.keyFile), { mode: 0o600 }); await assert.rejects(() => exportGatewayBackup({ ...s.config, keyFile: inState }), /gateway_backup_key_scope/);
     await assert.rejects(() => exportGatewayBackup({ ...s.config, output: join(s.outer, 'recovery', 'archive') }), /gateway_backup_key_scope/);
+  } finally { s.close(); }
+});
+test('an operator-chosen output or key folder open to others is refused and never re-permissioned', async () => {
+  const s = setup(); try {
+    const shared = join(s.outer, 'shared-exports'), sticky = join(s.outer, 'tmp-like');
+    mkdirSync(shared); chmodSync(shared, 0o755); mkdirSync(sticky); chmodSync(sticky, 0o1777);
+    await assert.rejects(() => exportGatewayBackup({ ...s.config, output: join(shared, 'archive.json') }), /gateway_state_permissions/);
+    assert.throws(() => createGatewayRecoveryKey(join(sticky, 'key')), /gateway_state_permissions/);
+    assert.equal(statSync(shared).mode & 0o7777, 0o755); assert.deepEqual(readdirSync(shared), []);
+    assert.equal(statSync(sticky).mode & 0o7777, 0o1777); assert.deepEqual(readdirSync(sticky), []);
+    // The refused export released maintenance and left no scratch behind.
+    acquireRuntimeStateLease(s.root, 'maintenance').release();
+    assert.deepEqual(readdirSync(s.root).filter(name => name.startsWith('.gateway-')), []);
   } finally { s.close(); }
 });
 test('maintenance refuses active database/unknown owners, out-of-root or orphan secret scope and after-await config drift', async () => {

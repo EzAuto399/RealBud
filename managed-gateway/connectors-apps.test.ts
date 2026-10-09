@@ -443,6 +443,11 @@ test('Outlook carries a verified sender and tenant like Gmail; a send with no bi
     await rpc(6, 'tools/call', outlookSend, opened.session);
     await rpc(7, 'tools/call', { name: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'tenant@example.test', body: 'Hi' }, _meta: { progressToken: 7 } }, opened.session);
     assert.deepEqual(executed, ['outlook:OUTLOOK_SEND_EMAIL:acct_outlook_a', 'outlook:OUTLOOK_SEND_EMAIL:acct_outlook_a', 'gmail:GMAIL_SEND_EMAIL:acct_gmail_a']);
+    // That path still sends only as the account itself: no sender override.
+    for (const [id, args] of [[8, { ...outlookSend.arguments, from: 'alias@example.test' }], [9, { ...outlookSend.arguments, user_id: 'someone@example.test' }], [10, { ...outlookSend.arguments, sendAs: { mailbox: 'shared@example.test' } }]] as const)
+      await assert.rejects(() => rpc(id, 'tools/call', { name: 'OUTLOOK_SEND_EMAIL', arguments: args }, opened.session), /connector_mail_sender_identity_required/);
+    await assert.rejects(() => rpc(11, 'tools/call', { name: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'tenant@example.test', body: 'Hi', from_email: 'alias@example.test' } }, opened.session), /connector_mail_sender_identity_required/);
+    assert.equal(executed.length, 3);
     assert.deepEqual(warned.map(line => JSON.parse(line)), [{ connectorMailSend: 'legacy_unbound', provider: 'outlook' }, { connectorMailSend: 'legacy_unbound', provider: 'gmail' }]);
   } finally { console.warn = warn; s.f.close(); }
 });

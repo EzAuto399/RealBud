@@ -576,10 +576,13 @@ export class ManagedConnectors {
       if (typeof call.name === 'string' && unsupportedConnectedMailTool(call.name)) return errorResult('This mail tool has no complete reviewed message/account contract. Use a supported direct mail tool.');
       const meta = call._meta && typeof call._meta === 'object' && !Array.isArray(call._meta) ? call._meta as Record<string, unknown> : undefined;
       if (typeof call.name === 'string' && MAIL_SENDS.has(call.name) && meta?.realbudReviewedMailBinding === undefined) {
-        // One-release compatibility (TODO remove after 0.1.46/0.1.47 desktops
-        // retire): a send with no binding metadata at all keeps the pre-binding
-        // path for that call, gated by that desktop's own per-message card.
-        // Any metadata present, even malformed, is enforced in full below.
+        // One-release compatibility (9 October 2026: remove this branch once
+        // 0.1.48 is the minimum desktop): a send with no binding metadata at all
+        // keeps the pre-binding path for that call, gated by that desktop's own
+        // per-message card. It still sends only as the connected account itself
+        // (`user_id: "me"`), never a From/sender/mailbox override. Any metadata
+        // present, even malformed, is enforced in full below.
+        requireThat(connectedMailSenderArgsAllowed(call.arguments), 'connector_mail_sender_identity_required', 409);
         console.warn(JSON.stringify({ connectorMailSend: 'legacy_unbound', provider: call.name.startsWith('OUTLOOK_') ? 'outlook' : 'gmail' }));
       } else if (typeof call.name === 'string' && MAIL_SENDS.has(call.name)) {
         const expected = bindings.find(row => call.name!.toString().startsWith(`${row.provider.toUpperCase()}_`));

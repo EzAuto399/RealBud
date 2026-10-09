@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, linkSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir, uptime } from "node:os";
@@ -78,6 +78,39 @@ describe("connected-app durable operation receipts", () => {
     expect(() => store.acknowledge(live.id, 0)).toThrow(/changed/);
     expect(() => store.acknowledge('00000000-0000-4000-8000-00000000ffff', 0)).toThrow(/No such/);
   });
+  it('lets the owner mark checked only an identified receipt from an earlier company or gateway, never a live one or one of the current realm', () => {
+    const file = tempFile(), store = new ConnectedAppOperationStore({ file, workspaceId });
+    const earlier = store.start(mailInput(store)); store.finish(earlier.id, 'unknown');
+    const current = ['e'.repeat(64)];
+    for (const realms of [undefined, [], ['not-a-digest'], ['f'.repeat(64)], ['e'.repeat(64), 'f'.repeat(64)]])
+      expect(() => store.acknowledge(earlier.id, 1, realms)).toThrow(/Inspect and record mail outcome/);
+    expect(() => store.acknowledge(earlier.id, 0, current)).toThrow(/changed/);
+    const checked = store.acknowledge(earlier.id, 1, current);
+    expect(checked).toMatchObject({ status: 'unknown', revision: 2, effectDigest: 'c'.repeat(64), acknowledgement: { source: 'owner-checked-app' } });
+    expect(store.acknowledge(earlier.id, 1, current)).toEqual(checked);
+    expect(new ConnectedAppOperationStore({ file, workspaceId }).list().find(row => row.id === earlier.id)).toEqual(checked);
+    // An earlier realm's provider-reported failure qualifies too; a live start never does.
+    const failed = store.start({ ...mailInput(store), effectDigest: '1'.repeat(64) }); store.finish(failed.id, 'failed');
+    expect(store.acknowledge(failed.id, 1, current).acknowledgement?.source).toBe('owner-checked-app');
+    const live = store.start({ ...mailInput(store), effectDigest: '2'.repeat(64) });
+    expect(() => store.acknowledge(live.id, 0, current)).toThrow(/changed/);
+    // Back in its own realm the exact message is held until Inspect records it.
+    expect(() => store.start(mailInput(store))).toThrow(/unresolved outcome/);
+    const reconciled = store.reconcile(earlier.id, 2, 'not-sent', { accountDigest: 'a'.repeat(64), realmDigest: 'f'.repeat(64), originalBindingDigest: 'b'.repeat(64), recoveryBindingDigest: 'b'.repeat(64), workspaceDigest: store.workspaceDigest });
+    expect(reconciled).toMatchObject({ acknowledgement: { source: 'owner-checked-app' }, reconciliation: { outcome: 'not-sent' } });
+    expect(new ConnectedAppOperationStore({ file, workspaceId }).list().find(row => row.id === earlier.id)).toEqual(reconciled);
+  });
+  it('finds an unresolved receipt for the same exact message saved under an earlier realm, matched under its own account identity', () => {
+    const store = new ConnectedAppOperationStore({ file: tempFile(), workspaceId });
+    const effectFor = (message: string) => (account: string) => createHash('sha256').update(`${account}:${message}`).digest('hex');
+    const earlier = store.start({ ...mailInput(store), effectDigest: effectFor('fictional message')('a'.repeat(64)) }); store.finish(earlier.id, 'unknown');
+    expect(store.earlierRealmMailEffect('e'.repeat(64), effectFor('fictional message'))?.id).toBe(earlier.id);
+    expect(store.earlierRealmMailEffect('e'.repeat(64), effectFor('another fictional message'))).toBeUndefined();
+    // In its own realm the exact effect matches directly and holds instead.
+    expect(store.earlierRealmMailEffect('f'.repeat(64), effectFor('fictional message'))).toBeUndefined();
+    store.acknowledge(earlier.id, 1, ['e'.repeat(64)]);
+    expect(store.earlierRealmMailEffect('e'.repeat(64), effectFor('fictional message'))).toBeUndefined();
+  });
   it.each([false, true])('treats an older provider-reported failure as final, partial batch=%s, without inventing not-sent evidence', partial => {
     const file = tempFile(), old = new ConnectedAppOperationStore({ file });
     const row = old.start({ ...input, toolName: partial ? 'COMPOSIO_MULTI_EXECUTE_TOOL' : 'GMAIL_SEND_EMAIL', toolSlugs: partial ? ['GMAIL_SEND_EMAIL'] : [] });
@@ -88,7 +121,7 @@ describe("connected-app durable operation receipts", () => {
     expect(saved.status).toBe('failed'); expect(saved.reconciliation).toBeUndefined(); expect(saved.acknowledgement).toBeUndefined();
   });
   it.each([
-    ['an identified row', { effectDigest: 'c'.repeat(64) }],
+    ['an identified row without a realm', { effectDigest: 'c'.repeat(64) }],
     ['a failed row', { status: 'failed' }],
     ['an unknown source', { acknowledgement: { at: 5, source: 'model' } }],
     ['an extra field', { acknowledgement: { at: 5, source: 'owner-checked-app', outcome: 'sent' } }],
@@ -169,6 +202,17 @@ describe("connected-app durable operation receipts", () => {
     expect(store.list()).toHaveLength(1);
     rmSync(`${file}.lock`);
     expect(store.start(input).status).toBe('started');
+  });
+  it('names its owner in the lock before the slow privacy step, so a young lock is never mistaken for an empty one', () => {
+    const file = tempFile(), store = new ConnectedAppOperationStore({ file, workspaceId });
+    const actual = atomic.restrictNewSync, seen: string[] = [];
+    vi.spyOn(atomic, 'restrictNewSync').mockImplementation(created => {
+      if (created.some(entry => entry.path === `${file}.lock`)) seen.push(readFileSync(`${file}.lock`, 'utf8'));
+      actual(created);
+    });
+    store.deny(input);
+    expect(seen).toHaveLength(1);
+    expect(JSON.parse(seen[0])).toMatchObject({ version: 1, pid: process.pid, bootUptime: expect.any(Number) });
   });
   it('records its owner in the lock and removes only its own lock', () => {
     const file = tempFile(), store = new ConnectedAppOperationStore({ file, workspaceId });

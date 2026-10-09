@@ -52,16 +52,20 @@ export function pathInsideStateRoot(path: string, root: string): string | undefi
 const sameObject = (a: Stats, b: Stats) => a.dev === b.dev && a.ino === b.ino;
 /** A real folder (never a link) owned by this account, without group/other
  * access, returned by its physical path so every comparison and lease uses one
- * spelling. An owned folder whose only problem is group/other access (a Fly
- * volume root is 0755) is tightened to 0700 through a no-follow descriptor of
- * the object lstat saw, as the desktop's private storage does; a link, another
- * owner or another type stays refused. Files never self-repair. */
-export function privateStateDirectory(path: string): string {
+ * spelling. A folder open to group/other is refused unchanged, except with
+ * `tighten`, which only the configured state root and its lease folder pass (a
+ * Fly volume root is 0755): an owned folder whose only problem is group/other
+ * access is then tightened to 0700 through a no-follow descriptor of the object
+ * lstat saw, as the desktop's private storage does. Operator-chosen key, output
+ * and scratch folders are never changed. A link, another owner or another type
+ * stays refused. Files never self-repair. */
+export function privateStateDirectory(path: string, options: { tighten?: boolean } = {}): string {
   const requested = resolve(path);
   if (!existsSync(requested)) mkdirSync(requested, { recursive: true, mode: 0o700 });
   const stat = lstatSync(requested);
   requireThat(stat.isDirectory() && !stat.isSymbolicLink() && (process.getuid === undefined || stat.uid === process.getuid()), 'gateway_state_permissions', 503);
   if (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) {
+    requireThat(options.tighten === true, 'gateway_state_permissions', 503);
     const fd = openSync(requested, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_DIRECTORY ?? 0));
     try { requireThat(sameObject(stat, fstatSync(fd)), 'gateway_state_permissions', 503); fchmodSync(fd, 0o700); } finally { closeSync(fd); }
     console.warn(JSON.stringify({ gatewayState: 'tightened_to_owner_only', directory: requested }));
@@ -169,7 +173,7 @@ function recover(path: string): void {
 export interface RuntimeStateLease { readonly root: string; readonly stateId: string; assertCurrent(): void; release(): void }
 export function acquireRuntimeStateLease(directory: string, kind: 'writer' | 'maintenance' = 'writer'): RuntimeStateLease {
   requireThat(isMainThread, 'gateway_state_worker_thread', 503);
-  const root = privateStateDirectory(directory), identity = stateIdentity(root), leases = privateStateDirectory(join(root, LEASES));
+  const root = privateStateDirectory(directory, { tighten: true }), identity = stateIdentity(root), leases = privateStateDirectory(join(root, LEASES), { tighten: true });
   requireThat(runtimeStateRoot(root) === root, 'gateway_state_split_root', 503);
   const token = randomBytes(16).toString('hex'), record = (type: Owner['kind']) => Buffer.from(JSON.stringify({ version: 2, host: hostname(), pid: process.pid, boot: boot(), token, kind: type }));
   const gate = join(leases, 'gate');

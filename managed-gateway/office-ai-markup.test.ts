@@ -19,7 +19,8 @@ import { createGatewayServer } from './http.ts';
 import { invoiceHtml, presentInvoice } from './invoice-html.ts';
 import { modelviaClientBilling } from './modelvia-client-billing.ts';
 import { closeOfficeMonth, officeMargins } from './office-ai-billing.ts';
-import { officeAiTermsRoutes, officeMarkup, syncOfficeResalePolicy, withOfficeMarkup } from './office-ai-terms.ts';
+import { officeAiTermsRoutes, officeMarkup, POLICY_SYNCED, syncOfficeResalePolicy, withOfficeMarkup } from './office-ai-terms.ts';
+import { latestResaleAcceptance } from './commercial-terms.ts';
 import { AI_USAGE_CSV_HEADER, officeAiUsageCsv } from './office-ai-usage-csv.ts';
 import { OPERATOR_ROLE } from './operator-token.ts';
 import { bindOfficeCustomer } from './provisioning.ts';
@@ -432,6 +433,27 @@ test('a latest failed sync after awaited Modelvia invoice read aborts the final 
   assert.equal(f.db.all('SELECT id FROM invoices').length, 0);
   assert.equal(f.db.all('SELECT modelvia_invoice FROM office_ai_consolidations').length, 0);
   assert.equal(f.db.all('SELECT invoice FROM invoice_email_outbox').length, 0);
+});
+
+test('a pre-proof (legacy) receipt reads synced with legacyProof, and the next sync re-proves an older anchor that relied on one', async () => {
+  const { f, m, accept, sync } = offices();
+  accept('company-a', 'care-a1', 2000); await sync('company-a');
+  const first = latestResaleAcceptance(f.ledger, 'company-a')!;
+  assert.deepEqual([officeMarkup(f.ledger, 'company-a').policy, officeMarkup(f.ledger, 'company-a').legacyProof], ['synced', false]);
+  // The persisted shape a pre-proof gateway journalled: newest for this anchor wins.
+  f.ledger.db.append('company-a', POLICY_SYNCED, null, f.now(), { markupBasisPoints: 2000, acceptanceReference: first.acceptanceReference, state: 'active', created: true,
+    policyId: String(m.policies[0].id), clientMarkupBasisPoints: 2000, effectiveAt: m.policies[0].effectiveAt });
+  assert.deepEqual([officeMarkup(f.ledger, 'company-a').policy, officeMarkup(f.ledger, 'company-a').legacyProof], ['synced', true]);
+  accept('company-a', 'care-a2', 3000); m.setServerNow(m.serverNow + 1000);
+  const before = m.policies.length;
+  assert.notEqual((await sync('company-a')).state, 'failed');
+  assert.equal(m.policies.length, before + 1, 'only the new acceptance appends; the older anchor is re-proved by read only');
+  const reproved = f.db.all<{ body: string }>("SELECT body FROM events WHERE kind='ai_resale_policy_synced' ORDER BY seq").map(row => JSON.parse(row.body)).filter(row => row.historical);
+  assert.deepEqual(reproved.map(row => [row.acceptanceReference, row.clientMarkupBasisPoints, row.boundCustomerId, typeof row.verifiedAt]), [[first.acceptanceReference, 2000, 'realbud-company-a', 'number']]);
+  assert.equal(officeMarkup(f.ledger, 'company-a').legacyProof, false);
+  // Proved: a later sync reads no older anchor again.
+  await sync('company-a');
+  assert.equal(f.db.all<{ body: string }>("SELECT body FROM events WHERE kind='ai_resale_policy_synced' ORDER BY seq").map(row => JSON.parse(row.body)).filter(row => row.historical).length, 1);
 });
 
 test('newer anchor sync refreshes a formerly pending historical policy by read only, enabling one-time consolidation of a later-finalized month', async () => {

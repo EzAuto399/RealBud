@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { Worker } from 'node:worker_threads';
-import { acquireRuntimeStateLease, pathInsideStateRoot, RESTORE_HOLD_FILE, RESTORE_HOLD_SETTING, runtimeStateRoot } from './runtime-state-lock.ts';
+import { acquireRuntimeStateLease, pathInsideStateRoot, privateStateDirectory, publishPrivateStateFile, RESTORE_HOLD_FILE, RESTORE_HOLD_SETTING, runtimeStateRoot } from './runtime-state-lock.ts';
 import { LedgerDatabase } from './database.ts';
 import { fileSecretStore, updateRegistry } from './provisioning.ts';
 
@@ -104,6 +104,22 @@ test('an owned state folder open to group/other (a Fly volume root) is tightened
     assert.throws(() => new LedgerDatabase(join(root, 'ledger.sqlite')), /gateway_state_file_permissions/);
     assert.equal(statSync(join(root, 'ledger.sqlite')).mode & 0o777, 0o644);
   } finally { console.warn = warn; rmSync(root, { recursive: true, force: true }); }
+});
+test('only the state root and its lease folder are tightened; any other folder open to others is refused and left as it was', () => {
+  const base = mkdtempSync(join(tmpdir(), 'gateway-loose-')); const warn = console.warn; console.warn = () => {};
+  try {
+    const output = join(base, 'operator-output'), sticky = join(base, 'tmp-like');
+    mkdirSync(output); chmodSync(output, 0o755); mkdirSync(sticky); chmodSync(sticky, 0o1777);
+    for (const [folder, mode] of [[output, 0o755], [sticky, 0o1777]] as const) {
+      assert.throws(() => privateStateDirectory(folder), /gateway_state_permissions/);
+      assert.throws(() => publishPrivateStateFile(join(folder, 'archive.json'), Buffer.from('{}')), /gateway_state_permissions/);
+      assert.equal(statSync(folder).mode & 0o7777, mode); assert.deepEqual(readdirSync(folder), []);
+    }
+    const root = join(base, 'state'); acquireRuntimeStateLease(root).release();
+    chmodSync(root, 0o755); chmodSync(join(root, '.realbud-gateway-leases'), 0o755);
+    acquireRuntimeStateLease(root).release();
+    assert.equal(statSync(root).mode & 0o777, 0o700); assert.equal(statSync(join(root, '.realbud-gateway-leases')).mode & 0o777, 0o700);
+  } finally { console.warn = warn; rmSync(base, { recursive: true, force: true }); }
 });
 test('an interrupted restore marker alone holds every writer before any state exists', () => {
   const root = mkdtempSync(join(tmpdir(), 'gateway-progress-')); try {

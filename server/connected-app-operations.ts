@@ -2,7 +2,7 @@
 // card answered from a paired phone, who answered it and where. Tool arguments,
 // provider results, account details and credentials stay out.
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, constants, fstatSync, linkSync, lstatSync, openSync, readSync, renameSync, unlinkSync, writeSync, type Stats } from "node:fs";
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readSync, renameSync, unlinkSync, writeSync, type Stats } from "node:fs";
 import { uptime } from "node:os";
 import { dirname, join } from "node:path";
 import { assertOwnPrivate, mkdirPrivateSync, openPrivateFileSync, restrictNewSync, writeFileAtomic } from "./atomic.ts";
@@ -51,7 +51,7 @@ const DETAILS = {
 const RECOVERY = "Connected-app history needs recovery. App actions are paused. Check disk space and file access, then restore the saved history if needed and restart RealBud.";
 const LOCK_BUSY = "Connected-app history is being updated by another RealBud process. Nothing new was sent. Try again in a moment.";
 /** An unreadable lock this old cannot belong to a live writer, which records its
- * owner immediately after creating the file. */
+ * owner immediately after creating the file, before any other step. */
 const LOCK_GRACE_MS = 5_000;
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 const sendsMail = (row: Pick<ConnectedAppOperation, "toolName" | "toolSlugs">) => MAIL_SENDS.has(row.toolName) || row.toolSlugs.some(slug => MAIL_SENDS.has(slug));
@@ -115,7 +115,8 @@ function validateOperationSnapshot(rows: unknown[]): ConnectedAppOperation[] {
             !timestamp(row.reconciliation.at) || row.reconciliation.at < row.startedAt || row.reconciliation.source !== "manual-app-inspection" ||
             !opaqueDigest(row.reconciliation.recoveryBindingDigest) || Object.keys(row.reconciliation).some(key => !["outcome", "at", "source", "recoveryBindingDigest"].includes(key)) || !row.effectDigest || !["unknown", "failed"].includes(row.status))) ||
           (row.acknowledgement !== undefined && (!record(row.acknowledgement) || Object.keys(row.acknowledgement).sort().join(",") !== "at,source" || row.acknowledgement.source !== "owner-checked-app" ||
-            !timestamp(row.acknowledgement.at) || row.acknowledgement.at < row.startedAt || row.effectDigest !== undefined || row.status !== "unknown")) ||
+            !timestamp(row.acknowledgement.at) || row.acknowledgement.at < row.startedAt ||
+            (row.effectDigest === undefined ? row.status !== "unknown" : !row.realmDigest || !["unknown", "failed"].includes(row.status)))) ||
           Object.keys(row).some(key => !["id", "threadId", "toolName", "toolSlugs", "status", "startedAt", "finishedAt", "detail", "approval", "accountDigest", "realmDigest", "bindingDigest", "effectDigest", "reviewDigest", "workspaceDigest", "repeatOf", "revision", "reconciliation", "acknowledgement"].includes(key))) throw failure();
         ids.add(row.id);
         return clone(row as unknown as ConnectedAppOperation);
@@ -302,6 +303,19 @@ export class ConnectedAppOperationStore {
     if (unresolved) throw conflict(`This exact reviewed message already has an unresolved outcome (operation ${unresolved.id}). Inspect that account in the mail app and record its outcome in Connected apps before trying again. Nothing new was sent.`);
     return rows.reverse().find(row => row.status === "succeeded" || row.reconciliation?.outcome === "sent");
   }
+  /** An unresolved receipt for this exact message saved under an earlier
+   * company or managed gateway. The effect digest binds the realm, so the
+   * caller recomputes this message's effect under each such receipt's own saved
+   * account identity (`effectFor`); a match is the same recipients, subject,
+   * body and attachments. It does not hold: the send card warns. */
+  earlierRealmMailEffect(realmDigest: string, effectFor: (accountDigest: string) => string): ConnectedAppOperation | undefined {
+    this.assertAvailable(); this.reload();
+    const workspaceDigest = this.workspaceDigest;
+    const row = this.rows.find(item => item.effectDigest && item.accountDigest && item.realmDigest && item.realmDigest !== realmDigest && item.workspaceDigest === workspaceDigest &&
+      (item.status === "started" || ((item.status === "unknown" || item.status === "failed") && !item.reconciliation && !item.acknowledgement)) &&
+      effectFor(item.accountDigest) === item.effectDigest);
+    return row && clone(row);
+  }
   /** Older history and older gateways leave mail receipts without an account
    * identity; any such unconfirmed send holds new mail until the owner checks it. */
   assertNoHeldLegacyMail(): void { this.assertAvailable(); this.reload(); this.holdLegacyMail(); }
@@ -310,16 +324,24 @@ export class ConnectedAppOperationStore {
     if (held) throw conflict(legacyHeld(held.id));
   }
 
-  /** Owner-only GUI step for a receipt with no account identity: the owner
-   * checked the app. It never changes the recorded provider outcome. */
-  acknowledge(id: string, expectedRevision: number): ConnectedAppOperation {
+  /** Owner-only GUI step: the owner checked the app. It never changes the
+   * recorded provider outcome. For a receipt with no account identity it is the
+   * only release. An identified receipt qualifies only while its company and
+   * managed gateway (realm) are none of `currentRealms`, the realms the caller
+   * just read from the current connection: such a receipt can no longer be
+   * checked against its original connection. In its own realm, Inspect and
+   * record mail outcome is the only path. */
+  acknowledge(id: string, expectedRevision: number, currentRealms?: readonly string[]): ConnectedAppOperation {
     return this.locked(() => {
       const row = this.rows.find(item => item.id === id);
       if (!row) throw Object.assign(new Error("No such app operation."), { status: 404 });
-      if (row.effectDigest) throw conflict("This receipt has saved account details. Use Inspect and record mail outcome instead.");
+      if (row.effectDigest) {
+        if (!row.realmDigest || !Array.isArray(currentRealms) || !currentRealms.length || !currentRealms.every(opaqueDigest) || currentRealms.includes(row.realmDigest) || row.workspaceDigest !== this.workspaceDigest)
+          throw conflict("This receipt has saved account details. Use Inspect and record mail outcome instead.");
+      }
       if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw conflict("Invalid recovery decision.");
       if (row.acknowledgement && (row.revision ?? 0) === expectedRevision + 1) return clone(row);
-      if (row.status !== "unknown" || row.acknowledgement || (row.revision ?? 0) !== expectedRevision)
+      if (!(row.status === "unknown" || (row.effectDigest && row.status === "failed")) || row.reconciliation || row.acknowledgement || (row.revision ?? 0) !== expectedRevision)
         throw conflict("This app operation changed. Refresh recent activity before marking it checked.");
       const next: ConnectedAppOperation = { ...row, revision: expectedRevision + 1, acknowledgement: { at: Math.max(row.startedAt, this.now()), source: "owner-checked-app" } };
       this.commit(this.rows.map(item => item.id === id ? next : item)); return clone(next);
@@ -392,8 +414,10 @@ export class ConnectedAppOperationStore {
     privateDirectory(dirname(this.file));
     const lock = `${this.file}.lock`, descriptor = acquireLock(lock);
     try {
+      // Name the owner before anything slow: an empty lock older than
+      // LOCK_GRACE_MS is reclaimable, and the Windows ACL step can take seconds.
+      writeSync(descriptor, JSON.stringify({ version: 1, pid: process.pid, bootUptime: uptime() })); fsyncSync(descriptor);
       restrictNewSync([{ path: lock, kind: "file" }]);
-      writeSync(descriptor, JSON.stringify({ version: 1, pid: process.pid, bootUptime: uptime() }));
       this.reload(); return action();
     } finally { releaseLock(lock, descriptor); }
   }

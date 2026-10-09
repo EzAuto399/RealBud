@@ -97,15 +97,20 @@ export interface OfficeMarkup {
   nextTermsBasisPoints: number | null;
   /** Whether Modelvia was last seen pricing at the accepted markup. */
   policy: 'synced' | 'sync_pending' | 'sync_failed' | 'not_synced' | null;
+  /** `synced` only on a pre-proof receipt (no provider readback): invoices
+   * still close on it, and the operator's markup sync replaces it with proof. */
+  legacyProof: boolean;
 }
 export function officeMarkup(ledger: UsageLedger, companyId: string, defaultBasisPoints?: number): OfficeMarkup {
   const accepted = latestResaleAcceptance(ledger, companyId), proposed = proposedOfficeMarkup(ledger, companyId);
   const customer = policyCustomer(ledger, companyId);
+  const receipt = accepted ? policyReceipt(ledger, companyId, accepted, customer) : undefined;
   return {
     acceptedBasisPoints: accepted?.markupBasisPoints ?? null,
     proposedBasisPoints: proposed?.markupBasisPoints ?? null,
     nextTermsBasisPoints: proposed?.markupBasisPoints ?? accepted?.markupBasisPoints ?? defaultBasisPoints ?? null,
-    policy: !accepted ? null : resalePolicyState(ledger, companyId, accepted, customer),
+    policy: receipt?.state ?? null,
+    legacyProof: receipt?.legacy === true,
   };
 }
 
@@ -146,9 +151,6 @@ function policyReceipt(ledger: UsageLedger, companyId: string, accepted: ResaleA
   if (customer && legacyReceipt(receipt as unknown as Record<string, unknown>, accepted)) return { state: 'synced', legacy: true };
   if (!customer || receipt.boundCustomerId !== customer || receipt.markupBasisPoints !== accepted.markupBasisPoints || !validSyncProof(receipt, accepted, customer)) return { state: 'not_synced' };
   return { state: receipt.state === 'active' ? 'synced' : 'sync_pending' };
-}
-export function resalePolicyState(ledger: UsageLedger, companyId: string, accepted: ResaleAcceptance, customer = policyCustomer(ledger, companyId)): NonNullable<OfficeMarkup['policy']> {
-  return policyReceipt(ledger, companyId, accepted, customer).state;
 }
 /** All accepted anchors whose historical requests can be included. A plan's
  * standing month resolves to its genuine owner anchor; a legacy month may have
@@ -226,11 +228,13 @@ export function syncOfficeResalePolicy(options: { ledger: UsageLedger; modelvia?
       ledger.db.transaction(() => ledger.db.append(companyId, result.state === 'failed' ? POLICY_SYNC_FAILED : POLICY_SYNCED, null, ledger.now(),
         { ...result, markupBasisPoints, acceptanceReference: accepted.acceptanceReference, boundCustomerId: customer }));
     } catch { /* The Modelvia outcome stands; never lose the answer. */ }
-    // Existing explicit sync also repairs proof for older accepted anchors.
+    // Existing explicit sync also repairs proof for older accepted anchors,
+    // including one that reads synced only on a pre-proof (legacy) receipt.
     // Readback never appends old pricing or asserts it is the current policy.
     if (options.modelvia?.resalePolicyReceipt) {
       const prior = ledger.db.all<{ body: string }>("SELECT body FROM events WHERE tenant=? AND kind='ai_resale_terms_accepted' ORDER BY seq", companyId).map(row => JSON.parse(row.body) as ResaleAcceptance);
-      for (const previous of prior.filter(previous => previous.acceptanceReference !== accepted.acceptanceReference && resalePolicyState(ledger, companyId, previous, customer) !== 'synced')) {
+      const unproved = (previous: ResaleAcceptance) => { const receipt = policyReceipt(ledger, companyId, previous, customer); return receipt.state !== 'synced' || receipt.legacy === true; };
+      for (const previous of prior.filter(previous => previous.acceptanceReference !== accepted.acceptanceReference && unproved(previous))) {
         let historical: OfficePolicySync;
         try {
           historical = await options.modelvia.resalePolicyReceipt(customer, { clientMarkupBasisPoints: previous.markupBasisPoints, acceptanceReference: previous.acceptanceReference });

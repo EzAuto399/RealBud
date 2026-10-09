@@ -122,6 +122,27 @@ describe('owner-only original mail review and manual outcome recovery', () => {
     expect(f.bindings).not.toHaveBeenCalled();
     expect(f.store.acknowledge(legacy.id, 1).acknowledgement?.source).toBe('owner-checked-app');
   });
+  it.each(['company', 'issuer'] as const)('lets the owner mark checked a receipt whose %s changed, after reading the current connection twice', async change => {
+    const f = await setup();
+    await expect(f.recovery.acknowledgeEarlierRealm(f.row.id, 1, signal())).rejects.toThrow(/current company and managed gateway/);
+    if (change === 'issuer') f.changeOrigin('https://another-gateway.example.test'); else f.changeBinding({ companyId: 'company-b' });
+    // Exact-account recovery can no longer reach it.
+    await expect(f.recovery.prepare(f.row.id, signal())).rejects.toThrow(/original|Original|company|gateway/);
+    f.bindings.mockClear(); f.verifyAuthority.mockClear();
+    const checked = await f.recovery.acknowledgeEarlierRealm(f.row.id, 1, signal());
+    expect(checked).toMatchObject({ status: 'unknown', revision: 2, acknowledgement: { source: 'owner-checked-app' } }); expect(checked.reconciliation).toBeUndefined();
+    expect(f.bindings).toHaveBeenCalledTimes(2); expect(f.verifyAuthority).toHaveBeenCalledOnce();
+    expect(await f.recovery.acknowledgeEarlierRealm(f.row.id, 1, signal())).toEqual(checked);
+  });
+  it.each(['no-company', 'moved-back', 'role', 'workspace'] as const)('keeps an earlier-realm receipt unchecked when %s', async mutation => {
+    const f = await setup(); f.changeBinding({ companyId: 'company-b' });
+    if (mutation === 'no-company') f.changeBinding({ companyId: undefined });
+    if (mutation === 'moved-back') f.verifyAuthority.mockImplementationOnce(async () => { f.changeBinding({ companyId: 'company-a' }); });
+    if (mutation === 'role') f.verifyAuthority.mockImplementationOnce(async () => { throw new Error('Owner permission changed.'); });
+    if (mutation === 'workspace') f.bindings.mockImplementationOnce(async () => { f.changeAuthority(); return [{ ...f.review.binding, companyId: 'company-b' }]; });
+    await expect(f.recovery.acknowledgeEarlierRealm(f.row.id, 1, signal())).rejects.toThrow();
+    expect(f.store.list()[0].acknowledgement).toBeUndefined();
+  });
   it('does not replace a missing private workspace identity when history exists', async () => {
     const f = await setup(); rmSync(join(f.directory, 'company-installation/workspace.json'));
     await expect(f.recovery.prepare(f.row.id, signal())).rejects.toThrow(/history needs recovery/);

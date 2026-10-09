@@ -6019,12 +6019,24 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         ...(row.finishedAt === undefined ? {} : { finishedAt: new Date(row.finishedAt).toISOString() }),
       })) });
     }
+    // Owner mail-outcome controls share one authority snapshot and one read of
+    // the current connection's verified mail accounts (both mailboxes in `both`).
+    const connectedMailAuthority = () => JSON.stringify([workspaceIdentity.id, currentWorkerProfile().profile, cfg.composio, managedMailPolicyRevision()]);
+    const currentConnectedMailBindings = async (requestSignal: AbortSignal, assertAuthority: () => void) => {
+      const settings = managedConnectorSettings(structuredClone(cfg), managedMailPolicyRevision());
+      const personal = await readCurrentConnectedMailBindings(settings, requestSignal); assertAuthority();
+      const access = connectedAppAccess.status(connectedAppsConfigured(cfg));
+      if (!('mailboxMode' in access) || access.mailboxMode !== 'both') return personal;
+      const office = await readCurrentConnectedMailBindings(managedConnectorSettings(structuredClone(cfg), managedMailPolicyRevision(), 'office'), requestSignal);
+      assertAuthority(); return [...personal, ...office];
+    };
     const appAcknowledge = /^\/api\/connected-apps\/operations\/([a-f0-9-]{36})\/acknowledge$/.exec(path);
     if (appAcknowledge && method === 'POST') {
-      // Owner control for a receipt with no saved account identity (older
-      // history or an older gateway): nothing can be checked against the
-      // account, so the owner records that they checked the app. It inherits
-      // the same session/same-origin barriers and is never a worker tool.
+      // Owner control for a receipt RealBud cannot check against its account:
+      // one with no saved account identity (older history or an older
+      // gateway), or one saved under an earlier company or managed gateway. The
+      // owner records that they checked the app. It inherits the same
+      // session/same-origin barriers and is never a worker tool.
       const body = await readBody(req);
       if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).join(',') !== 'expectedRevision' || !Number.isSafeInteger(body.expectedRevision) || body.expectedRevision < 0)
         return json(res, 400, { error: 'Refresh recent activity, then mark the operation checked again.' });
@@ -6032,7 +6044,24 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       if (grant.authority !== 'manage') return json(res, 403, { error: 'Only this office owner or service administrator can mark an unconfirmed app outcome as checked.' });
       if (!await grant.stillManages()) return json(res, 403, { error: 'Owner permission changed. This outcome stays unconfirmed.' });
       if (shuttingDown || privateRestoreLocked || workspaceActivity.paused) return json(res, 409, { error: 'RealBud is restoring or pausing this workspace. Try again when it finishes.' });
-      const row = connectedAppOperations.acknowledge(appAcknowledge[1], body.expectedRevision);
+      let row;
+      if (listConnectedAppOperations().find(item => item.id === appAcknowledge[1])?.effectDigest) {
+        // Identified: only a receipt whose realm none of the current verified
+        // accounts has; the current accounts are read from the gateway now.
+        if (!managedConnectorConfigured(cfg)) return json(res, 409, { error: 'Restore the managed mail connection before marking this outcome checked.' });
+        const captured = connectedMailAuthority();
+        const assertAuthority = () => {
+          managedService.assertCapability('connected-tools');
+          if (shuttingDown || privateRestoreLocked || workspaceActivity.paused || connectedMailAuthority() !== captured)
+            throw Object.assign(new Error('The private workspace or connection changed. Refresh recent activity before marking it checked.'), { status: 409 });
+        };
+        assertAuthority();
+        const recovery = new ConnectedAppRecovery({ store: connectedAppOperations, gatewayOrigin: () => connectedMailGatewayOrigin(managedConnectorSettings(cfg, managedMailPolicyRevision()).url),
+          authority: connectedMailAuthority, assertAuthority, reviews: connectedMailReviews,
+          verifyAuthority: async () => { if (!await grant.stillManages()) throw Object.assign(new Error('Owner permission changed. This outcome stays unconfirmed.'), { status: 403 }); assertAuthority(); },
+          bindings: requestSignal => currentConnectedMailBindings(requestSignal, assertAuthority) });
+        row = await recovery.acknowledgeEarlierRealm(appAcknowledge[1], body.expectedRevision, AbortSignal.timeout(35_000)); assertAuthority();
+      } else row = connectedAppOperations.acknowledge(appAcknowledge[1], body.expectedRevision);
       return json(res, 200, { operation: { id: row.id, status: row.status, revision: row.revision, acknowledgement: row.acknowledgement } });
     }
     const appRecovery = /^\/api\/connected-apps\/operations\/([a-f0-9-]{36})\/(recovery|reconcile)$/.exec(path);
@@ -6040,7 +6069,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       // These owner controls inherit the boot-session, same-origin and restore
       // barriers above. They are never a worker tool or provider proof.
       if (!managedConnectorConfigured(cfg)) return json(res, 409, { error: 'Restore the original managed mail connection before recording this outcome.' });
-      const authority = () => JSON.stringify([workspaceIdentity.id, currentWorkerProfile().profile, cfg.composio, managedMailPolicyRevision()]);
+      const authority = connectedMailAuthority;
       const captured = authority();
       const assertAuthority = () => {
         managedService.assertCapability('connected-tools');
@@ -6055,14 +6084,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       };
       const signal = AbortSignal.timeout(35_000);
       const recovery = new ConnectedAppRecovery({ store: connectedAppOperations, gatewayOrigin: () => connectedMailGatewayOrigin(managedConnectorSettings(cfg, managedMailPolicyRevision()).url), authority, assertAuthority, verifyAuthority, reviews: connectedMailReviews,
-        bindings: async requestSignal => {
-          const settings = managedConnectorSettings(structuredClone(cfg), managedMailPolicyRevision());
-          const personal = await readCurrentConnectedMailBindings(settings, requestSignal); assertAuthority();
-          const access = connectedAppAccess.status(connectedAppsConfigured(cfg));
-          if (!('mailboxMode' in access) || access.mailboxMode !== 'both') return personal;
-          const office = await readCurrentConnectedMailBindings(managedConnectorSettings(structuredClone(cfg), managedMailPolicyRevision(), 'office'), requestSignal);
-          assertAuthority(); return [...personal, ...office];
-        } });
+        bindings: requestSignal => currentConnectedMailBindings(requestSignal, assertAuthority) });
       if (method === 'GET') return json(res, 200, await recovery.prepare(appRecovery[1], signal));
       const row = await recovery.reconcile(appRecovery[1], await readBody(req), signal); assertAuthority();
       return json(res, 200, { operation: { id: row.id, status: row.status, revision: row.revision, reconciliation: row.reconciliation } });

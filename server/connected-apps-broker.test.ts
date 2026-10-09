@@ -757,10 +757,19 @@ describe("connected app authoritative broker", () => {
         const result = await invoke('tools/call', action);
         expect(result.body.result.isError).not.toBe(true); expect(approve).toHaveBeenCalledOnce();
         expect(approve.mock.calls[0][0]).toContain('Company: company-b'); expect(approve.mock.calls[0][0]).not.toContain('INTENTIONAL REPEAT');
+        // The earlier company's unconfirmed send of this exact message is named on the card.
+        expect(approve.mock.calls[0][0]).toMatch(new RegExp(`^CHECK FIRST: this exact message has an unconfirmed send .*\\(operation ${first.id}\\)`));
         expect(sends()).toHaveLength(2);
         const second = operations.list()[0];
         expect(second.realmDigest).not.toBe(first.realmDigest); expect(second.effectDigest).not.toBe(first.effectDigest);
         expect(operations.list().find(row => row.id === first.id)?.status).toBe('unknown');
+        // Another message carries no warning; once the owner marks the earlier one checked, neither does this one.
+        approve.mockClear();
+        await invoke('tools/call', { name: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'tenant@example.test', body: 'A different tenant-bound message' } });
+        expect(approve.mock.calls[0][0]).not.toContain('CHECK FIRST');
+        operations.acknowledge(first.id, first.revision ?? 0, [second.realmDigest!]); approve.mockClear();
+        await invoke('tools/call', action);
+        expect(approve.mock.calls[0][0]).not.toContain('CHECK FIRST'); expect(approve.mock.calls[0][0]).toContain('INTENTIONAL REPEAT');
       });
       it('gives a changed managed origin a fresh unlinked card and keeps the earlier receipt', async () => {
         const action = { name: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'tenant@example.test', body: 'Exact issuer-bound message' } };

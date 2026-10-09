@@ -389,10 +389,16 @@ export async function startConnectedAppsBroker(options: {
                   const accountDigest = mailAccountDigest(account, gatewayOrigin);
                   const realmDigest = mailRealmDigest(account, gatewayOrigin);
                   const effectDigest = mailDigest({ workspaceDigest: operations.workspaceDigest, accountDigest, message: review.effect });
-                  let prior;
-                  try { prior = operations.priorMailEffect(effectDigest, realmDigest); }
+                  let prior, earlier;
+                  try {
+                    prior = operations.priorMailEffect(effectDigest, realmDigest);
+                    earlier = operations.earlierRealmMailEffect(realmDigest, earlierAccount => mailDigest({ workspaceDigest: operations.workspaceDigest, accountDigest: earlierAccount, message: review.effect }));
+                  }
                   catch (error) { return errorResult(error instanceof Error ? error.message : "This mail outcome needs recovery before sending again."); }
                   if (prior) summary = `INTENTIONAL REPEAT: this exact message was already sent or manually confirmed sent (operation ${prior.id}). Allowing this separate card sends it again once to the same verified account and recipients.\n\n${summary}`;
+                  // A company or gateway move gives the same message a new effect, so
+                  // its earlier unconfirmed receipt cannot hold it; say so on the card.
+                  if (earlier) summary = `CHECK FIRST: this exact message has an unconfirmed send from before the company or managed gateway changed (operation ${earlier.id}). It may already have gone. Look in that mailbox's Sent mail before allowing this; allowing sends it again.\n\n${summary}`;
                   mailIdentityFields = { accountDigest, realmDigest, bindingDigest: account.generation, effectDigest, reviewDigest: mailDigest({ summary, detail, approvalId: mailApprovalId }), workspaceDigest: operations.workspaceDigest, ...(prior ? { repeatOf: prior.id } : {}) };
                   if (review.recheck) { recheckDraft = review.recheck; recheckDraftDigest = review.digest; }
                 }

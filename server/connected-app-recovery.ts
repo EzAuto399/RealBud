@@ -104,6 +104,38 @@ export class ConnectedAppRecovery {
       originalReview: { card: original.card, exact: original.exact, approvedAt: original.approvedAt }, startedAt: row.startedAt,
       ...(row.reconciliation ? { reconciliation: { ...row.reconciliation } } : {}) };
   }
+  /** The realms (company + managed gateway) of the current connection, read
+   * from the gateway now. None verifiable means none can be ruled out. */
+  private async currentRealms(signal: AbortSignal, before: string): Promise<string[]> {
+    this.options.assertAuthority();
+    const bindings = await this.options.bindings(signal);
+    signal.throwIfAborted(); this.options.assertAuthority();
+    if (this.options.authority() !== before) return refuse('The private workspace or connection changed while checking this receipt. Refresh and try again.');
+    const realms = [...new Set(bindings.filter(item => item.companyId).map(item => mailRealmDigest(item, this.options.gatewayOrigin())))].sort();
+    if (!realms.length) return refuse('The current mail connection could not confirm its company, so RealBud cannot tell whether this receipt is from an earlier connection. Check Connected apps, then try again.');
+    return realms;
+  }
+  /** Owner step for an identified receipt saved under an earlier company or
+   * managed gateway: it can no longer be checked against its original
+   * connection, so the owner checks the app and marks it checked. Proves
+   * nothing and never changes the recorded outcome; a receipt of the current
+   * realm keeps exact-account recovery. */
+  async acknowledgeEarlierRealm(id: string, expectedRevision: number, signal: AbortSignal): Promise<ConnectedAppOperation> {
+    const before = this.options.authority();
+    const row = this.options.store.list().find(item => item.id === id);
+    if (!row) return refuse('No such app operation.', 404);
+    if (!row.effectDigest || !row.realmDigest || row.workspaceDigest !== this.options.store.workspaceDigest)
+      return refuse('This receipt cannot be marked checked here. Restore its matching workspace and original connection history.');
+    const realms = await this.currentRealms(signal, before);
+    if (realms.includes(row.realmDigest)) return refuse('This receipt belongs to the current company and managed gateway. Use Inspect and record mail outcome instead.');
+    await this.options.verifyAuthority?.();
+    // The connection can move while the owner grant is awaited; re-read it last.
+    const finalRealms = await this.currentRealms(signal, before);
+    if (connectedAppCanonical(finalRealms) !== connectedAppCanonical(realms)) return refuse('The mail connection changed while checking permission. Refresh and try again.');
+    this.options.assertAuthority(); signal.throwIfAborted();
+    // The store rechecks the realm, revision and disk generation under its lock.
+    return this.options.store.acknowledge(id, expectedRevision, finalRealms);
+  }
   async reconcile(id: string, body: unknown, signal: AbortSignal): Promise<ConnectedAppOperation> {
     if (!record(body) || Object.keys(body).sort().join(',') !== 'acknowledgement,expectedRevision,outcome,recoveryBindingDigest,reviewDigest' || ![MANUAL_MAIL_ACKNOWLEDGEMENT, CHANGED_CONNECTION_MAIL_ACKNOWLEDGEMENT].includes(String(body.acknowledgement)) || !opaqueDigest(body.recoveryBindingDigest) || !opaqueDigest(body.reviewDigest) ||
       !Number.isSafeInteger(body.expectedRevision) || Number(body.expectedRevision) < 0 || !['sent', 'not-sent'].includes(String(body.outcome))) return refuse('Inspect the exact account in the mail app, then use its explicit recovery controls to record the outcome.', 400);
