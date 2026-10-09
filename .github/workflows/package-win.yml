@@ -206,7 +206,7 @@ jobs:
           echo "version: $(node -p "require('./package.json').version")"
           echo "commit:  $(git rev-parse HEAD)"
           ls -lh release/*.exe 2>/dev/null || true
-          node -e "require('node:fs').writeFileSync('release/WINDOWS-QUALIFICATION.txt', 'Intent: ' + process.env.WINDOWS_QUALIFICATION + '\\nStable promotion: HELD. These artifacts never update a stable feed/tag. Inspect exact installed/native receipts; CI is not customer-device or upgrade proof.\\n')"
+          node -e "require('node:fs').writeFileSync('release/WINDOWS-QUALIFICATION.txt', 'Intent: ' + process.env.WINDOWS_QUALIFICATION + '\\nCI never publishes. The owner publishes a reviewed release by hand from these files (owner decision 9 Oct 2026: Windows ships with Bud running without network isolation). Inspect exact installed/native receipts; CI is not customer-device or upgrade proof.\\n')"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -221,6 +221,7 @@ jobs:
             release/*.exe
             release/*.exe.blockmap
             release/*.zip
+            release/latest.yml
             release/WINDOWS-QUALIFICATION.txt
           if-no-files-found: error
           retention-days: 14

@@ -7,7 +7,7 @@ import { tryHermesPing, tryHermesLedger } from './hermes-hands.ts';
 import { askWorker } from './recipe-draft.ts';
 import { inspectLedgerColumns } from './import-inspect.ts';
 import { hermesStatus, applyHandsReadiness } from './hermes-status.ts';
-import { WORKER_PLATFORM_HELD } from './worker-network-sandbox.ts';
+import { WORKER_PLATFORM_HELD, workerIsolationRefusal } from './worker-network-sandbox.ts';
 import { ProviderRegistry } from './harness/registry.ts';
 import { controlPath, workerControlDir } from './worker-control.ts';
 
@@ -17,8 +17,16 @@ async function onPlatform(platform: NodeJS.Platform, work: () => Promise<void>) 
   try { await work(); } finally { Object.defineProperty(process, 'platform', descriptor); }
 }
 describe('worker admission on an OS without an enforced boundary', () => {
+  // Owner decision, 9 Oct 2026: Windows runs Bud without network isolation;
+  // macOS keeps sandbox-exec; every other platform stays held.
+  it('admits macOS and Windows and holds every other platform', async () => {
+    expect(workerIsolationRefusal('darwin')).toBeNull();
+    expect(workerIsolationRefusal('win32')).toBeNull();
+    for (const platform of ['linux', 'freebsd', 'aix'] as const) expect(workerIsolationRefusal(platform)).toBe(WORKER_PLATFORM_HELD);
+    expect((await hermesStatus({ platform: 'win32', root: '/fictional/absent-worker', cli: '/fictional/never-probed' })).workerIsolation).toBeUndefined();
+  });
   it('holds Ask before ACP broker creation, profile work or custom CLI launch', async () => {
-    for (const platform of ['win32', 'linux'] as const) await onPlatform(platform, async () => {
+    for (const platform of ['linux'] as const) await onPlatform(platform, async () => {
       const root = mkdtempSync(join(tmpdir(), 'rb-platform-hold-'));
       try {
         mkdirSync(join(root, 'profiles', 'property'), { recursive: true });
@@ -37,7 +45,7 @@ describe('worker admission on an OS without an enforced boundary', () => {
     });
   });
   it('returns a truthful hold before one-shot probes, model relays or workrooms', async () => {
-    for (const platform of ['win32', 'linux'] as const) await onPlatform(platform, async () => {
+    for (const platform of ['linux'] as const) await onPlatform(platform, async () => {
       const opts = { cli: '/fictional/custom-worker', root: '/fictional/absent-worker' };
       expect(await tryHermesPing(opts)).toMatchObject({ ok: false, detail: WORKER_PLATFORM_HELD });
       expect(await tryHermesLedger(['fictional'], opts)).toMatchObject({ rows: null, detail: WORKER_PLATFORM_HELD });
@@ -46,7 +54,7 @@ describe('worker admission on an OS without an enforced boundary', () => {
     });
   });
   it('does not turn an earlier successful hands receipt into platform admission', async () => {
-    for (const platform of ['win32', 'linux'] as const) {
+    for (const platform of ['linux'] as const) {
       const status = await hermesStatus({ platform, root: '/fictional/absent-worker', cli: '/fictional/never-probed' });
       expect(status).toMatchObject({ ready: false, installerAvailable: false, workerIsolation: { state: 'held', platform, detail: WORKER_PLATFORM_HELD } });
       expect(status.workerFingerprint).toBeUndefined();
@@ -59,8 +67,8 @@ describe('worker admission on an OS without an enforced boundary', () => {
     try {
       mkdirSync(workerControlDir(root), { recursive: true, mode: 0o700 });
       writeFileSync(controlPath(root, 'runtime-selection'), 'fictional invalid selection', { mode: 0o600 });
-      const status = await hermesStatus({ platform: 'win32', root, cli: '/fictional/never-probed' });
-      expect(status).toMatchObject({ ready: false, hold: 'selection_needs_recovery', installerAvailable: false, workerIsolation: { state: 'held', platform: 'win32' } });
+      const status = await hermesStatus({ platform: 'linux', root, cli: '/fictional/never-probed' });
+      expect(status).toMatchObject({ ready: false, hold: 'selection_needs_recovery', installerAvailable: false, workerIsolation: { state: 'held', platform: 'linux' } });
     } finally { rmSync(root, { recursive: true, force: true }); rmSync(workerControlDir(root), { recursive: true, force: true }); }
   });
 });

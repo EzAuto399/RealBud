@@ -187,12 +187,18 @@ describe("sandboxed launch", () => {
     expect(existsSync(env.TMPDIR!)).toBe(false);
   });
 
-  it("refuses every unsupported platform before probing or allocating worker temp", () => {
-    for (const platform of ["linux", "win32"] as const) {
-      const other: Record<string, string | undefined> = {};
-      expect(() => sandboxedLaunch("/synthetic/hermes", ["acp"], other, { loopbackPorts: [4000], writable: [] }, { platform, probe: () => { throw new Error("not probed"); } })).toThrow(WORKER_PLATFORM_HELD);
-      expect(other.TMPDIR).toBeUndefined();
-    }
+  it("refuses an unsupported platform before probing or allocating worker temp", () => {
+    const other: Record<string, string | undefined> = {};
+    expect(() => sandboxedLaunch("/synthetic/hermes", ["acp"], other, { loopbackPorts: [4000], writable: [] }, { platform: "linux", probe: () => { throw new Error("not probed"); } })).toThrow(WORKER_PLATFORM_HELD);
+    expect(other.TMPDIR).toBeUndefined();
+  });
+
+  // Owner decision, 9 Oct 2026: Windows runs Bud without network isolation.
+  it("launches unchanged on Windows without probing a sandbox or allocating worker temp", () => {
+    const env: Record<string, string | undefined> = {};
+    const launch = sandboxedLaunch("/synthetic/hermes", ["acp"], env, { loopbackPorts: [4000], writable: [] }, { platform: "win32", probe: () => { throw new Error("not probed"); } });
+    expect([launch.command, launch.args]).toEqual(["/synthetic/hermes", ["acp"]]);
+    expect(env.TMPDIR).toBeUndefined();
   });
 
   it.runIf(SEATBELT)("refuses to start rather than run unconfined when sandbox-exec is missing or rejects the profile", () => {
@@ -305,7 +311,7 @@ describe("Hermes worker launch off macOS", () => {
   it("refuses before making a profile or changing the worker environment", () => {
     seedVault();
     const root = scratch("rb-plain-home-");
-    for (const platform of ["linux", "win32"] as const) {
+    for (const platform of ["linux"] as const) {
       const env: Record<string, string | undefined> = { HERMES_HOME: root };
       expect(() => hermesNetworkSandbox("/synthetic/hermes", ["acp"], env, [4000], "ask", { platform })).toThrow(WORKER_PLATFORM_HELD);
       expect(existsSync(join(root, "profiles"))).toBe(false);

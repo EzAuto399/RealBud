@@ -98,7 +98,7 @@ for (const [title, mutate] of [
   ['failed cleanup', f => { f.journal.cleanup = false; }],
 ]) test(`native journal bundle refuses ${title}`, () => { const fixture = journalFixture(); mutate(fixture); assert.throws(() => validateManagedJournal(fixture.runtime, fixture.journal, revision, root)); });
 
-test('workflow gates both native jobs, excludes the stable feed, and joins candidate-specific receipts', () => {
+test('workflow gates both native jobs, carries the update feed for a hand publish, never publishes, and joins candidate-specific receipts', () => {
   const workflow = readFileSync(join(root, '.github/workflows/package-win.yml'), 'utf8');
   assert.match(workflow, /qualification-admission:[\s\S]*windows-candidate\.mjs preflight/);
   assert.equal((workflow.match(/needs: qualification-admission/g) ?? []).length, 2);
@@ -110,7 +110,9 @@ test('workflow gates both native jobs, excludes the stable feed, and joins candi
   const installerArtifact = workflow.slice(workflow.indexOf('name: ${{ steps.admission.outputs.artifactKind }}'), workflow.indexOf('  memory-journal:'));
   assert.ok(installerArtifact.includes('steps.admission.outputs.sourceRevision'));
   assert.ok(installerArtifact.includes('release/WINDOWS-QUALIFICATION.txt'));
-  assert.ok(!installerArtifact.includes('latest.yml'));
+  // Owner decision, 9 Oct 2026: Windows releases ship, so the artifact carries
+  // the update feed; publishing stays a reviewed manual step (asserted below).
+  assert.ok(installerArtifact.includes('release/latest.yml'));
   assert.ok(!workflow.includes('gh release') && !workflow.includes('--publish always'));
 });
 test('QA installer consumers preserve exact source/hash/run admission and reject ambiguous artifact matches', () => {

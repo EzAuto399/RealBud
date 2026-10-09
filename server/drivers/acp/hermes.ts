@@ -305,9 +305,10 @@ const support: AcpSupport = {
     applyAskModelRelayEnv(env, env.HERMES_HOME);
   },
 
-  // Mandatory on every platform: an unsupported platform cannot choose the
-  // ACP core's raw launch path. The bounded host department loop has no child.
-  networkSandbox: hermesNetworkSandbox,
+  // macOS: sandbox-exec. Windows runs the ACP core's raw launch by owner
+  // decision (worker-network-sandbox.ts file note). Any other platform goes
+  // through the sandbox, which holds it. The host department loop has no child.
+  networkSandbox: process.platform === "win32" ? undefined : hermesNetworkSandbox,
 
   pickAuthMethod: () => null,
   authFailure: "continue",

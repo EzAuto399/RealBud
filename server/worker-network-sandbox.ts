@@ -27,10 +27,11 @@
 // Children inherit the profile. A missing or refusing `sandbox-exec` refuses
 // the launch; there is no unconfined fallback.
 //
-// Windows and Linux have no admitted equivalent here yet. Every worker launch
-// is held on those platforms; approval globs, environment stripping and process
-// cleanup are not confidentiality boundaries. Admission needs a reviewed OS
-// boundary for files, credentials, descendants and the exact broker channel.
+// Windows and Linux have no admitted equivalent here yet: approval globs,
+// environment stripping and process cleanup are not confidentiality boundaries.
+// Linux launches are held. Windows launches run unconfined by the owner's
+// decision (9 Oct 2026: offices run Bud on Windows) until a reviewed boundary,
+// such as a per-program Windows Firewall rule, exists.
 import { spawnSync, type ChildProcess } from "node:child_process";
 import { accessSync, closeSync, constants, fchmodSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readlinkSync, readSync, realpathSync, rmSync } from "node:fs";
 import { createServer, request, type Server } from "node:http";
@@ -128,10 +129,12 @@ export const NETWORK_ISOLATION_UNAVAILABLE =
   "This computer can't isolate Bud's network, so Bud was not started. Restart RealBud; if this keeps happening, contact RealBud support.";
 
 export const WORKER_PLATFORM_HELD = "Bud's worker cannot safely run on this operating system yet. Your saved records and recovery stay available. Contact RealBud support for a supported worker setup.";
-/** No runtime setting or environment variable can grant missing OS isolation.
- * Explicit platform injection is for source tests, never a product override. */
+/** macOS runs inside sandbox-exec; Windows runs unconfined by owner decision
+ * (see the file note); every other platform is held. No runtime setting or
+ * environment variable changes this. Explicit platform injection is for
+ * source tests, never a product override. */
 export function workerIsolationRefusal(platform: NodeJS.Platform = process.platform): string | null {
-  return platform === "darwin" ? null : WORKER_PLATFORM_HELD;
+  return platform === "darwin" || platform === "win32" ? null : WORKER_PLATFORM_HELD;
 }
 export function assertWorkerIsolation(platform: NodeJS.Platform = process.platform): void {
   const refusal = workerIsolationRefusal(platform);
@@ -424,7 +427,8 @@ export interface SandboxedLaunch {
  * The launch for one worker. macOS wraps it in `sandbox-exec` with the
  * profile above and points the worker's temp variables at a private folder,
  * or refuses when sandbox-exec is missing or rejects the profile; never an
- * unconfined fallback. Platforms without an admitted OS boundary refuse.
+ * unconfined fallback. Windows launches unchanged (owner decision, see the
+ * file note); other platforms without an admitted OS boundary refuse.
  * `env` is the child's environment and is changed in place.
  */
 export function sandboxedLaunch(command: string, args: readonly string[], env: Record<string, string | undefined>, spec: WorkerSandboxSpec, deps: SandboxDeps = {}): SandboxedLaunch {
@@ -433,6 +437,7 @@ export function sandboxedLaunch(command: string, args: readonly string[], env: R
   const custody = workerCustodyRefusal();
   if (custody) throw new Error(custody);
   assertWorkerIsolation(deps.platform ?? process.platform);
+  if ((deps.platform ?? process.platform) === "win32") return { command, args: [...args], release() {} };
   // A missing program fails as a plain spawn would (ENOENT), not as a
   // sandbox refusal: setup copy depends on telling the two apart.
   const program = command.includes("/") ? command
