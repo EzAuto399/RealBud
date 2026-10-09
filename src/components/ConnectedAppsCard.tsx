@@ -562,8 +562,12 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
                   <p className="mt-1 break-words text-ink-secondary" title={`Operation ${operation.id}`}>{operation.toolSlugs.join(", ") || operation.toolName || "Connected app operation"}</p>
                   {operation.repeatOf ? <p className="mt-1 text-ink-secondary">Separately approved intentional repeat of an earlier action.</p> : null}
                   {operation.reconciliation ? <p role="status" className="mt-2 text-ink-secondary">You recorded after inspecting the mail app: message {operation.reconciliation.outcome === 'sent' ? 'was sent' : 'was not sent'}. Manual evidence · {fmtDateTime(Date.parse(operation.reconciliation.at))}. The provider outcome remains {operation.status}. A new send still needs its own approval.</p> : null}
-                  {operation.identified && MAIL_SENDS.has(operation.toolName) && (operation.status === 'unknown' || operation.status === 'failed') && !operation.reconciliation && !needsEarlierConnectionCheck(operation, earlierConnection) ? (
+                  {canManage && operation.identified && MAIL_SENDS.has(operation.toolName) && (operation.status === 'unknown' || operation.status === 'failed') && !operation.reconciliation && !needsEarlierConnectionCheck(operation, earlierConnection) ? (
                     <button type="button" className={`${control} mt-2`} disabled={recoveryBusy || budBusy} onClick={() => void prepareMailRecovery(operation)}>Inspect and record mail outcome</button>
+                  ) : null}
+                  {/* Recording the outcome is owner-only on the server; staff pass it on. */}
+                  {!canManage && operation.identified && MAIL_SENDS.has(operation.toolName) && (operation.status === 'unknown' || operation.status === 'failed') && !operation.reconciliation && !operation.acknowledgement && !needsEarlierConnectionCheck(operation, earlierConnection) ? (
+                    <OwnerCheckNote operation={operation} canManage={false} busy={false} onCheck={() => {}} />
                   ) : null}
                   {needsOwnerCheck(operation) ? <OwnerCheckNote operation={operation} canManage={canManage} busy={recoveryBusy} onCheck={() => void acknowledgeOperation(operation)} /> : null}
                   {needsEarlierConnectionCheck(operation, earlierConnection) ? <OwnerCheckNote operation={operation} canManage={canManage} earlierConnection busy={recoveryBusy} onCheck={() => void acknowledgeOperation(operation)} /> : null}
