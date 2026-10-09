@@ -2,7 +2,7 @@
  * fetch; every id, key and amount is fictional. */
 import { describe, expect, it } from "vitest";
 
-import { addRunUsage, cleanRunUsage, countJevUsage, emptyRunUsage, MAX_RUN_REQUEST_IDS, noteModelviaReply, noteModelviaRequest, recordJevUsage, runCost } from "./run-cost.ts";
+import { addRunUsage, cleanRunUsage, countJevUsage, emptyRunUsage, MAX_RUN_REQUEST_IDS, noteModelExchange, noteModelviaReply, noteModelviaRequest, recordJevUsage, runCost } from "./run-cost.ts";
 
 const KEY = "fictional-office-key";
 const access = { baseUrl: "https://gateway.fictional.test/v1/", key: KEY };
@@ -50,6 +50,17 @@ describe("recording a run's Modelvia requests", () => {
     noteModelviaRequest(usage, null);
     noteModelviaReply(usage, { error: { code: "request_already_processed" }, receipt: receipt("req-fictional-original", { chargedNanoAud: "100" }) });
     expect(usage).toEqual({ requestIds: ["req-fictional-original"], calls: 1 });
+  });
+
+  it("times each relayed exchange, counts non-2xx and unanswered ones, and never saves the timing", () => {
+    const usage = emptyRunUsage();
+    noteModelExchange(usage, { ms: 1200, headersMs: 300, status: 200 });
+    noteModelExchange(usage, { ms: 400.4, headersMs: 390.6, status: 429 });
+    noteModelExchange(usage, { ms: 900 });
+    expect(usage.timing).toEqual({ modelCalls: 3, modelMs: 2500, modelMaxMs: 1200, headersMaxMs: 391, upstreamErrors: 2 });
+    noteModelviaRequest(usage, "req-fictional-1");
+    expect(cleanRunUsage(JSON.parse(JSON.stringify(usage)))).toEqual({ requestIds: ["req-fictional-1"], calls: 1 });
+    expect(addRunUsage(emptyRunUsage(), usage).timing).toBeUndefined();
   });
 
   it("caps the ids a run keeps", () => {

@@ -21,6 +21,8 @@ import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
 import { stripServiceSecrets } from "../../service-child-env.ts";
 import { managedService } from "../../managed-service.ts";
 import { createAskModelRelayLease, type AskModelRelayLease } from "../../ask-model-relay.ts";
+import { emptyRunTiming } from "../../run-cost.ts";
+import { MAX_TURN_TOOLS, TURN_TOOL_NAME } from "../../oplog.ts";
 
 import type {
   ApprovalCardDetails,
@@ -148,7 +150,8 @@ const NEW_SESSION_TIMEOUT = 30_000;
 const LOAD_SESSION_TIMEOUT = 120_000; // history replay on a long thread is slow
 const SESSION_MODE_TIMEOUT = 5_000;
 const CANCEL_GRACE_MS = 2_000;
-const WARM_SESSION_IDLE_MS = 10 * 60_000;
+// Office staff ask intermittently, and a cold Hermes start costs seconds (more on Windows).
+const WARM_SESSION_IDLE_MS = 30 * 60_000;
 /** Every RealBud review card closes (as a deny) before the worker stops
  * waiting for it. Hermes waits 300 s for an ACP permission answer (0.21.5
  * reads the pack's `approvals.timeout: 300`; 0.21.3 waits a fixed 60 s and
@@ -202,6 +205,12 @@ const PAGE_TOOL_LABEL: Record<string, string> = {
   scroll: "Scrolled the window", press_key: "Pressed a key", release: "Stopped app work",
 };
 const pageTool = (title: unknown): string | null => typeof title === "string" ? PAGE_TOOL.exec(title)?.[1]?.toLowerCase() ?? null : null;
+/** A tool call's name for the turn's timing line: Hermes titles a call `name: arguments` (or just `name`), so only the
+ * part before the first colon is considered, and only a bare identifier (`TURN_TOOL_NAME`) is kept. */
+export function turnToolName(title: unknown): string | null {
+  const head = typeof title === "string" ? title.split(":", 1)[0]!.trim() : "";
+  return TURN_TOOL_NAME.test(head) ? head : null;
+}
 /** A page tool call's title for the event log and the Work activity line: a fixed label per tool, never its arguments. */
 const pageToolLabel = (tool: string): string => PAGE_TOOL_LABEL[tool] ?? "Used the work browser";
 /** A page tool call (a start, update or permission request) as the private native log keeps it: the tool name and its
@@ -335,7 +344,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       interface SessionRuntime {
         signature: string;
         lastUsed: number;
-        resume: (turn: SendTurnInput, first?: boolean) => string;
+        /** `sentAt`: when sendTurn took the turn, for its timing. */
+        resume: (turn: SendTurnInput, first?: boolean, sentAt?: number) => string;
         /** Stops the process and resolves once it has exited (SIGKILL after a deadline). */
         stop: () => Promise<void>;
       }
@@ -360,6 +370,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         steerAckPending: boolean;
         /** ACP's token counts for this turn, when the agent reported them. */
         tokens?: { input?: number; output?: number };
+        /** For the turn's timing: the first turn of a newly started worker
+         * (cold), when sendTurn took it, its first answer text, and its tool
+         * names (`turnToolName`). */
+        first: boolean;
+        sentAt: number;
+        firstTextAt: number | null;
+        toolNames: string[];
         done: Promise<void>;
         resolveDone: () => void;
       }
@@ -538,6 +555,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         modelLease?: AskModelRelayLease,
       ): SessionRuntime => {
         const { threadId } = firstTurn;
+        // The cold start this worker's first turn waits for: spawn to a ready session.
+        const spawnedAt = Date.now();
+        let readyAt: number | null = null;
         const env = childEnv();
         // The runtime whose venv/bin hardenHermesChildEnv put first on PATH.
         const runtimeHome = DRIVER_KIND === "hermesAgent" ? ownedRuntimeHome(env.HERMES_HOME) : null;
@@ -727,7 +747,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (run.tokens.input !== undefined) usage.inputTokens = run.tokens.input;
             if (run.tokens.output !== undefined) usage.outputTokens = run.tokens.output;
           }
-          emit({ ...eventBase(run), type: "turn.completed", ok, stopReason, cost: null, ...(usage && (usage.calls || run.tokens) ? { usage } : {}) });
+          // Where this turn's time went, beside the relay's model timing: numbers and tool names only.
+          if (usage) {
+            const now = Date.now();
+            usage.timing = { ...(usage.timing ?? emptyRunTiming()), warm: !run.first, readyMs: run.first ? (readyAt ?? now) - spawnedAt : 0,
+              firstTextMs: run.firstTextAt === null ? null : run.firstTextAt - run.sentAt, toolCalls: run.toolCount, tools: [...run.toolNames] };
+          }
+          emit({ ...eventBase(run), type: "turn.completed", ok, stopReason, cost: null, ...(usage ? { usage } : {}) });
           run.resolveDone();
           if (keepWarm && !closed) park();
           else terminate();
@@ -937,6 +963,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 if (plain) delta = (run.text.trim() ? "\n\n" : "") + plain;
                 run.text += delta;
                 if (run.sawTool) run.answerText += delta;
+                run.firstTextAt ??= Date.now();
                 emit({ ...eventBase(run), type: "content.delta", streamKind: "assistant_text", delta });
               }
               break;
@@ -971,6 +998,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 break;
               }
               run.toolCount += 1;
+              const toolName = turnToolName(update.title);
+              if (toolName && run.toolNames.length < MAX_TURN_TOOLS) run.toolNames.push(toolName);
               if (wrapUpPoint && run.toolCount >= wrapUpPoint.afterTools) wrapUp(run, "tools");
               break;
             }
@@ -1377,6 +1406,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               // request/response is still captured in the redacted native log.
             }
           }
+          readyAt = Date.now();
           return { init, loaded };
         })();
 
@@ -1471,7 +1501,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           return run.done;
         };
 
-        const resume = (turn: SendTurnInput, first = false) => {
+        const resume = (turn: SendTurnInput, first = false, sentAt = Date.now()) => {
           if (closed) throw new Error(`${DRIVER_KIND} session is closed`);
           if (current) throw new Error("a turn is already running on this thread");
           if (idleTimer) clearTimeout(idleTimer);
@@ -1497,6 +1527,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             wrapUpTimer: null,
             wrapUpSent: false,
             steerAckPending: false,
+            first,
+            sentAt,
+            firstTextAt: null,
+            toolNames: [],
             done,
             resolveDone,
           };
@@ -1532,6 +1566,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       };
 
       const sendTurn = async (turn: SendTurnInput) => {
+        const sentAt = Date.now();
         managedService.assertCapability("reasoning");
         if (support.networkSandbox && workerLaunchesHeld()) throw new Error(WORKERS_HELD);
         const { threadId } = turn;
@@ -1562,7 +1597,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               : createRuntime(turn, cwd, args, mcpServers, signature);
           } catch (error) { modelLease?.revoke(); throw error; }
         }
-        return { turnId: runtime.resume(turn, first) };
+        return { turnId: runtime.resume(turn, first, sentAt) };
       };
 
       const snapshot = async (): Promise<ProviderSnapshot> => {

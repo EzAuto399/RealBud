@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { oplog, opLogPath, setOpLogPath } from "./oplog.ts";
+import { askTurnOutcome, oplog, opLogPath, oplogAskTurn, setOpLogPath } from "./oplog.ts";
+import type { RunTiming } from "../shared/contracts.ts";
 
 const dirs: string[] = [];
 function tempLog(): string {
@@ -55,6 +56,48 @@ describe("operational log", () => {
     // (/proc/... paths hang on Linux when mkdirSync walks procfs.)
     setOpLogPath(join(blocker, "realbud.log"));
     expect(() => oplog("boot", "still fine")).not.toThrow();
+  });
+});
+
+describe("Ask turn timing line", () => {
+  const timing: RunTiming = { modelCalls: 3, modelMs: 9120, modelMaxMs: 4100, headersMaxMs: 1300, upstreamErrors: 1,
+    warm: false, readyMs: 2810, firstTextMs: 5230, toolCalls: 4, tools: ["terminal", "mcp__realbud-workroom__read_file"] };
+
+  it("writes one line of named numbers, booleans and tool names only", () => {
+    const path = tempLog();
+    // Whatever else rides on the caller's object never reaches the line.
+    const carrying = { ...timing, threadId: "fictional-thread", text: "Fictional tenant owes $1,234",
+      tools: [...timing.tools!, "terminal: cat /synthetic/ledger.csv", "web search", "x".repeat(65), 7] } as unknown as RunTiming;
+    oplogAskTurn({ outcome: "completed", preludeMs: 412, totalMs: 15_890, timing: carrying });
+    const lines = readFileSync(path, "utf8").trim().split("\n");
+    expect(lines).toHaveLength(1);
+    const { at, ...row } = JSON.parse(lines[0]!);
+    expect(Date.parse(at)).not.toBeNaN();
+    expect(row).toEqual({ event: "turn", detail: "Ask turn finished.", outcome: "completed", warm: false, preludeMs: 412, readyMs: 2810,
+      firstTextMs: 5230, toolCalls: 4, tools: ["terminal", "mcp__realbud-workroom__read_file"], modelCalls: 3, modelMs: 9120,
+      modelMaxMs: 4100, headersMaxMs: 1300, upstreamErrors: 1, totalMs: 15_890 });
+    for (const text of ["fictional-thread", "Fictional tenant", "/synthetic", "web search"]) expect(lines[0]).not.toContain(text);
+  });
+
+  it("keeps at most 20 tool names and reads missing or unusable numbers as zero", () => {
+    const path = tempLog();
+    const tools = Array.from({ length: 25 }, (_, index) => `tool_${index}`);
+    oplogAskTurn({ outcome: "failed", preludeMs: Number.NaN, totalMs: -5, timing: { ...timing, readyMs: -1, firstTextMs: null, tools } });
+    oplogAskTurn({ outcome: "stopped", preludeMs: 30, totalMs: 30 });
+    const [first, second] = readFileSync(path, "utf8").trim().split("\n").map(line => JSON.parse(line));
+    expect(first).toMatchObject({ outcome: "failed", preludeMs: 0, totalMs: 0, readyMs: 0, firstTextMs: null, tools: tools.slice(0, 20) });
+    // A turn that never reached the driver: no worker, model or tool time.
+    expect(second).toMatchObject({ outcome: "stopped", warm: false, preludeMs: 30, readyMs: 0, firstTextMs: null, toolCalls: 0, tools: [],
+      modelCalls: 0, modelMs: 0, modelMaxMs: 0, headersMaxMs: 0, upstreamErrors: 0, totalMs: 30 });
+  });
+
+  it("names how the turn ended", () => {
+    expect(askTurnOutcome({ ok: true, stopReason: null })).toBe("completed");
+    expect(askTurnOutcome({ ok: false, stopReason: "rpc_error" })).toBe("failed");
+    expect(askTurnOutcome({ ok: true, stopReason: "cancelled" })).toBe("stopped");
+    expect(askTurnOutcome({ ok: false, stopReason: "interrupted" })).toBe("stopped");
+    expect(askTurnOutcome({ ok: true, stopReason: null, stopped: true })).toBe("stopped");
+    expect(askTurnOutcome({ ok: true, stopReason: "cancelled", stopped: true, timedOut: true })).toBe("timeout");
   });
 });
 

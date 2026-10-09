@@ -576,8 +576,32 @@ export interface RunUsage {
    * requests: each id is also in `requestIds`, its tokens only here. Never the
    * state, questions or answers. */
   decisions?: RunDecisionUsage[];
+  /** Where the time went, for the operational log's Ask `turn` line only
+   * (server/oplog.ts `oplogAskTurn`). Held in memory: `cleanRunUsage` drops
+   * it, so no saved run or history row carries it. */
+  timing?: RunTiming;
 }
 export interface RunDecisionUsage { id: string; model?: string; inputTokens?: number; outputTokens?: number; ms?: number }
+/** Counts, milliseconds and tool names; never text, arguments or ids. */
+export interface RunTiming {
+  /** From the model relay, per chat exchange it forwarded: how many, their
+   * summed and longest durations (sent to last byte), the longest wait for
+   * the AI service's response headers, and how many were answered with a
+   * non-2xx status or not at all. */
+  modelCalls: number;
+  modelMs: number;
+  modelMaxMs: number;
+  headersMaxMs: number;
+  upstreamErrors: number;
+  /** From the Ask driver when the turn settles: a reused warm worker; the
+   * cold start (spawn to session ready, 0 when warm); sendTurn to the first
+   * answer text (null when none); tool calls and up to 20 tool names. */
+  warm?: boolean;
+  readyMs?: number;
+  firstTextMs?: number | null;
+  toolCalls?: number;
+  tools?: string[];
+}
 
 export type PortalSessionState = "prepared" | "running" | "awaiting-review" | "done" | "unknown" | "failed";
 export interface PortalSession {
