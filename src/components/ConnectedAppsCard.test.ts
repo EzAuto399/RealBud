@@ -292,6 +292,16 @@ describe('owner check for an unconfirmed receipt without account details', () =>
     expect(markup).toContain('aria-label="I checked it in the app: GMAIL_SEND_EMAIL"');
     expect(markup).not.toMatch(/delete|remove|\.lock|Hermes|MCP|broker/i);
   });
+  it('words the same step for a send recorded under an earlier company or gateway', () => {
+    const markup = renderToStaticMarkup(createElement(OwnerCheckNote, { operation: { ...operation, status: 'failed', identified: true }, earlierConnection: true, busy: false, onCheck: vi.fn() })).replace(/&#x27;/g, "'");
+    expect(markup).toContain('recorded under an earlier company or managed gateway');
+    expect(markup).toContain("look in Sent");
+    expect(markup).toContain('Bud warns before sending the same message again');
+    expect(markup).toContain('It does not send, repeat or undo anything');
+    expect(markup).toContain('aria-label="I checked it in the app: GMAIL_SEND_EMAIL"');
+    expect(markup).not.toContain('no saved account details');
+    expect(markup).not.toMatch(/delete|remove|\.lock|Hermes|MCP|broker/i);
+  });
   it('words a non-mail hold for that action and disables the step while busy', () => {
     const markup = renderToStaticMarkup(createElement(OwnerCheckNote, { operation: { ...operation, toolName: 'GOOGLECALENDAR_CREATE_EVENT' }, busy: true, onCheck: vi.fn() }));
     expect(markup).toContain('Bud holds this action until the office owner marks this checked');

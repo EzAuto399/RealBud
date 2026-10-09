@@ -6,7 +6,9 @@ import { mailAccountDigest, mailRealmDigest } from './connected-apps-broker.ts';
 import { type ConnectedAppOperation, type ConnectedAppOperationStore } from './connected-app-operations.ts';
 import { readMcpRpcResponse } from './composio.ts';
 
-const refuse = (message: string, status = 409): never => { throw Object.assign(new Error(message), { status }); };
+const refuse = (message: string, status = 409, code?: string): never => { throw Object.assign(new Error(message), { status, ...(code ? { code } : {}) }); };
+/** The renderer offers the owner check for this code (src/lib/connected-apps.ts). */
+export const EARLIER_CONNECTION_CODE = 'mail_receipt_earlier_connection';
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const digest = (value: unknown) => createHash('sha256').update(connectedAppCanonical(value)).digest('hex');
 /** An exact host-only namespace. These names are not workspace/worker files
@@ -71,7 +73,13 @@ export class ConnectedAppRecovery {
     signal.throwIfAborted(); this.options.assertAuthority();
     if (this.options.authority() !== before || row.workspaceDigest !== this.options.store.workspaceDigest) return refuse('The private workspace or connection changed while checking this receipt. Refresh and recover the original workspace before recording an outcome.');
     const binding = bindings.find(item => item.companyId && mailAccountDigest(item, connectedMailGatewayOrigin(this.options.gatewayOrigin())) === row.accountDigest && mailRealmDigest(item, this.options.gatewayOrigin()) === row.realmDigest);
-    if (!binding) return refuse('The original verified mail account, company or managed gateway changed. This outcome remains held. Restore/check that exact account before recording its outcome.');
+    if (!binding) {
+      // Saved under a company or managed gateway the current connection no
+      // longer has: only the owner's check in the app can settle it.
+      const realms = bindings.filter(item => item.companyId).map(item => mailRealmDigest(item, this.options.gatewayOrigin()));
+      if (realms.length && !realms.includes(row.realmDigest!)) return refuse('This send was recorded under an earlier company or managed gateway, so RealBud can no longer check it against that connection. Look in that mailbox\'s Sent mail, then the office owner can mark it checked here.', 409, EARLIER_CONNECTION_CODE);
+      return refuse('The original verified mail account, company or managed gateway changed. This outcome remains held. Restore/check that exact account before recording its outcome.');
+    }
     if (!verifiedMailAddress(binding.emailAddress)) return refuse('The current mailbox has no verified sending address. Check the exact account/profile in Connected apps before recording this outcome.');
     return binding;
   }
@@ -85,10 +93,12 @@ export class ConnectedAppRecovery {
   }
   async prepare(id: string, signal: AbortSignal) {
     const before = this.options.authority();
-    const row = this.row(id), original = await this.original(row);
+    const row = this.row(id);
+    // The current connection first, so a receipt from an earlier company or
+    // managed gateway is named as such before its original review is compared.
+    const binding = await this.binding(row, signal), original = await this.original(row);
     this.options.assertAuthority(); signal.throwIfAborted();
     if (this.options.authority() !== before) return refuse('The private workspace changed while loading the original review. Refresh this receipt.');
-    const binding = await this.binding(row, signal);
     await this.options.verifyAuthority?.();
     // The gateway's link generation can move independently while the owner
     // grant is awaited. Re-read it last; only synchronous local/CAS gates follow.

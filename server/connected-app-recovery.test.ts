@@ -126,8 +126,8 @@ describe('owner-only original mail review and manual outcome recovery', () => {
     const f = await setup();
     await expect(f.recovery.acknowledgeEarlierRealm(f.row.id, 1, signal())).rejects.toThrow(/current company and managed gateway/);
     if (change === 'issuer') f.changeOrigin('https://another-gateway.example.test'); else f.changeBinding({ companyId: 'company-b' });
-    // Exact-account recovery can no longer reach it.
-    await expect(f.recovery.prepare(f.row.id, signal())).rejects.toThrow(/original|Original|company|gateway/);
+    // Exact-account recovery can no longer reach it, and says why with a code the screen reads.
+    await expect(f.recovery.prepare(f.row.id, signal())).rejects.toMatchObject({ status: 409, code: 'mail_receipt_earlier_connection', message: expect.stringContaining('earlier company or managed gateway') });
     f.bindings.mockClear(); f.verifyAuthority.mockClear();
     const checked = await f.recovery.acknowledgeEarlierRealm(f.row.id, 1, signal());
     expect(checked).toMatchObject({ status: 'unknown', revision: 2, acknowledgement: { source: 'owner-checked-app' } }); expect(checked.reconciliation).toBeUndefined();
@@ -136,7 +136,11 @@ describe('owner-only original mail review and manual outcome recovery', () => {
   });
   it.each(['no-company', 'moved-back', 'role', 'workspace'] as const)('keeps an earlier-realm receipt unchecked when %s', async mutation => {
     const f = await setup(); f.changeBinding({ companyId: 'company-b' });
-    if (mutation === 'no-company') f.changeBinding({ companyId: undefined });
+    if (mutation === 'no-company') {
+      f.changeBinding({ companyId: undefined });
+      // Without a verifiable current company nothing proves the connection is a different one.
+      await expect(f.recovery.prepare(f.row.id, signal())).rejects.not.toMatchObject({ code: 'mail_receipt_earlier_connection' });
+    }
     if (mutation === 'moved-back') f.verifyAuthority.mockImplementationOnce(async () => { f.changeBinding({ companyId: 'company-a' }); });
     if (mutation === 'role') f.verifyAuthority.mockImplementationOnce(async () => { throw new Error('Owner permission changed.'); });
     if (mutation === 'workspace') f.bindings.mockImplementationOnce(async () => { f.changeAuthority(); return [{ ...f.review.binding, companyId: 'company-b' }]; });

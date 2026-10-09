@@ -8,7 +8,7 @@ import { api, useStore } from "@/state/store";
 import { fmtDateTime } from "@/lib/au";
 import {
   activeConnectedAccounts, APP_OPERATION_LABELS, canPrepareConnectedEmail, connectedAppOperationContext,
-  connectedEmailContext, EMAIL_APPS, needsOwnerCheck, operationsToShow, readConnectedAppOperations, selectedConnectedAccount,
+  connectedEmailContext, EARLIER_CONNECTION_CODE, EMAIL_APPS, needsEarlierConnectionCheck, needsOwnerCheck, operationsToShow, readConnectedAppOperations, selectedConnectedAccount,
   type ConnectedAppOperation, type EmailApp,
 } from "@/lib/connected-apps";
 import { resolveProductBudId } from "@/lib/product-bud";
@@ -43,14 +43,19 @@ const control = "pm-control inline-flex items-center justify-center gap-1.5 roun
 
 const sendsMail = (operation: ConnectedAppOperation) => MAIL_SENDS.has(operation.toolName) || operation.toolSlugs.some(slug => MAIL_SENDS.has(slug));
 
-/** An unconfirmed receipt with no saved account details: RealBud cannot check
- *  it, so the owner checks the app and says so here. Nothing is sent or undone. */
-export function OwnerCheckNote({ operation, busy, onCheck }: { operation: ConnectedAppOperation; busy: boolean; onCheck: () => void }) {
+/** An unconfirmed receipt RealBud cannot check: one with no saved account
+ *  details, or a send recorded under an earlier company or managed gateway. The
+ *  owner checks the app and says so here. Nothing is sent or undone. */
+export function OwnerCheckNote({ operation, busy, onCheck, earlierConnection = false }: { operation: ConnectedAppOperation; busy: boolean; onCheck: () => void; earlierConnection?: boolean }) {
   const what = operation.toolSlugs.join(", ") || operation.toolName || "this action";
   return (
     <div className="mt-2 rounded-lg border border-line p-3">
-      <p className="text-ink">This older action has no saved account details, so RealBud can’t check it for you.</p>
-      <p className="mt-1 text-ink-secondary">{sendsMail(operation)
+      <p className="text-ink">{earlierConnection
+        ? "This send was recorded under an earlier company or managed gateway, so RealBud can’t check it against today’s connection."
+        : "This older action has no saved account details, so RealBud can’t check it for you."}</p>
+      <p className="mt-1 text-ink-secondary">{earlierConnection
+        ? "Open that mailbox and look in Sent to see whether it went. Until the office owner marks this checked, Bud warns before sending the same message again."
+        : sendsMail(operation)
         ? "Open the mailbox and look in Sent to see whether it went. Bud holds new mail sends until the office owner marks this checked."
         : "Open the app and see whether it happened. Bud holds this action until the office owner marks this checked."}
         {" "}Marking it checked only records that you looked. It does not send, repeat or undo anything.</p>
@@ -250,6 +255,8 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
   const [operationsLoading, setOperationsLoading] = useState(false);
   const [operationsError, setOperationsError] = useState("");
   const [mailRecovery, setMailRecovery] = useState<MailRecoveryView | null>(null);
+  /** Receipts Inspect named as recorded under an earlier company or gateway. */
+  const [earlierConnection, setEarlierConnection] = useState<ReadonlySet<string>>(() => new Set());
   const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
   const [customApp, setCustomApp] = useState("");
@@ -286,7 +293,11 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
       const row = mailRecoveryView(await api(`/api/connected-apps/operations/${operation.id}/recovery`, { headers: companyApi.memberSessionHeaders() }));
       if (row.operationId !== operation.id || row.expectedRevision !== (operation.revision ?? 0)) throw new Error('This receipt changed. Refresh recent activity and inspect the current operation.');
       setMailRecovery(row);
-    } catch (error) { setOperationsError(error instanceof Error ? error.message : 'The original mail account could not be verified. Its outcome remains held.'); }
+    } catch (error) {
+      // Only the owner's check in the app can settle such a send; offer it in place.
+      if ((error as { code?: unknown } | null)?.code === EARLIER_CONNECTION_CODE && !operation.acknowledgement) { setEarlierConnection(previous => new Set(previous).add(operation.id)); return; }
+      setOperationsError(error instanceof Error ? error.message : 'The original mail account could not be verified. Its outcome remains held.');
+    }
     finally { setRecoveryBusy(false); }
   };
   const recordMailOutcome = async (outcome: 'sent' | 'not-sent') => {
@@ -531,11 +542,12 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
                   <p className="mt-1 break-all text-ink-secondary">Operation {operation.id}</p>
                   {operation.repeatOf ? <p className="mt-1 text-ink-secondary">Separately approved intentional repeat of {operation.repeatOf}.</p> : null}
                   {operation.reconciliation ? <p role="status" className="mt-2 text-ink-secondary">You recorded after inspecting the mail app: message {operation.reconciliation.outcome === 'sent' ? 'was sent' : 'was not sent'}. Manual evidence · {fmtDateTime(Date.parse(operation.reconciliation.at))}. The provider outcome remains {operation.status}. A new send still needs its own approval.</p> : null}
-                  {operation.identified && MAIL_SENDS.has(operation.toolName) && (operation.status === 'unknown' || operation.status === 'failed') && !operation.reconciliation ? (
+                  {operation.identified && MAIL_SENDS.has(operation.toolName) && (operation.status === 'unknown' || operation.status === 'failed') && !operation.reconciliation && !needsEarlierConnectionCheck(operation, earlierConnection) ? (
                     <button type="button" className={`${control} mt-2`} disabled={recoveryBusy || budBusy} onClick={() => void prepareMailRecovery(operation)}>Inspect and record mail outcome</button>
                   ) : null}
                   {needsOwnerCheck(operation) ? <OwnerCheckNote operation={operation} busy={recoveryBusy} onCheck={() => void acknowledgeOperation(operation)} /> : null}
-                  {operation.acknowledgement ? <p role="status" className="mt-2 text-ink-secondary">Marked checked in the app · {fmtDateTime(Date.parse(operation.acknowledgement.at))}. The recorded outcome stays unknown; a new action still needs its own approval.</p> : null}
+                  {needsEarlierConnectionCheck(operation, earlierConnection) ? <OwnerCheckNote operation={operation} earlierConnection busy={recoveryBusy} onCheck={() => void acknowledgeOperation(operation)} /> : null}
+                  {operation.acknowledgement ? <p role="status" className="mt-2 text-ink-secondary">Marked checked in the app · {fmtDateTime(Date.parse(operation.acknowledgement.at))}. The recorded outcome stays {operation.status === 'failed' ? 'failed' : 'unknown'}; a new action still needs its own approval.</p> : null}
                   {!operation.identified && operation.status === 'failed' ? <p className="mt-2 text-ink-secondary">The app reported a failure. Check it in the app before asking Bud to try again.</p> : null}
                   {mailRecovery?.operationId === operation.id ? (
                     <div className="mt-3 rounded-lg border border-line p-3">

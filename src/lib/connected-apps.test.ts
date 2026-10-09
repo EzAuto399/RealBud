@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  activeConnectedAccounts, canPrepareConnectedEmail, connectedAppOperationContext, connectedEmailContext, needsOwnerCheck, operationsToShow,
+  activeConnectedAccounts, canPrepareConnectedEmail, connectedAppOperationContext, connectedEmailContext, needsEarlierConnectionCheck, needsOwnerCheck, operationsToShow,
   readConnectedAppOperations, readConnectedAppsStatus, selectedConnectedAccount, type ConnectedAppsStatus,
 } from "./connected-apps";
 import { fileAttachment } from "./composer-attachments";
@@ -65,8 +65,29 @@ describe("connected email setup and account choice", () => {
     expect(operationsToShow(parsed).map(row => row.id)).toEqual(['identified', 'older', 'recent-0', 'recent-1', 'recent-2', 'recent-3', 'recent-4']);
     const checked = readConnectedAppOperations({ operations: [{ ...legacy, revision: 2, acknowledgement: { at: NOW, source: 'owner-checked-app' } }] })[0];
     expect(checked.acknowledgement).toEqual({ at: new Date(NOW).toISOString() }); expect(needsOwnerCheck(checked)).toBe(false);
-    for (const bad of [{ status: 'failed' }, { effectDigest: 'c'.repeat(64) }, { acknowledgement: { at: NOW, source: 'model' } }])
+    for (const bad of [{ status: 'failed' }, { effectDigest: 'c'.repeat(64), status: 'started' }, { effectDigest: 'c'.repeat(64), status: 'succeeded' }, { acknowledgement: { at: NOW, source: 'model' } }])
       expect(() => readConnectedAppOperations({ operations: [{ ...legacy, acknowledgement: { at: NOW, source: 'owner-checked-app' }, ...bad }] })).toThrow();
+  });
+  it('loads an owner-checked send from an earlier company or gateway and stops asking about it', () => {
+    const at = (offset: number) => new Date(NOW - offset).toISOString();
+    const earlier = { id: 'earlier', threadId: 'thread', toolName: 'GMAIL_SEND_EMAIL', toolSlugs: [], status: 'unknown', startedAt: at(86_400_000), revision: 1, effectDigest: 'c'.repeat(64) };
+    const checked = { ...earlier, id: 'checked', revision: 2, acknowledgement: { at: NOW, source: 'owner-checked-app' } };
+    const failedChecked = { ...checked, id: 'failed-checked', status: 'failed', finishedAt: at(5) };
+    const parsed = readConnectedAppOperations({ operations: [earlier, checked, failedChecked] });
+    expect(parsed.find(row => row.id === 'checked')).toMatchObject({ identified: true, acknowledgement: { at: new Date(NOW).toISOString() } });
+    expect(parsed.find(row => row.id === 'failed-checked')).toMatchObject({ identified: true, status: 'failed' });
+    // Only the unchecked one still leads the list as needing the owner.
+    expect(operationsToShow(parsed, 0).map(row => row.id)).toEqual(['earlier']);
+  });
+  it('offers the owner check only for an unconfirmed identified send Inspect named as from an earlier connection', () => {
+    const base = { id: 'earlier', threadId: 'thread', toolName: 'GMAIL_SEND_EMAIL', toolSlugs: [], status: 'unknown' as const, startedAt: new Date(NOW).toISOString(), identified: true };
+    const refused = new Set(['earlier']);
+    expect(needsEarlierConnectionCheck(base, refused)).toBe(true);
+    expect(needsEarlierConnectionCheck({ ...base, status: 'failed' }, refused)).toBe(true);
+    expect(needsEarlierConnectionCheck(base, new Set())).toBe(false);
+    for (const other of [{ status: 'started' as const }, { status: 'succeeded' as const }, { identified: undefined }, { acknowledgement: { at: base.startedAt } },
+      { reconciliation: { outcome: 'sent' as const, at: base.startedAt, source: 'manual-app-inspection' as const } }])
+      expect(needsEarlierConnectionCheck({ ...base, ...other }, refused)).toBe(false);
   });
   it("expires access at the action boundary and rejects future or invalid clocks", () => {
     expect(canPrepareConnectedEmail(status(), "gmail", "", NOW + 300_000)).toBe(true);
