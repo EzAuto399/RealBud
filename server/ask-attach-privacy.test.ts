@@ -8,7 +8,13 @@ import { ASK_CSV_REPORT_SUFFIX } from "./ask-csv-inspect.ts";
 
 // Inject only the admission boundary. File creation, contents and cleanup stay
 // real; native Windows ACL behavior is covered in ask-attach.test.ts.
-vi.mock("./windows-file-privacy.ts", () => ({ windowsFilePrivacySync: vi.fn() }));
+// Existing folders are admitted through windows-private-admission.ts, whose
+// batch call is recorded here as the same single verify.
+vi.mock("./windows-file-privacy.ts", async () => {
+  const windowsFilePrivacySync = vi.fn();
+  return { windowsFilePrivacySync, windowsFilePrivacyBatchSync: (operations: Array<{ path: string; kind: "file" | "directory"; action: string }>) =>
+    operations.map(operation => { windowsFilePrivacySync(operation.path, operation.kind, operation.action === "restrict"); return { ...operation, applied: true }; }) };
+});
 const roots: string[] = [];
 const input = { name: "statement.csv", contentBase64: Buffer.from("fictional selected bytes").toString("base64") };
 const fresh = () => { const root = realpathSync(mkdtempSync(join(tmpdir(), "realbud-attach-admission-"))); roots.push(root); return root; };

@@ -10,7 +10,7 @@ import { applyManagedModelProfile, ensurePropertyPack, propertyProfileDir, prope
 const GATEWAY = 'https://gateway.fictional.test/v1';
 import { ensureProfileDirectories, writeProfileFiles } from './hermes-profile-storage.ts';
 import { windowsFilePrivacySync } from './windows-file-privacy.ts';
-import { addFixtureUsersRead, privateFixtureDirectory, privateFixtureRoot, profileAclWitness, writePrivateFixtureFile, WINDOWS_PROFILE_TEST_OPTIONS } from './testing/private-profile-fixture.ts';
+import { addFixtureInheritableGrant, addFixtureUsersRead, privateFixtureDirectory, privateFixtureRoot, profileAclWitness, writePrivateFixtureFile, WINDOWS_PROFILE_TEST_OPTIONS } from './testing/private-profile-fixture.ts';
 
 const roots: string[] = [];
 const fixture = () => {
@@ -61,35 +61,64 @@ describe.skipIf(process.platform !== 'win32')('native Windows profile setup', WI
     expect(profileAclWitness([...parents, ...paths])).toEqual(aclBefore);
   });
 
-  it('refuses an existing inherited home without repairing it or creating descendants', () => {
+  // An older install's home that only inherits private grants is protected and
+  // admitted (server/windows-private-admission.ts), then used as usual.
+  it('repairs an existing home that only inherits private grants, then installs the profile', () => {
     const root = fixture(), home = join(root, 'inherited-home');
     mkdirSync(home);
-    const before = profileAclWitness([root, home]);
-    expect(before[1]!.protected).toBe(false);
+    expect(profileAclWitness([home])[0]).toMatchObject({ protected: false, ownerAllowed: true, onlyPrivateGrants: true, hasDeny: false });
+    expect(() => windowsFilePrivacySync(home, 'directory')).toThrow(/windows-acl:inheritance-not-protected/);
+    expect(ensurePropertyPack(home).wrote).toContain('config.yaml');
+    expect(profileAclWitness([home])[0]).toMatchObject({
+      protected: true, currentOwner: true, onlyPrivateGrants: true, currentFullControl: true, hasDeny: false,
+    });
+    expect(() => windowsFilePrivacySync(home, 'directory')).not.toThrow();
+  });
+
+  it('refuses an inherited home with an extra grant without repairing it or creating descendants', () => {
+    const root = fixture(), shared = join(root, 'shared'), home = join(shared, 'inherited-home');
+    privateFixtureDirectory(shared);
+    addFixtureInheritableGrant(shared, 'everyone');
+    mkdirSync(home);
+    const before = profileAclWitness([shared, home]);
+    expect(before[1]).toMatchObject({ protected: false, onlyPrivateGrants: false });
     for (let attempt = 0; attempt < 2; attempt++) {
-      expect(() => ensurePropertyPack(home)).toThrow(/windows-acl:inheritance-not-protected/);
+      expect(() => ensurePropertyPack(home)).toThrow(/windows-acl:grant-not-allowed/);
       expect(readdirSync(home)).toEqual([]);
-      expect(() => windowsFilePrivacySync(home, 'directory')).toThrow(/windows-acl:inheritance-not-protected/);
-      expect(profileAclWitness([root, home])).toEqual(before);
+      expect(profileAclWitness([shared, home])).toEqual(before);
     }
   });
 
-  it.each(['inherited', 'users-read'] as const)('refuses %s config before changing the model choice and preserves its rejected ACL', kind => {
+  it('repairs a config that only inherits private grants, then changes the model choice', () => {
+    const root = fixture(), home = join(root, 'owned-home');
+    ensurePropertyPack(home);
+    applyManagedModelProfile(GATEWAY, { root: home, choice: 'sonnet-high' });
+    const profile = propertyProfileDir(home), config = join(profile, 'config.yaml'), env = join(profile, '.env');
+    writePrivateFixtureFile(env, 'OTHER_SETTING=fictional-retained\n');
+    const configBytes = readFileSync(config), envBytes = readFileSync(env), envAcl = profileAclWitness([env]);
+    unlinkSync(config);
+    writeFileSync(config, configBytes); // Deliberately inherited, never fixture-repaired.
+    expect(profileAclWitness([config])[0]).toMatchObject({ protected: false, onlyPrivateGrants: true });
+    expect(applyManagedModelProfile(GATEWAY, { root: home, choice: 'sonnet-xhigh' })).toMatchObject({ choice: 'sonnet-xhigh' });
+    expect(profileAclWitness([config])[0]).toMatchObject({
+      protected: true, currentOwner: true, onlyPrivateGrants: true, currentFullControl: true, hasDeny: false,
+    });
+    expect(readFileSync(env).equals(envBytes)).toBe(true);
+    expect(profileAclWitness([env])).toEqual(envAcl);
+  });
+
+  it('refuses a config with an extra grant before changing the model choice and preserves its rejected ACL', () => {
     const root = fixture(), home = join(root, 'owned-home');
     ensurePropertyPack(home);
     applyManagedModelProfile(GATEWAY, { root: home, choice: 'sonnet-high' });
     const profile = propertyProfileDir(home), config = join(profile, 'config.yaml'), env = join(profile, '.env');
     writePrivateFixtureFile(env, 'OTHER_SETTING=fictional-retained\n');
     const configBytes = readFileSync(config), envBytes = readFileSync(env);
-    if (kind === 'inherited') {
-      unlinkSync(config);
-      writeFileSync(config, configBytes); // Deliberately inherited, never fixture-repaired.
-    } else addFixtureUsersRead(config);
+    addFixtureUsersRead(config);
     const aclPaths = [root, home, join(home, 'profiles'), profile, config, env];
     const before = profileAclWitness(aclPaths);
-    if (kind === 'inherited') expect(before[4]!.protected).toBe(false);
-    else expect(before[4]).toMatchObject({ protected: true, onlyPrivateGrants: false, currentFullControl: true, hasDeny: false });
-    const diagnostic = kind === 'inherited' ? /windows-acl:inheritance-not-protected/ : /windows-acl:grant-not-allowed/;
+    expect(before[4]).toMatchObject({ protected: true, onlyPrivateGrants: false, currentFullControl: true, hasDeny: false });
+    const diagnostic = /windows-acl:grant-not-allowed/;
     for (let attempt = 0; attempt < 2; attempt++) {
       expect(() => applyManagedModelProfile(GATEWAY, { root: home, choice: 'sonnet-xhigh' }))
         .toThrow(diagnostic);

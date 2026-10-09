@@ -1,10 +1,11 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { windowsFilePrivacy, windowsFilePrivacyBatch, windowsFilePrivacyBatchSync, windowsFilePrivacySync } from './windows-file-privacy.ts';
+import { syncHostExecArgv, windowsFilePrivacy, windowsFilePrivacyBatch, windowsFilePrivacyBatchSync, windowsFilePrivacySync } from './windows-file-privacy.ts';
 import { writeNewPrivateFile } from './private-file.ts';
 
 const roots: string[] = [];
@@ -86,6 +87,34 @@ process.stdin.on('data', chunk => {
   }
 });
 `;
+
+describe('the synchronous host worker flags', () => {
+  // A Worker given the parent's -e/--input-type refuses to start, and the sync
+  // caller then waits out the host timeout (a `node --input-type=module -e` child).
+  it('keeps the parent flags but never its eval entry or input type', () => {
+    expect(syncHostExecArgv(['--experimental-strip-types', '--input-type=module', '-e', 'await go()'])).toEqual(['--experimental-strip-types']);
+    expect(syncHostExecArgv(['--input-type', 'module', '--eval', 'x', '--no-warnings'])).toEqual(['--no-warnings']);
+    expect(syncHostExecArgv(['--print=1', '-p', '2', '--eval=3', '--max-old-space-size=512'])).toEqual(['--max-old-space-size=512']);
+    expect(syncHostExecArgv([])).toEqual([]);
+  });
+
+  it('starts a file worker from a module-input eval child with the filtered flags', async () => {
+    const folder = await mkdtemp(join(tmpdir(), 'realbud-sync-host-flags-'));
+    try {
+      const entry = join(folder, 'notify.mjs');
+      await writeFile(entry, "import { workerData } from 'node:worker_threads'; Atomics.store(workerData, 0, 1); Atomics.notify(workerData, 0);");
+      const child = (filtered: boolean) => `import { Worker } from 'node:worker_threads';
+        const { syncHostExecArgv } = await import(${JSON.stringify(new URL('./windows-file-privacy.ts', import.meta.url).href)});
+        const signal = new Int32Array(new SharedArrayBuffer(4));
+        const worker = new Worker(new URL(${JSON.stringify(pathToFileURL(entry).href)}), { workerData: signal, execArgv: ${filtered ? 'syncHostExecArgv(process.execArgv)' : 'process.execArgv'} });
+        worker.on('error', () => {}); worker.unref();
+        process.stdout.write(Atomics.wait(signal, 0, 0, 3_000));`;
+      const run = async (filtered: boolean) => (await promisify(execFile)(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', child(filtered)], { timeout: 30_000 })).stdout;
+      expect(await run(false)).toBe('timed-out');
+      expect(await run(true)).toBe('ok');
+    } finally { await rm(folder, { recursive: true, force: true }); }
+  });
+});
 
 describe.skipIf(process.platform === 'win32')('synchronous admissions through the long-lived host', () => {
   const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;

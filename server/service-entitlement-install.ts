@@ -26,7 +26,7 @@ export async function installDesktopServiceEntitlement(input: {
   if (input.retirePreviousKeys !== undefined && typeof input.retirePreviousKeys !== 'boolean') fail();
   if (!/^[a-f0-9]{64}$/.test(input.expectedPublicKeySha256)) fail();
   return withServiceEntitlementInstallLock(input.dataDirectory, async () => {
-    const { kept: _operatorInstallsAlways, ...result } = await installLocked({ ...input, bundle: await readPrivateJson(input.bundlePath, 64_000) });
+    const { kept: _operatorInstallsAlways, ...result } = await installLocked({ ...input, bundle: await readPrivateJson(input.bundlePath, 64_000, { repair: false }) });
     return result;
   });
 }
