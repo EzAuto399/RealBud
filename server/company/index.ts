@@ -113,6 +113,15 @@ export function createCompanyKernel(pool: Pool, options: { portalBridge?: Compan
     if (actor.role !== 'owner') throw new CompanyError('forbidden');
   }
 
+  /** A host identity is a mutation precondition, never membership authority.
+   * Hold the bootstrap identity through the complete credential/enrollment commit. */
+  async function assertHostCompany(client: PoolClient, expectedCompanyId: string): Promise<void> {
+    uuid(expectedCompanyId);
+    await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('realbud-company-bootstrap',0))");
+    const current = await client.query(`SELECT id FROM ${S}.companies ORDER BY id LIMIT 2`);
+    if (current.rows.length !== 1 || current.rows[0].id !== expectedCompanyId) throw new CompanyError('host_identity_mismatch');
+  }
+
   async function newSession(client: PoolClient, companyId: string, memberId: string) {
     const sessionToken = token();
     const id = randomUUID();
@@ -181,7 +190,7 @@ export function createCompanyKernel(pool: Pool, options: { portalBridge?: Compan
     }
   }
 
-  const memberCredentials = createMemberCredentialApi({ transaction, authenticated, newSession, context, bearer });
+  const memberCredentials = createMemberCredentialApi({ transaction, authenticated, newSession, context, bearer, assertHostCompany });
 
   // Approval settings are append-only department records; the SQL decides who
   // may read (scope_allowed read) and write (scope_allowed write, owners pass).
@@ -285,6 +294,15 @@ export function createCompanyKernel(pool: Pool, options: { portalBridge?: Compan
       return authenticated(sessionToken, async (_client, actor) => actor);
     },
 
+    /** Trusted local persistence only. Prepare slow material before acquiring
+     * this lease; the callback must not make provider or network requests. */
+    withOwnerAuthority<T>(sessionToken: string, commit: () => Promise<T>): Promise<T> {
+      return authenticated(sessionToken, async (_client, actor) => {
+        owner(actor);
+        return commit();
+      });
+    },
+
     revokeSession(sessionToken: string): Promise<void> {
       const tokenHash = bearer(sessionToken);
       return transaction(async (client) => {
@@ -321,10 +339,11 @@ export function createCompanyKernel(pool: Pool, options: { portalBridge?: Compan
     },
 
     /** Possession of a one-use invitation enrolls a member; it does not verify email. */
-    async redeemInvitation(invitationToken: string, credential?: unknown) {
+    async redeemInvitation(invitationToken: string, credential?: unknown, expectedCompanyId?: string) {
       const tokenHash = bearer(invitationToken);
       const prepared = credential === undefined ? undefined : await prepareInitialCredential(credential);
       return transaction(async (client) => {
+        if (expectedCompanyId !== undefined) await assertHostCompany(client, expectedCompanyId);
         const selected = await client.query(`SELECT i.* FROM ${S}.invitations i JOIN ${S}.members m
           ON m.company_id=i.company_id AND m.id=i.issued_by
           WHERE i.token_hash=$1 AND i.redeemed_at IS NULL AND i.revoked_at IS NULL

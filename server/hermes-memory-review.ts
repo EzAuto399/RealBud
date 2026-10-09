@@ -13,7 +13,7 @@ import { propertyProfileDir } from './hermes-pack.ts';
 import { readRuntimeSelection, releaseHome, runtimeCommit, selectedHermesCli } from './hermes-runtime-selection.ts';
 import { spawnCli, killCliTree } from './procs.ts';
 import { DATA_DIR } from './config.ts';
-import { ensurePrivateRoot, sandboxedLaunch, trackSandboxedChild } from './worker-network-sandbox.ts';
+import { assertWorkerIsolation, ensurePrivateRoot, sandboxedLaunch, trackSandboxedChild } from './worker-network-sandbox.ts';
 import { containsCredential } from './redact.ts';
 import { MEMORY_REVIEW_API, MEMORY_REVIEW_ERRORS, MEMORY_LEARNING_API, MEMORY_LEARNING_KEPT_LIMIT, memoryReviewId, memoryReviewDigest,
   parseMemoryReviewPage, parseMemoryReviewPreview, parseMemoryReviewDecision,
@@ -154,6 +154,7 @@ export function runMemoryReviewHelper(context: MemoryReviewContext, request: Req
     const env = memoryReviewChildEnvironment(context);
     let launch: ReturnType<typeof sandboxedLaunch>;
     try {
+      assertWorkerIsolation();
       // A fresh profile has not staged a proposal yet. Validate/create its
       // parent on the host; the helper still receives only pending/memory.
       ensurePrivateRoot(join(context.profileDirectory, 'pending'));

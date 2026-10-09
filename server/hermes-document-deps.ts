@@ -16,7 +16,7 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { DATA_DIR } from "./config.ts";
-import { sandboxedLaunch } from "./worker-network-sandbox.ts";
+import { assertWorkerIsolation, sandboxedLaunch } from "./worker-network-sandbox.ts";
 import { restrictNewSync } from "./atomic.ts";
 import { augmentedPath } from "./env-path.ts";
 import { hermesHome, runtimeCli } from "./hermes-paths.ts";
@@ -139,6 +139,7 @@ const runPython: PythonRun = (python, args, options) => new Promise((resolve, re
   const env = { ...options.env };
   let launch: ReturnType<typeof sandboxedLaunch>;
   try {
+    assertWorkerIsolation();
     launch = sandboxedLaunch(python, args, env, { loopbackPorts: [], writable: [options.cwd, ...(options.writable ?? [])],
       reads: [["deny", DATA_DIR], ["allow", runtimeHomeOf(python)], ["allow", options.cwd]] });
   } catch (error) { reject(error); return; }

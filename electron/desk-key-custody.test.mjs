@@ -70,7 +70,7 @@ describe('desktop encryption key custody with a mocked safeStorage boundary', ()
     expect(held).toBeTruthy(); expect(fs.readFileSync(path.join(f.dir, held))).toEqual(oldWrap);
     expect(f.resolve().hex === live.toString('hex')).toBe(true);
   });
-  it.each(['workflow-state.sqlite', 'private-workspace-restore.json', 'company-installation/private/saved-mail.json', 'desk.json.quarantine-fixture'])('refuses a new key when the desk is missing but %s exists', name => {
+  it.each(['workflow-state.sqlite', 'private-workspace-restore.json', 'company-installation/private/saved-mail.json', 'desk.json.quarantine-fixture', 'artifacts/saved.bin', 'desk-backups/desk-3.json'])('refuses a new key when the desk is missing but %s exists', name => {
     const f = fixture(), file = path.join(f.dir, name);
     fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'fictional encrypted state');
     expect(() => f.resolve()).toThrow(/needs recovery/);

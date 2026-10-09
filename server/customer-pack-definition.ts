@@ -21,3 +21,6 @@ const published = (file: string) => (): CustomerPack => JSON.parse(readFileSync(
 export const austinCustomerPack = published('realbud-austin-office-v1.json');
 export const austinAccountsCustomerPack = published('realbud-austin-accounts-v1.json');
 export const austinPropertyCustomerPack = published('realbud-austin-property-v1.json');
+/** Current catalog revisions; historical loaders above preserve the published bytes and provenance. */
+export const latestAustinCustomerPack = published('realbud-austin-office-r7.json');
+export const latestAustinAccountsCustomerPack = published('realbud-austin-accounts-r3.json');

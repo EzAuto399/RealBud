@@ -2,6 +2,7 @@
  * finalized customer invoices, and the owner's margin view. Modelvia is a
  * fictional stand-in shaped from its client-key routes (`main` 927a5c2); every
  * identity, key and amount is fictional and nothing reaches a network. */
+import { syncTestResalePolicy } from './testing-resale-policy.ts';
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
@@ -16,7 +17,8 @@ import { invoiceHtml } from './invoice-html.ts';
 import { modelviaClientBilling } from './modelvia-client-billing.ts';
 import { customerTermsPolicy, PRODUCTION_RESALE_MARKUP_BASIS_POINTS, PRODUCTION_RESALE_TERMS_REFERENCE, termsForCompany } from './modelvia-keys.ts';
 import { closeOfficeMonth, marginCsv, officeMargins, previousPeriod } from './office-ai-billing.ts';
-import { signOperatorToken } from './operator-token.ts';
+import { OPERATOR_ROLE, signOperatorToken } from './operator-token.ts';
+import { closeMonth } from './operator-billing.ts';
 import { bindOfficeCustomer } from './provisioning.ts';
 
 type Row = Record<string, unknown>;
@@ -75,23 +77,24 @@ function fakeModelvia(options: { marginReport?: Row[]; unsettledRequests?: numbe
 
 /** A resale office: bound to its Modelvia customer, September terms at care A$125
  * + AI resale at 30%, accepted by its billing owner. The clock is 1 October. */
-function resaleOffice(aiUsage: AiUsageTerms | null = RESALE, clientFunded: string[] = []) {
+async function resaleOffice(aiUsage: AiUsageTerms | null = RESALE, clientFunded: string[] = []) {
   const f = fixture(); cleanups.push(f.close);
   const billing = new BillingService(f.ledger, undefined, { internalCompanyId: INTERNAL });
   const published = billing.commercialTerms!.publish(careTermsDraft(f, 'care-v1', '12500', aiUsage ? { aiUsage } : {}));
   const acceptance = billing.commercialTerms!.accept(f.owner, '2026-09', 'care-v1', published.digest);
   bindOfficeCustomer(f.ledger, f.tenant.companyId, CUSTOMER);
   f.setTime(Date.parse('2026-10-01T00:00:00Z'));
+  await syncTestResalePolicy(f.ledger, f.tenant.companyId);
   const m = fakeModelvia();
   const options = { billing, modelvia: m.client, clientFundedCompanies: new Set(clientFunded) };
   return { f, billing, acceptance, m, options, close: (period = '2026-09', version = 'care-v1', deferAi = false) => closeOfficeMonth(options, f.tenant.companyId, period, version, { deferAi }) };
 }
 
-test('production resale terms: 30% markup, and each office policy carries that office\'s own acceptance reference', () => {
+test('production resale terms: 30% markup, and each office policy carries that office\'s own acceptance reference', async () => {
   const policy = customerTermsPolicy({ REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS: '3000', REALBUD_MODELVIA_RESALE_TERMS_REFERENCE: PRODUCTION_RESALE_TERMS_REFERENCE, REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES: 'company-owner' });
   assert.ok(!('unavailable' in policy));
   assert.deepEqual(policy.resale, { clientMarkupBasisPoints: 3000, termsReference: PRODUCTION_RESALE_TERMS_REFERENCE });
-  const { f, acceptance } = resaleOffice();
+  const { f, acceptance } = await resaleOffice();
   const accepted = f.db.all<{ body: string }>("SELECT body FROM events WHERE kind='ai_resale_terms_accepted'").map(r => JSON.parse(r.body));
   const reference = resaleAcceptanceReference(PRODUCTION_RESALE_TERMS_REFERENCE, acceptance);
   assert.deepEqual(accepted, [{ period: '2026-09', version: 'care-v1', markupBasisPoints: 3000, termsReference: PRODUCTION_RESALE_TERMS_REFERENCE, acceptanceReference: reference }]);
@@ -103,7 +106,7 @@ test('production resale terms: 30% markup, and each office policy carries that o
 });
 
 test('month close: one invoice = care + the finalized Modelvia AI invoice at its exact cents and GST, collected as one Square amount', async () => {
-  const { f, billing, m, close } = resaleOffice();
+  const { f, billing, m, close } = await resaleOffice();
   m.usage.set(`${CUSTOMER}:2026-09`, { grossNano: '12340000000' });
   m.finalize('CI-00000007', '2026-09', '1234', '112');
   const closed = await close();
@@ -134,12 +137,14 @@ test('month close: one invoice = care + the finalized Modelvia AI invoice at its
   assert.equal(again.ai, 'already_closed'); assert.deepEqual(again.invoice, invoice); assert.equal(m.calls.length, calls);
   // Never double-billed: the next month's close leaves CI-00000007 alone, and a direct attempt is refused.
   billing.commercialTerms!.accept(f.owner, '2026-10', 'care-v2', billing.commercialTerms!.publish(careTermsDraft(f, 'care-v2', '12500', { period: '2026-10', aiUsage: RESALE })).digest);
+  await syncTestResalePolicy(f.ledger, f.tenant.companyId);
   f.setTime(Date.parse('2026-11-01T00:00:00Z'));
   const october = await close('2026-10', 'care-v2');
   assert.equal(october.ai, 'no_ai_usage');
   assert.deepEqual(october.invoice.lines.map(l => l.amountCents), ['12500']);
   assert.equal(october.invoice.aiUsage, undefined);
   billing.commercialTerms!.accept(f.owner, '2026-11', 'care-v3', billing.commercialTerms!.publish(careTermsDraft(f, 'care-v3', '12500', { period: '2026-11', aiUsage: RESALE })).digest);
+  await syncTestResalePolicy(f.ledger, f.tenant.companyId);
   f.setTime(Date.parse('2026-12-01T00:00:00Z'));
   assert.throws(() => billing.finalizeCommercialInvoice('company-a', '2026-11', 'care-v3', { invoices: [{ id: 'CI-00000007', period: '2026-09', totalCents: '1234', gstCents: '112' }] }), /modelvia_invoice_already_consolidated/);
   assert.equal(f.db.all("SELECT id FROM invoices WHERE period='2026-11'").length, 0);
@@ -148,7 +153,7 @@ test('month close: one invoice = care + the finalized Modelvia AI invoice at its
 });
 
 test('accepted resale with zero AI usage closes care only without claiming Modelvia bills it separately', async () => {
-  const { f, billing, close, acceptance } = resaleOffice();
+  const { f, billing, close, acceptance } = await resaleOffice();
   const current = billing.commercialTerms!.current(f.owner, '2026-09');
   assert.equal(current.terms.aiUsage?.billing, 'resale');
   assert.deepEqual(current.acceptance, acceptance);
@@ -161,7 +166,7 @@ test('accepted resale with zero AI usage closes care only without claiming Model
 });
 
 test('not finalized at Modelvia: the close waits by default; --defer-ai issues care only and the next month consolidates it once', async () => {
-  const { f, billing, m, close } = resaleOffice();
+  const { f, billing, m, close } = await resaleOffice();
   m.usage.set(`${CUSTOMER}:2026-09`, { grossNano: '50000000000' });
   await assert.rejects(close(), /modelvia_invoice_not_finalized/);
   assert.equal(f.db.all('SELECT id FROM invoices').length, 0);
@@ -172,11 +177,12 @@ test('not finalized at Modelvia: the close waits by default; --defer-ai issues c
   assert.equal(deferred.ai, 'deferred');
   assert.deepEqual(deferred.invoice.lines.map(l => l.amountCents), ['12500']);
   assert.deepEqual(deferred.invoice.aiUsage, { modelviaInvoices: [], deferredPeriods: ['2026-09'], modelviaCustomerId: CUSTOMER, chargeDetail: 'all_in' });
-  assert.match(invoiceHtml(deferred.invoice), /AI usage for 2026-09 was not yet finalized/);
+  assert.match(invoiceHtml(deferred.invoice), /AI usage for 2026-09 was deferred/);
   assert.equal(f.db.all("SELECT seq FROM events WHERE kind='ai_usage_deferred'").length, 1);
   // Modelvia finalizes September; October's close carries it, at its exact total.
   m.finalize('CI-00000009', '2026-09', '65000', '5909');
   billing.commercialTerms!.accept(f.owner, '2026-10', 'care-v2', billing.commercialTerms!.publish(careTermsDraft(f, 'care-v2', '12500', { period: '2026-10', aiUsage: RESALE })).digest);
+  await syncTestResalePolicy(f.ledger, f.tenant.companyId);
   f.setTime(Date.parse('2026-11-01T00:00:00Z'));
   const october = await close('2026-10', 'care-v2');
   assert.equal(october.ai, 'consolidated');
@@ -185,30 +191,30 @@ test('not finalized at Modelvia: the close waits by default; --defer-ai issues c
 });
 
 test('refusals: payment started at Modelvia, another seller, an unbound office, no client key', async () => {
-  const paid = resaleOffice();
+  const paid = await resaleOffice();
   paid.m.finalize('CI-00000011', '2026-09', '1000', '91', { paymentState: 'ready' });
   await assert.rejects(paid.close(), /modelvia_invoice_payment_started/);
-  const foreign = resaleOffice();
+  const foreign = await resaleOffice();
   foreign.m.finalize('CI-00000012', '2026-09', '1000', '91', { seller: { legalName: 'Someone Else', abn: '99999999999' } });
   await assert.rejects(foreign.close(), /modelvia_invoice_seller_mismatch/);
-  const keyless = resaleOffice();
+  const keyless = await resaleOffice();
   await assert.rejects(closeOfficeMonth({ ...keyless.options, modelvia: undefined }, 'company-a', '2026-09', 'care-v1'), /modelvia_client_unconfigured/);
   assert.equal(paid.f.db.all('SELECT id FROM invoices').length + foreign.f.db.all('SELECT id FROM invoices').length + keyless.f.db.all('SELECT id FROM invoices').length, 0);
 });
 
 test('an internal or client-funded office stays free: care only, Modelvia never asked; AI terms for it are refused', async () => {
-  const free = resaleOffice(null, ['company-a']);
+  const free = await resaleOffice(null, ['company-a']);
   free.m.finalize('CI-00000013', '2026-09', '1000', '91');
   const closed = await free.close();
   assert.equal(closed.ai, 'care_only'); assert.deepEqual(closed.invoice.lines.map(l => l.amountCents), ['12500']); assert.equal(free.m.calls.length, 0);
-  const mistaken = resaleOffice(RESALE, ['company-a']);
+  const mistaken = await resaleOffice(RESALE, ['company-a']);
   await assert.rejects(mistaken.close(), /client_funded_office_ai_not_billable/);
   // The internal cost account is never billable at all.
   assert.throws(() => free.billing.finalizeCommercialInvoice(INTERNAL, '2026-09', 'care-v1'), /internal_usage_not_billable/);
 });
 
 test('margin view: AI retail, Modelvia cost, markup, care, total and margin per office, from analytics or the margin report, with CSV', async () => {
-  const { f, billing, m, options, close } = resaleOffice();
+  const { f, billing, m, options, close } = await resaleOffice();
   f.ledger.provisionTenant({ ...f.tenant, companyId: 'company-owner', licenseId: 'license-owner', customerName: 'Owner, "Office" =HQ', goLiveAt: f.tenant.goLiveAt });
   bindOfficeCustomer(f.ledger, 'company-owner', 'realbud-owner');
   // Resale: A$13.00 retail on A$10.00 Modelvia cost (30%). Owner: A$2.00 cost, no retail.
@@ -219,7 +225,7 @@ test('margin view: AI retail, Modelvia cost, markup, care, total and margin per 
   await close();
   const report = await officeMargins({ ...options, clientFundedCompanies: new Set(['company-owner']) }, '2026-09');
   const [a, owner] = report.rows;
-  assert.deepEqual({ ...a, invoiceId: undefined }, { companyId: 'company-a', customerName: 'Fictional Agency A', billing: 'resale', markupBasisPoints: 3000, proposedMarkupBasisPoints: null, markupPolicy: 'not_synced', aiRetailCents: '130', modelviaCostCents: '100', markupCents: '30',
+  assert.deepEqual({ ...a, invoiceId: undefined }, { companyId: 'company-a', customerName: 'Fictional Agency A', billing: 'resale', markupBasisPoints: 3000, proposedMarkupBasisPoints: null, markupPolicy: 'synced', aiRetailCents: '130', modelviaCostCents: '100', markupCents: '30',
     careCents: '12500', totalCents: '12630', marginCents: '12530', invoiceId: undefined, invoiceState: 'closed', aiBilledCents: '130', modelviaInvoices: ['CI-00000021'], modelviaSource: 'analytics', note: null });
   assert.deepEqual([owner.billing, owner.aiRetailCents, owner.modelviaCostCents, owner.markupCents, owner.careCents, owner.totalCents, owner.marginCents, owner.invoiceState],
     ['client_funded', '0', '20', '-20', '0', '0', '-20', 'not_closed']);
@@ -227,7 +233,7 @@ test('margin view: AI retail, Modelvia cost, markup, care, total and margin per 
   assert.deepEqual(report.totals, { aiRetailCents: '130', modelviaCostCents: '120', markupCents: '10', careCents: '12500', totalCents: '12630', marginCents: '12510' });
   const csv = marginCsv(report).split('\r\n');
   assert.equal(csv[0], 'period,company_id,office,billing,ai_retail_aud,modelvia_cost_aud,realbud_markup_aud,care_fee_aud,total_aud,margin_aud,realbud_invoice,invoice_state,ai_billed_aud,modelvia_invoices,modelvia_source,note,markup_percent,proposed_markup_percent,markup_policy');
-  assert.match(csv[1], /^2026-09,company-a,Fictional Agency A,resale,1\.30,1\.00,0\.30,125\.00,126\.30,125\.30,RB-000001,closed,1\.30,CI-00000021,analytics,,30\.00,,not_synced$/);
+  assert.match(csv[1], /^2026-09,company-a,Fictional Agency A,resale,1\.30,1\.00,0\.30,125\.00,126\.30,125\.30,RB-000001,closed,1\.30,CI-00000021,analytics,,30\.00,,synced$/);
   assert.match(csv[2], /^2026-09,company-owner,"Owner, ""Office"" =HQ",client_funded,0\.00,0\.20,-0\.20,0\.00,0\.00,-0\.20,,not_closed,0\.00,,analytics,/);
   assert.equal(csv[3], '2026-09,,Total,,1.30,1.20,0.10,125.00,126.30,125.10,,,,,,,,,');
   // The margin report replaces analytics: one row per customer × client-funded
@@ -257,7 +263,7 @@ test('margin view: AI retail, Modelvia cost, markup, care, total and margin per 
 });
 
 test('operator margin route: composed from the environment, operator bearer only, JSON or CSV', async () => {
-  const { f, m } = resaleOffice();
+  const { f, m } = await resaleOffice();
   const operatorSecret = 'fictional-gateway-operator-secret-000001';
   const composed = composeGateway({ env: { REALBUD_GATEWAY_OPERATOR_SECRET: operatorSecret, REALBUD_GATEWAY_PORTAL_SECRET: 'fictional-gateway-portal-secret-00000001',
     REALBUD_ENABLE_PROVIDER: '1', REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_CLIENT_ID: CLIENT, REALBUD_MODELVIA_CLIENT_KEY: CLIENT_KEY,
@@ -300,10 +306,11 @@ function modelviaInvoiceTotals(requests: number, seed: number, naive = false) {
 
 test('GST over 1,000+ requests: the AI line keeps Modelvia\'s GST, the one total\'s GST differs by at most a cent, and drift is refused', async () => {
   for (const [seed, care] of [[7, '12500'], [11, '12501'], [13, '9999'], [17, '0']] as const) {
-    const { f, billing, m } = resaleOffice();
+    const { f, billing, m } = await resaleOffice();
     if (care !== '12500') {
       // Same office, a different care amount this month.
       billing.commercialTerms!.accept(f.owner, '2026-09', 'care-b', billing.commercialTerms!.publish(careTermsDraft(f, 'care-b', care, { aiUsage: RESALE })).digest);
+  await syncTestResalePolicy(f.ledger, f.tenant.companyId);
     }
     const totals = modelviaInvoiceTotals(1_200, seed);
     m.usage.set(`${CUSTOMER}:2026-09`, { grossNano: '1' });
@@ -319,7 +326,7 @@ test('GST over 1,000+ requests: the AI line keeps Modelvia\'s GST, the one total
     if (care === '0') assert.ok(others.every(l => l.description === 'GST rounding adjustment' && l.amountCents === '0'));
   }
   // Per-request GST rounding drifts by many cents over 1,200 requests: refused, nothing written.
-  const { f, m, close } = resaleOffice();
+  const { f, m, close } = await resaleOffice();
   const drifted = modelviaInvoiceTotals(1_200, 7, true), clean = modelviaInvoiceTotals(1_200, 7);
   assert.ok(Math.abs(Number(drifted.gstCents) - Number(clean.gstCents)) > 1, 'the naive rounding really drifts');
   m.finalize('CI-00001201', '2026-09', drifted.totalCents, drifted.gstCents);
@@ -329,64 +336,66 @@ test('GST over 1,000+ requests: the AI line keeps Modelvia\'s GST, the one total
 
 test('Modelvia must not offer the office its own checkout: customerCheckout other than off, or a payable invoice, is refused', async () => {
   for (const surface of ['client_app', 'portal', 'both', null]) {
-    const o = resaleOffice(); const m = fakeModelvia({ customerCheckout: surface });
+    const o = await resaleOffice(); const m = fakeModelvia({ customerCheckout: surface });
     m.finalize('CI-00000031', '2026-09', '1000', '91');
     await assert.rejects(closeOfficeMonth({ ...o.options, modelvia: m.client }, 'company-a', '2026-09', 'care-v1'), /modelvia_checkout_enabled/, String(surface));
     assert.equal(o.f.db.all('SELECT id FROM invoices').length, 0);
   }
-  const payable = resaleOffice();
+  const payable = await resaleOffice();
   payable.m.finalize('CI-00000032', '2026-09', '1000', '91', { directPaymentAvailable: true });
   await assert.rejects(payable.close(), /modelvia_invoice_payment_started/);
 });
 
 test('an office that accepted resale keeps being read: owed AI under care-only terms is refused, as is a still-missing deferred month', async () => {
-  const { f, billing, m, close } = resaleOffice();
+  const { f, billing, m, close } = await resaleOffice();
   m.usage.set(`${CUSTOMER}:2026-09`, { grossNano: '10000000000' });
   await close('2026-09', 'care-v1', true);
   // October's terms drop AI resale, but September's AI is still owed.
   billing.commercialTerms!.accept(f.owner, '2026-10', 'care-v2', billing.commercialTerms!.publish(careTermsDraft(f, 'care-v2', '12500', { period: '2026-10' })).digest);
+  await syncTestResalePolicy(f.ledger, f.tenant.companyId);
   f.setTime(Date.parse('2026-11-01T00:00:00Z'));
   await assert.rejects(close('2026-10', 'care-v2'), /ai_usage_unconsolidated/);
   m.finalize('CI-00000041', '2026-09', '11000', '1000');
   await assert.rejects(close('2026-10', 'care-v2'), /ai_usage_unconsolidated/);
   assert.equal(f.db.all("SELECT id FROM invoices WHERE period='2026-10'").length, 0);
   // With AI resale in October's terms, a September still not finalized blocks too.
-  const again = resaleOffice();
+  const again = await resaleOffice();
   again.m.usage.set(`${CUSTOMER}:2026-09`, { grossNano: '10000000000' });
   await again.close('2026-09', 'care-v1', true);
   again.billing.commercialTerms!.accept(again.f.owner, '2026-10', 'care-v2', again.billing.commercialTerms!.publish(careTermsDraft(again.f, 'care-v2', '12500', { period: '2026-10', aiUsage: RESALE })).digest);
+  await syncTestResalePolicy(again.f.ledger, again.f.tenant.companyId);
   again.f.setTime(Date.parse('2026-11-01T00:00:00Z'));
   await assert.rejects(again.close('2026-10', 'care-v2'), /modelvia_invoice_not_finalized/);
   const carried = await again.close('2026-10', 'care-v2', true);
-  assert.deepEqual(carried.invoice.aiUsage, { modelviaInvoices: [], deferredPeriods: ['2026-09'], modelviaCustomerId: CUSTOMER, chargeDetail: 'all_in' });
+  assert.deepEqual(carried.invoice.aiUsage, { modelviaInvoices: [], deferredPeriods: ['2026-09', '2026-10'], modelviaCustomerId: CUSTOMER, chargeDetail: 'all_in' });
 });
 
 test('an invoice dated before the office accepted resale is refused; later or unrelated invoices are not validated', async () => {
-  const early = resaleOffice();
+  const early = await resaleOffice();
   early.m.finalize('CI-00000051', '2026-08', '1000', '91');
   await assert.rejects(early.close(), /modelvia_invoice_before_acceptance/);
   // A malformed invoice for a LATER month does not stop September's close.
-  const later = resaleOffice();
+  const later = await resaleOffice();
   later.m.finalize('CI-00000052', '2026-09', '1000', '91');
   later.m.finalize('CI-00000053', '2026-10', 'not-cents', '0', { gstInclusive: false });
   const closed = await later.close();
   assert.deepEqual(closed.invoice.aiUsage?.modelviaInvoices.map(i => i.id), ['CI-00000052']);
   // One inside the window is still validated strictly.
-  const bad = resaleOffice();
+  const bad = await resaleOffice();
   bad.m.finalize('CI-00000054', '2026-09', 'not-cents', '0');
   await assert.rejects(bad.close(), /modelvia_unreadable/);
 });
 
-test('an office that accepted resale cannot be moved to another Modelvia customer; one that did not can', () => {
-  const { f } = resaleOffice();
+test('an office that accepted resale cannot be moved to another Modelvia customer; one that did not can', async () => {
+  const { f } = await resaleOffice();
   assert.throws(() => bindOfficeCustomer(f.ledger, 'company-a', 'realbud-company-a-2'), /office_customer_rebind_blocked/);
   bindOfficeCustomer(f.ledger, 'company-a', CUSTOMER);
-  const plain = resaleOffice(null);
+  const plain = await resaleOffice(null);
   bindOfficeCustomer(plain.f.ledger, 'company-a', 'realbud-company-a-2');
 });
 
 test('a close that loses a race to another process reports already_closed, and the Modelvia invoice is billed once', async () => {
-  const { f, m, options } = resaleOffice();
+  const { f, m, options } = await resaleOffice();
   m.finalize('CI-00000061', '2026-09', '1000', '91');
   const other = new BillingService(f.ledger, undefined, { internalCompanyId: INTERNAL });
   const racing = { ...m.client, async customerInvoice(customerId: string, invoiceId: string) {
@@ -461,4 +470,95 @@ test('the requests CSV backs off on 429 while paging analytics, and never fails 
   const endless = await run((period, cursor) => page(period, [], String(Number(cursor ?? 0) + 1)));
   assert.equal(endless.analytics(), 400);
   assert.equal(endless.rows.length, 2);
+});
+
+
+test('explicit care-only close holds all AI without policy proof, then verified sync consolidates deferred historical prices once', async () => {
+  const { f, billing, m, options } = await resaleOffice(null);
+  const september=billing.commercialTerms!.publish(careTermsDraft(f,'resale-sep','12500',{aiUsage:RESALE}));
+  billing.commercialTerms!.accept(f.owner,'2026-09','resale-sep',september.digest);
+  m.finalize('CI-00000991','2026-09','1300','118');
+  const calls=m.calls.length;
+  await assert.rejects(closeOfficeMonth(options,'company-a','2026-09','resale-sep'),/ai_policy_not_synced/);
+  assert.equal(m.calls.length,calls);
+  const care=await closeOfficeMonth(options,'company-a','2026-09','resale-sep',{deferAi:true});
+  assert.equal(care.ai,'deferred');assert.equal(care.invoice.totalCents,'12500');assert.equal(care.invoice.aiUsage!.modelviaInvoices.length,0);assert.deepEqual(care.invoice.aiUsage!.deferredPeriods,['2026-09']);assert.equal(m.calls.length,calls);
+  assert.equal((await closeOfficeMonth(options,'company-a','2026-09','resale-sep',{deferAi:true})).invoice.id,care.invoice.id);
+  assert.equal(f.db.all("SELECT seq FROM events WHERE kind='ai_usage_deferred'").length,1);
+  await syncTestResalePolicy(f.ledger,'company-a');
+  const october=billing.commercialTerms!.publish(careTermsDraft(f,'resale-oct','12500',{period:'2026-10',aiUsage:RESALE}));billing.commercialTerms!.accept(f.owner,'2026-10','resale-oct',october.digest);
+  f.setTime(Date.parse('2026-11-01T00:00:00Z'));
+  assert.throws(()=>billing.finalizeCommercialInvoice('company-a','2026-10','resale-oct',{invoices:[{id:'CI-00000991',period:'2026-09',totalCents:'1300',gstCents:'118'}],deferredPeriods:['2026-10']}),/ai_policy_not_synced/);
+  assert.equal(f.db.all("SELECT id FROM invoices WHERE period='2026-10'").length,0);
+  await syncTestResalePolicy(f.ledger,'company-a');
+  m.finalize('CI-00000992','2026-10','2600','236');
+  const consolidated=await closeOfficeMonth(options,'company-a','2026-10','resale-oct');assert.equal(consolidated.invoice.totalCents,'16400');assert.deepEqual(consolidated.invoice.aiUsage!.modelviaInvoices.map(i=>i.id),['CI-00000991','CI-00000992']);
+  assert.equal((await closeOfficeMonth(options,'company-a','2026-10','resale-oct')).invoice.id,consolidated.invoice.id);assert.equal(f.db.all('SELECT modelvia_invoice FROM office_ai_consolidations').length,2);
+});
+
+
+test('active pricing still allows independent explicit care-only close during provider outage or missing client, with zero provider reads', async () => {
+  for(const absent of [false,true]) {
+    const { options }=await resaleOffice();let reads=0;
+    const failing={async customerMonth(){reads++;throw new Error('synthetic_provider_outage');},async customerInvoice(){reads++;throw new Error('synthetic_provider_outage');},async customerMargins(){throw new Error('synthetic_provider_outage');}};
+    const held={...options,modelvia:absent?undefined:failing};
+    await assert.rejects(closeOfficeMonth(held,'company-a','2026-09','care-v1'),absent?/modelvia_client_unconfigured/:/synthetic_provider_outage/);
+    const before=reads;
+    const care=await closeOfficeMonth(held,'company-a','2026-09','care-v1',{deferAi:true});
+    assert.equal(reads,before);assert.equal(care.invoice.totalCents,'12500');assert.equal(care.ai,'deferred');assert.equal(care.invoice.aiUsage!.modelviaInvoices.length,0);assert.deepEqual(care.invoice.aiUsage!.deferredPeriods,['2026-09']);
+  }
+});
+
+
+test('consolidated operator audit failure rolls back exact AI, invoice sequence and email outbox; retry and duplicate preserve one operator and one invoice',async()=>{
+  const {f,billing,m,options}=await resaleOffice();
+  const terms=billing.commercialTerms!.publish(careTermsDraft(f,'audit-ai','12500',{aiUsage:RESALE,
+    customer:{name:f.tenant.customerName,address:f.tenant.customerAddress,billingEmail:'synthetic-billing@example.test'}}));
+  billing.commercialTerms!.accept(f.owner,'2026-09','audit-ai',terms.digest);await syncTestResalePolicy(f.ledger,f.tenant.companyId);
+  m.finalize('CI-00000991','2026-09','1300','118');
+  const actor={subject:'operator:synthetic-initiator@example.test',role:OPERATOR_ROLE} as const;
+  const input={companyId:f.tenant.companyId,period:'2026-09',expectedTermsVersion:'audit-ai'};
+  const guarded={...options,modelvia:{...m.client,
+    async customerMonth(...args:Parameters<typeof m.client.customerMonth>){assert.equal(f.db.sql.isTransaction,false);return m.client.customerMonth(...args);},
+    async customerInvoice(...args:Parameters<typeof m.client.customerInvoice>){assert.equal(f.db.sql.isTransaction,false);return m.client.customerInvoice(...args);}}};
+  const append=f.db.append.bind(f.db),sequence=f.db.get("SELECT value FROM settings WHERE key='local_invoice_sequence'");
+  f.db.append=(tenant,kind,...args)=>{if(kind==='operator_month_closed'){assert.equal(f.db.sql.isTransaction,true);throw new Error('synthetic_operator_audit_fault');}return append(tenant,kind,...args);};
+  try {await assert.rejects(closeMonth(guarded,actor,input),/synthetic_operator_audit_fault/);}finally{f.db.append=append;}
+  assert.ok(m.calls.length>0);assert.equal(f.db.all('SELECT id FROM invoices').length,0);
+  assert.equal(f.db.all('SELECT modelvia_invoice FROM office_ai_consolidations').length,0);
+  assert.equal(f.db.all('SELECT invoice FROM invoice_email_outbox').length,0);
+  assert.deepEqual(f.db.get("SELECT value FROM settings WHERE key='local_invoice_sequence'"),sequence);
+  assert.equal(f.db.all("SELECT seq FROM events WHERE kind IN ('operator_month_closed','ai_usage_consolidated','local_invoice_closed')").length,0);f.db.verify();
+  const created=await closeMonth(guarded,actor,input);assert.equal(created.ai,'consolidated');assert.equal(created.invoice.totalCents,'13800');
+  const original=f.db.get<{body:string}>('SELECT body FROM invoices WHERE id=?',created.invoice.id)!.body;
+  const events=f.db.all<{body:string}>("SELECT body FROM events WHERE kind='operator_month_closed'");assert.equal(events.length,1);assert.equal(JSON.parse(events[0].body).by,actor.subject);
+  const reads=m.calls.length;
+  const repeated=await closeMonth(guarded,{...actor,subject:'operator:synthetic-retry@example.test'},input);
+  assert.equal(repeated.alreadyClosed,true);assert.equal(repeated.invoice.id,created.invoice.id);assert.equal(m.calls.length,reads);
+  assert.equal(f.db.get<{body:string}>('SELECT body FROM invoices WHERE id=?',created.invoice.id)!.body,original);
+  assert.equal(f.db.all('SELECT modelvia_invoice FROM office_ai_consolidations').length,1);
+  assert.equal(f.db.all('SELECT invoice FROM invoice_email_outbox').length,1);assert.deepEqual(f.db.all("SELECT body FROM events WHERE kind='operator_month_closed'"),events);f.db.verify();
+});
+
+test('deferral diagnostic failure rolls back independent care with zero provider reads; retry persists invoice and diagnostic once',async()=>{
+  const {f,m,options}=await resaleOffice();const reads=m.calls.length,append=f.db.append.bind(f.db);
+  f.db.append=(tenant,kind,...args)=>{if(kind==='ai_usage_deferred'){assert.equal(f.db.sql.isTransaction,true);throw new Error('synthetic_deferral_audit_fault');}return append(tenant,kind,...args);};
+  try {await assert.rejects(closeOfficeMonth(options,'company-a','2026-09','care-v1',{deferAi:true}),/synthetic_deferral_audit_fault/);}finally{f.db.append=append;}
+  assert.equal(m.calls.length,reads);assert.equal(f.db.all('SELECT id FROM invoices').length,0);assert.equal(f.db.all('SELECT invoice FROM invoice_email_outbox').length,0);
+  assert.equal(f.db.all("SELECT seq FROM events WHERE kind IN ('ai_usage_deferred','ai_usage_consolidated','local_invoice_closed')").length,0);f.db.verify();
+  const created=await closeOfficeMonth(options,'company-a','2026-09','care-v1',{deferAi:true});
+  assert.equal(created.invoice.totalCents,'12500');assert.equal(created.invoice.aiUsage!.modelviaInvoices.length,0);assert.deepEqual(created.invoice.aiUsage!.deferredPeriods,['2026-09']);
+  assert.equal((await closeOfficeMonth(options,'company-a','2026-09','care-v1',{deferAi:true})).invoice.id,created.invoice.id);
+  assert.equal(m.calls.length,reads);assert.equal(f.db.all("SELECT seq FROM events WHERE kind='ai_usage_deferred'").length,1);f.db.verify();
+});
+
+test('created hooks refuse asynchronous commits and never run for an immutable historical invoice',async()=>{
+  const {f,options}=await resaleOffice(null);
+  for(const onCreated of [async()=>{},()=>({then(){throw new Error('thenable_must_not_be_run');}})])
+    await assert.rejects(closeOfficeMonth(options,'company-a','2026-09','care-v1',{onCreated}),/async_invoice_created_hook_forbidden/);
+  assert.equal(f.db.all('SELECT id FROM invoices').length,0);assert.equal(f.db.all('SELECT invoice FROM invoice_email_outbox').length,0);f.db.verify();
+  let created=0;const first=await closeOfficeMonth(options,'company-a','2026-09','care-v1',{onCreated(){assert.equal(f.db.sql.isTransaction,true);created++;}});
+  const original=f.db.get<{body:string}>('SELECT body FROM invoices WHERE id=?',first.invoice.id)!.body;
+  const again=await closeOfficeMonth(options,'company-a','2026-09','care-v1',{onCreated:async()=>{throw new Error('historical_hook_must_not_run');}});
+  assert.equal(again.ai,'already_closed');assert.equal(created,1);assert.equal(f.db.get<{body:string}>('SELECT body FROM invoices WHERE id=?',first.invoice.id)!.body,original);f.db.verify();
 });

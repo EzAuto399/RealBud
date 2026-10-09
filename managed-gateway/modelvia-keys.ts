@@ -295,10 +295,18 @@ export interface ModelviaTermsClient {
    * this service's clock); the old policy is never changed, so usage admitted
    * under it keeps its price. Refuses to turn a client-funded office into resale. */
   syncResaleTerms?(customerId: string, terms: { clientMarkupBasisPoints: number; acceptanceReference: string }): Promise<ResaleSyncResult>;
+  /** Read-only confirmation of an immutable earlier policy, not current pricing. */
+  resalePolicyReceipt?(customerId: string, terms: { clientMarkupBasisPoints: number; acceptanceReference: string }): Promise<ResaleSyncResult>;
 }
 export interface ResaleSyncResult {
   state: 'active' | 'pending' | 'not_required';
   created: boolean; policyId?: string; clientMarkupBasisPoints?: number;
+  /** Scope and reference read back from Modelvia, never inferred from the request. */
+  customerId?: string; clientId?: string; customerBilling?: 'resale'; acceptanceReference?: string;
+  /** Modelvia Date header at verification; active only when effectiveAt <= this. */
+  verifiedAt?: number;
+  /** Historical confirmation only; it does not assert current pricing. */
+  historical?: true;
   /** Modelvia time the new policy took effect (created only). */
   effectiveAt?: number;
   /** The policy this one supersedes, left unchanged (created only). */
@@ -555,7 +563,9 @@ export function modelviaKeyClient(options: {
           && (p.customerBilling === undefined || p.customerBilling === 'resale' || p.customerBilling === 'client_funded'), 'modelvia_unreadable', 502);
         // Absent means resale: the only meaning a policy recorded before the field had.
         return { id: p.id as string, effectiveAt: p.effectiveAt as number, customerBilling: (p.customerBilling ?? 'resale') as HeldPolicy['customerBilling'],
-          ...(Number.isSafeInteger(p.clientMarkupBasisPoints) ? { clientMarkupBasisPoints: p.clientMarkupBasisPoints as number } : {}) };
+          ...(Number.isSafeInteger(p.clientMarkupBasisPoints) ? { clientMarkupBasisPoints: p.clientMarkupBasisPoints as number } : {}),
+          ...(typeof p.acceptanceReference === 'string' && REFERENCE.test(p.acceptanceReference) ? { acceptanceReference: p.acceptanceReference } : {}),
+          clientId: options.clientId, customerId, customerBillingVerified: p.customerBilling === 'resale' || p.customerBilling === 'client_funded' };
       }) };
   };
   return {
@@ -753,6 +763,21 @@ export function modelviaKeyClient(options: {
       const policy = inForce(await readPolicies(customerId), clock());
       return policy && policy.effectiveAt <= clock() ? 'ready' : 'terms_required';
     },
+    async resalePolicyReceipt(customerId, terms) {
+      requireThat(PATH_ID.test(customerId), 'invalid_modelvia_account');
+      const wanted = validTerms({ customerBilling: 'resale', ...terms }) as Extract<CustomerTerms, { customerBilling: 'resale' }>;
+      const customer = await readCustomer(customerId);
+      requireThat(customer && await effectivePayer(customer) === 'client', 'modelvia_terms_billing_mismatch', 409);
+      const { policies, serverNow } = await readPoliciesAt(customerId);
+      requireThat(serverNow !== undefined && Number.isSafeInteger(serverNow) && serverNow > 0, 'modelvia_clock_unavailable', 502);
+      const matching = policies.filter(policy => policy.acceptanceReference === wanted.acceptanceReference);
+      requireThat(matching.length === 1, matching.length ? 'modelvia_terms_ambiguous' : 'modelvia_terms_not_confirmed', 409);
+      const policy = matching[0]!;
+      requireThat(policy.customerBilling === 'resale' && policy.customerBillingVerified && policy.clientMarkupBasisPoints === wanted.clientMarkupBasisPoints, 'modelvia_terms_scope_mismatch', 502);
+      return { state: policy.effectiveAt <= serverNow! ? 'active' : 'pending', created: false, historical: true, policyId: policy.id,
+        customerId: policy.customerId, clientId: policy.clientId, customerBilling: 'resale', acceptanceReference: policy.acceptanceReference!,
+        clientMarkupBasisPoints: policy.clientMarkupBasisPoints!, effectiveAt: policy.effectiveAt, verifiedAt: serverNow! };
+    },
     async syncResaleTerms(customerId, terms) {
       requireThat(PATH_ID.test(customerId), 'invalid_modelvia_account');
       const wanted = validTerms({ customerBilling: 'resale', ...terms }) as Extract<CustomerTerms, { customerBilling: 'resale' }>;
@@ -767,11 +792,14 @@ export function modelviaKeyClient(options: {
         const now = serverNow!;
         const latest = [...policies].sort((a, b) => b.effectiveAt - a.effectiveAt)[0];
         // A later policy already waiting to start would be superseded out of order.
-        requireThat(!latest || latest.effectiveAt <= now, 'modelvia_terms_pending', 409);
+        requireThat(!latest || latest.effectiveAt <= now || (latest.customerBilling === 'resale' && latest.customerBillingVerified && latest.clientMarkupBasisPoints === wanted.clientMarkupBasisPoints && latest.acceptanceReference === wanted.acceptanceReference), 'modelvia_terms_pending', 409);
         if (latest && latest.customerBilling === 'client_funded') throw new GatewayError('modelvia_terms_billing_mismatch', 409);
         // Idempotent: the markup in force is already the accepted one.
-        if (latest && latest.clientMarkupBasisPoints === wanted.clientMarkupBasisPoints)
-          return { state: 'active', created: false, policyId: latest.id, clientMarkupBasisPoints: wanted.clientMarkupBasisPoints };
+        if (latest && latest.customerBilling === 'resale' && latest.customerBillingVerified && latest.clientMarkupBasisPoints === wanted.clientMarkupBasisPoints && latest.acceptanceReference === wanted.acceptanceReference) {
+          requireThat(policies.filter(policy => policy.acceptanceReference === wanted.acceptanceReference).length === 1, 'modelvia_terms_ambiguous', 409);
+          return { state: latest.effectiveAt <= now ? 'active' : 'pending', created: false, policyId: latest.id, clientMarkupBasisPoints: latest.clientMarkupBasisPoints,
+            customerId: latest.customerId, clientId: latest.clientId, customerBilling: 'resale', acceptanceReference: latest.acceptanceReference, effectiveAt: latest.effectiveAt, verifiedAt: now };
+        }
         // Strictly after the policy it supersedes (Modelvia refuses an equal
         // `effectiveAt`), and never in Modelvia's future. The Date header has
         // whole seconds, so its value is at or just before Modelvia's clock.
@@ -791,8 +819,12 @@ export function modelviaKeyClient(options: {
         if (answer.conflict) throw new GatewayError('modelvia_terms_refused', 409);
         const saved = answer.body;
         requireThat(record(saved) && saved.id === body.id && saved.customerId === customerId && saved.clientId === options.clientId
-          && saved.state === 'active' && saved.effectiveAt === effectiveAt && saved.clientMarkupBasisPoints === wanted.clientMarkupBasisPoints, 'modelvia_terms_scope_mismatch', 502);
-        return { state: 'active', created: true, policyId: body.id, clientMarkupBasisPoints: wanted.clientMarkupBasisPoints, effectiveAt, ...(latest ? { supersedes: latest.id } : {}) };
+          && saved.state === 'active' && saved.effectiveAt === effectiveAt && saved.clientMarkupBasisPoints === wanted.clientMarkupBasisPoints
+          && saved.acceptanceReference === wanted.acceptanceReference && saved.customerBilling === 'resale', 'modelvia_terms_scope_mismatch', 502);
+        requireThat(answer.serverNow !== undefined && Number.isSafeInteger(answer.serverNow) && answer.serverNow > 0, 'modelvia_clock_unavailable', 502);
+        return { state: effectiveAt <= answer.serverNow! ? 'active' : 'pending', created: true, policyId: saved.id as string, clientMarkupBasisPoints: saved.clientMarkupBasisPoints as number,
+          customerId: saved.customerId as string, clientId: saved.clientId as string, customerBilling: 'resale', acceptanceReference: saved.acceptanceReference as string,
+          effectiveAt, verifiedAt: answer.serverNow!, ...(latest ? { supersedes: latest.id } : {}) };
       }
       throw new GatewayError('modelvia_terms_conflict', 409);
     },
@@ -802,7 +834,7 @@ export function modelviaKeyClient(options: {
 /** The Modelvia refusals `ensureCustomerTerms` reads as a code (all 409). */
 const TERMS_CONFLICTS = ['policy_version_exists', 'policy_effective_order', 'payer_migration_required', 'commercial_acceptance_required',
   'invalid_internal_commercial_policy', 'invalid_client_funded_policy', 'merchant_onboarding_required', 'hosted_collection_not_connected'] as const;
-type HeldPolicy = { id: string; effectiveAt: number; customerBilling: 'client_funded' | 'resale'; clientMarkupBasisPoints?: number };
+type HeldPolicy = { id: string; effectiveAt: number; customerBilling: 'client_funded' | 'resale'; clientMarkupBasisPoints?: number; acceptanceReference?: string; clientId: string; customerId: string; customerBillingVerified: boolean };
 function validTerms(terms: CustomerTerms): CustomerTerms {
   requireThat(record(terms) && REFERENCE.test(String(terms.acceptanceReference)), 'invalid_customer_terms');
   if (terms.customerBilling === 'client_funded') return { customerBilling: 'client_funded', acceptanceReference: terms.acceptanceReference };

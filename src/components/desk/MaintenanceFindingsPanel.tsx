@@ -38,7 +38,7 @@ function readReview(v: unknown): Review {
 }
 
 // A listed sender Gmail did not confirm (possible forgery) reads differently from an unknown one.
-const reason = (f: Finding) => f.kind === 'sender-verification' ? (f.reasons?.length && f.reasons.every(r => r === 'unverified-sender') ? 'Sender not verified' : 'Sender needs checking')
+const reason = (f: Finding) => f.kind === 'sender-verification' && f.reasons?.includes('classification-needed') ? 'Maintenance classification needed' : f.kind === 'sender-verification' ? (f.reasons?.length && f.reasons.every(r => r === 'unverified-sender') ? 'Sender not verified' : 'Sender needs checking')
   : f.windowKey?.includes('rolling30') ? 'Several invoices within 30 days' : 'Several invoices this month';
 
 function FindingCard({ saved, review, busy, onDecide }: { saved: Saved; review: Review; busy: boolean; onDecide: (action: 'seen' | 'dismissed' | 'new') => void }) {

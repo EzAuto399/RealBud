@@ -1,19 +1,33 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { chmodSync, existsSync, mkdirSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
 import { canonical, requireThat } from './contracts.ts';
+import { acquireRuntimeStateLease, publishPrivateStateFile, RESTORE_HOLD_SETTING, type RuntimeStateLease } from './runtime-state-lock.ts';
 
 /** A single durable gateway database; SQLite serialises reservations across processes.
  * Deploy only on a local encrypted persistent volume, never an office DB or network share.
  * Ledger UPDATE/DELETE triggers protect app mistakes; an OS/DB administrator remains trusted. */
 export class LedgerDatabase {
   readonly sql: DatabaseSync;
+  readonly stateRoot: string | undefined;
+  private readonly stateLease: RuntimeStateLease | undefined;
   constructor(path: string) {
-    if (path !== ':memory:') { mkdirSync(dirname(path), { recursive: true, mode: 0o700 }); }
-    this.sql = new DatabaseSync(path);
-    this.sql.exec('PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;');
+    // Every file-backed writer must share the ledger checked by standalone
+    // registry/secret admission. Refuse other names before creating any state.
+    requireThat(path === ':memory:' || basename(path) === 'ledger.sqlite', 'gateway_ledger_filename_required', 503);
+    if (path !== ':memory:') { mkdirSync(dirname(path), { recursive: true, mode: 0o700 }); this.stateLease = acquireRuntimeStateLease(dirname(path)); this.stateRoot = this.stateLease.root; }
     try {
+      if (path !== ':memory:' && !existsSync(path)) {
+        // SQLite otherwise creates0644 before its first transaction completes;
+        // a second legitimate process must never observe/admit that loose file.
+        try { publishPrivateStateFile(path, Buffer.alloc(0)); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+      }
+      this.sql = new DatabaseSync(path);
+    } catch (error) { this.stateLease?.release(); throw error; }
+    try {
+    this.sql.exec('PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;');
+    requireThat(!this.sql.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'").get() || !this.get('SELECT value FROM settings WHERE key=?', RESTORE_HOLD_SETTING), 'gateway_restored_state_held', 503);
     this.transaction(()=>{
     const applicationId=this.get<{application_id:number}>('PRAGMA application_id')!.application_id;
     const version=this.get<{user_version:number}>('PRAGMA user_version')!.user_version;
@@ -80,9 +94,13 @@ export class LedgerDatabase {
     if (path !== ':memory:') chmodSync(path, 0o600);
     this.sql.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;');
     this.verify();
-    } catch(error) { this.sql.close(); throw error; }
+    } catch(error) {
+      try { this.sql.close(); } catch { /* Preserve the initialization error. */ }
+      finally { this.stateLease?.release(); }
+      throw error;
+    }
   }
-  close() { this.sql.close(); }
+  close() { try { this.sql.close(); } finally { this.stateLease?.release(); } }
   get<T>(query: string, ...params: SQLInputValue[]): T | undefined { return this.sql.prepare(query).get(...params) as T | undefined; }
   all<T>(query: string, ...params: SQLInputValue[]): T[] { return this.sql.prepare(query).all(...params) as T[]; }
   run(query: string, ...params: SQLInputValue[]) { return this.sql.prepare(query).run(...params); }

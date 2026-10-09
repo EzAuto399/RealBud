@@ -1,3 +1,4 @@
+import { CONNECTED_MAIL_OPERATIONS_FILE, interruptConnectedAppOperationsForRestore } from './connected-app-operations.ts';
 import { WEBSITE_REMOTE_WORK_KIND, restoreWebsiteRemoteWork } from './website-remote-work.ts';
 import { DEPARTMENT_WORK_KIND, restoreDepartmentWork } from './department-work.ts';
 /** Logical restore preparation only. No live stores, destination business files,
@@ -55,6 +56,7 @@ function sanitizedLoops(file: CatalogFile | undefined, at: number): CatalogFile 
   }) });
 }
 function transformFile(file: CatalogFile, at: number): CatalogFile {
+  if (file.path === CONNECTED_MAIL_OPERATIONS_FILE) return jsonFile(file.path, interruptConnectedAppOperationsForRestore(JSON.parse(file.data.toString('utf8')), at), file.encoding);
   if (file.path === 'work-batches.json') {
     let restored;
     try { restored = restoreWorkBatches(JSON.parse(file.data.toString('utf8')), at); }

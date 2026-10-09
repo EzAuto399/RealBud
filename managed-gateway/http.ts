@@ -8,6 +8,7 @@ import { invoiceHtml, presentInvoice, type PaymentInstructions } from './invoice
 import type { Invoice } from './billing.ts';
 import { marginCsv, previousPeriod } from './office-ai-billing.ts';
 import type { OperatorBillingRoutes } from './operator-billing.ts';
+import { commercialPricingSync } from './office-ai-terms.ts';
 import { presentCommercialTerms, type BillingPlans } from './billing-plans.ts';
 import type { OfficeHermiosSubscriptions } from './office-subscriptions.ts';
 
@@ -367,7 +368,8 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         // The office's plan months are published lazily; a refusal there is the
         // operator's to see on the close list, and the read still answers.
         if(options.billingPlans) options.billingPlans.rollForward(actor.companyId);
-        reply(res,200,presentCommercialTerms(terms.current(actor,url.searchParams.get('period')||''))); return;
+        const current=terms.current(actor,url.searchParams.get('period')||'');
+        reply(res,200,presentCommercialTerms(current,commercialPricingSync(terms,billing().ledger,current.terms,!!current.acceptance))); return;
       }
       if(req.method==='POST' && url.pathname==='/v1/portal/commercial-terms/accept') {
         const terms=billing().commercialTerms; requireThat(terms,'commercial_terms_unavailable',503);

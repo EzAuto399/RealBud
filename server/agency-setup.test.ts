@@ -33,6 +33,20 @@ async function reviewedFixture() {
   return { ...f, view };
 }
 
+describe('local staff review configuration gate', () => {
+  it('serializes final configuration and synchronous commit with a competing setup save without deadlock', async () => {
+    const f = await reviewedFixture(); let save!: ReturnType<typeof f.service.save>;
+    const committed = await f.service.withConfiguration(state => {
+      const changed = f.settings(); changed.morningReview.localTime = '08:15';
+      save = f.service.save({ expectedRevision: state.revision, settings: changed });
+      return { revision: state.revision, accountId: state.settings.gmailAccountId };
+    });
+    expect(committed).toEqual({ revision: 1, accountId: 'mail-agency-a' });
+    expect((await save).state.revision).toBe(2);
+    expect(await f.service.withConfiguration(state => state.revision)).toBe(2);
+  });
+});
+
 describe('private reusable agency setup', () => {
   it('starts missing without writing files, choosing an agency timezone or claiming ready workflows', async () => {
     const f = await fixture(), view = await f.service.get();

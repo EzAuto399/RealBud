@@ -1,5 +1,7 @@
 import { previewBillSource, rankDuplicateCandidates, type SourceBillRegister } from './source-bills.ts';
 import type { BillDuplicateCandidate, BillDuplicateCheck, BillMailSource, SourceBillsWorkspace } from '../shared/source-bills.ts';
+import { billSenderEnvelopeDigest } from './source-bill-rules.ts';
+import type { MailReviewAuthority } from './mail-ingestion.ts';
 import { decide, jevReady } from './jev-client.ts';
 import type { SourceBillOccurrenceResult, SourceBillSeriesResult, SourceBillCurrentSourceResult } from '../shared/source-bills-api.ts';
 import { addBillDays } from '../shared/bill-dates.ts';
@@ -18,6 +20,9 @@ export interface BillApiHost {
   recovery: () => boolean;
   collect: () => Promise<unknown>;
   now?: () => number;
+  /** Final local staff commit under the authoritative setup queue. */
+  sourceToken?: () => string;
+  withReviewContext?: <T>(work: (context: MailReviewAuthority) => T) => Promise<T>;
   /** Tests inject this; the app uses the office's Jev grant. */
   jev?: { ready: () => boolean; decide: typeof decide };
 }
@@ -129,7 +134,8 @@ export function createSourceBillsApi(host: BillApiHost) {
       billQuery(url.searchParams, ['messageId']);
       const messageId = url.searchParams.get('messageId');
       if (!messageId || !/^[a-fA-F0-9]{1,128}$/.test(messageId)) return fail('Choose a saved message.');
-      return { status: 200, body: previewBillSource(await host.source(evidence[1], messageId)) };
+      const source = previewBillSource(await host.source(evidence[1], messageId));
+      return { status: 200, body: { ...source, senderEnvelopeDigest: billSenderEnvelopeDigest(source) } };
     }
     const occurrence = path.match(/^\/api\/bill-occurrences\/(source-bill:[a-f0-9]{64})$/);
     const financialReview = path.match(/^\/api\/bill-occurrences\/(source-bill:[a-f0-9]{64})\/financial-review$/);
@@ -157,12 +163,35 @@ export function createSourceBillsApi(host: BillApiHost) {
     }
     if ((path === '/api/bill-occurrences' && method === 'POST') || (occurrence && method === 'PUT')) {
       if (!record(body) || typeof body.itemId !== 'string' || !/^[a-f0-9]{64}$/.test(body.itemId) || typeof body.messageId !== 'string' || !/^[a-fA-F0-9]{1,128}$/.test(body.messageId)) return fail('Choose the saved mail message being reviewed.');
-      const { itemId, messageId, ...review } = body;
+      const { itemId, messageId, expectedWorkspaceId, expectedSetupRevision, expectedAccountId, ...review } = body;
+      const hasContext = ['expectedWorkspaceId', 'expectedSetupRevision', 'expectedAccountId'].some(key => Object.hasOwn(body, key));
+      const sensitiveReview = record(review.facts) && review.facts.maintenanceClassification !== undefined && review.facts.maintenanceClassification !== 'unclassified' || review.forwardedOriginalSource !== undefined;
+      if ((hasContext || sensitiveReview) && (typeof expectedWorkspaceId !== 'string' || !expectedWorkspaceId || !Number.isSafeInteger(expectedSetupRevision) || Number(expectedSetupRevision) < 0 || typeof expectedAccountId !== 'string' || !expectedAccountId)) return fail('Check the current private workspace, agency setup and selected Gmail account before this staff decision.', 409);
+      if (sensitiveReview && !host.sourceToken) return fail('The current saved-source revision could not be checked. Refresh before this staff decision.', 409);
+      const sourceToken = host.sourceToken?.();
       const source = await host.source(itemId as string, messageId as string);
+      let original: { itemId: string; source: BillMailSource } | undefined;
+      if (review.forwardedOriginalSource !== undefined && review.forwardedOriginalSource !== null) {
+        const reference = review.forwardedOriginalSource;
+        if (!record(reference) || Object.keys(reference).some(key => !['itemId', 'messageId', 'expectedSourceDigest', 'expectedEnvelopeDigest'].includes(key)) || typeof reference.itemId !== 'string' || !/^[a-f0-9]{64}$/.test(reference.itemId) || typeof reference.messageId !== 'string' || !/^[a-fA-F0-9]{1,128}$/.test(reference.messageId)) return fail('Choose an actual saved original message; sender text cannot be supplied.');
+        original = { itemId: reference.itemId, source: await host.source(reference.itemId, reference.messageId) };
+      }
       // Recheck after the asynchronous read and before the synchronous CAS.
       if (host.recovery()) fail('The private book needs recovery.',503);
       property(review.facts);
-      try { return { status: 200, body: occurrence ? host.register().correct(occurrence[1],review,source,host.actorId()) : host.register().accept(review,source,host.actorId()) }; }
+      const commit = () => {
+        if (sourceToken !== undefined && host.sourceToken?.() !== sourceToken) return fail('Saved work or the source envelope changed during this review. Refresh both sources before saving; your draft is kept.', 409);
+        if (host.recovery()) fail('The private book needs recovery.',503);
+        property(review.facts);
+        return occurrence ? host.register().correct(occurrence[1],review,source,host.actorId(),original) : host.register().accept(review,source,host.actorId(),original);
+      };
+      try {
+        const saved = hasContext || sensitiveReview ? await (host.withReviewContext ? host.withReviewContext(context => {
+          if (context.workspaceId !== expectedWorkspaceId || context.setupRevision !== expectedSetupRevision || context.accountId !== expectedAccountId || source.accountId !== context.accountId || original && original.source.accountId !== context.accountId) return fail('The private workspace, agency setup or selected original-source account changed. Refresh before saving.', 409);
+          return commit();
+        }) : Promise.reject(Object.assign(new Error('The current private staff review scope is unavailable.'), { status: 409 }))) : commit();
+        return { status: 200, body: saved };
+      }
       catch (error) {
         if (error instanceof Error && (error as { code?: string }).code === 'bill_duplicate_review_required') return { status: 409, body: { error: error.message, code: 'bill_duplicate_review_required' } };
         throw error;

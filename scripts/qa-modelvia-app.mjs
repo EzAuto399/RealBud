@@ -146,7 +146,7 @@ try {
       }
       res.writeHead(404).end();
     });
-    const gatewayData = join(scratch, 'rb-gateway'); mkdirSync(gatewayData);
+    const gatewayData = join(scratch, 'rb-gateway'); mkdirSync(gatewayData, { mode: 0o700 });
     const { LedgerDatabase } = await import('../managed-gateway/database.ts');
     const { UsageLedger } = await import('../managed-gateway/ledger.ts');
     const { twoMonthsAfter } = await import('../managed-gateway/money.ts');
@@ -154,7 +154,7 @@ try {
     try { const live = now() - 60000; new UsageLedger(db, Date.now).provisionTenant({ companyId: company, licenseId: 'fictional-app-license', active: true, serviceExpiresAt: now() + 3600000, customerName: 'Fictional app QA', customerAddress: '1 Fictional Street', goLiveAt: live, goLiveEvidence: 'fictional-app-qa', includedUntil: twoMonthsAfter(live), monthlyCapNanoAud: cap, requestCapNanoAud: cap, maxConcurrent: 1 }); } finally { db.close(); }
     const gatewayPort = await port(); gatewayBase = `http://127.0.0.1:${gatewayPort}`;
     const child = launch('realbud-gateway', ['--experimental-strip-types', '--import', join(scratch, 'node-guard.mjs'), 'server.ts'], {
-      HOME: home, PATH: dirname(process.execPath) + ':/usr/bin:/bin', PORT: String(gatewayPort), REALBUD_GATEWAY_DATA: gatewayData, REALBUD_GATEWAY_PORTAL_SECRET: portalSecret, REALBUD_PAYMENT_MODE: 'local', REALBUD_ALLOWED_ORIGINS: gatewayBase, REALBUD_ENABLE_PROVIDER: '1', REALBUD_GATEWAY_SECRETS_DIR: join(scratch, 'gateway-secrets'), REALBUD_GATEWAY_CONNECTOR_REGISTRY: join(scratch, 'registry/devices.json'), REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://fictional-app-gateway.invalid', REALBUD_COMPOSIO_ORG_KEY: 'fictional-app-org-key', REALBUD_COMPOSIO_API_BASE: composio, REALBUD_MODELVIA_BASE_URL: mvBase, REALBUD_MODELVIA_OPERATOR_SECRET: mvSecret, REALBUD_MODELVIA_OPERATOR_SUBJECT: 'fictional-app-vendor', REALBUD_MODELVIA_CLIENT_ID: client, REALBUD_MODELVIA_ENVIRONMENT: 'development', REALBUD_MODELVIA_MODELS: model,
+      HOME: home, PATH: dirname(process.execPath) + ':/usr/bin:/bin', PORT: String(gatewayPort), REALBUD_GATEWAY_DATA: gatewayData, REALBUD_GATEWAY_PORTAL_SECRET: portalSecret, REALBUD_PAYMENT_MODE: 'local', REALBUD_ALLOWED_ORIGINS: gatewayBase, REALBUD_ENABLE_PROVIDER: '1', REALBUD_GATEWAY_SECRETS_DIR: join(gatewayData, 'gateway-secrets'), REALBUD_GATEWAY_CONNECTOR_REGISTRY: join(gatewayData, 'registry/devices.json'), REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://fictional-app-gateway.invalid', REALBUD_COMPOSIO_ORG_KEY: 'fictional-app-org-key', REALBUD_COMPOSIO_API_BASE: composio, REALBUD_MODELVIA_BASE_URL: mvBase, REALBUD_MODELVIA_OPERATOR_SECRET: mvSecret, REALBUD_MODELVIA_OPERATOR_SUBJECT: 'fictional-app-vendor', REALBUD_MODELVIA_CLIENT_ID: client, REALBUD_MODELVIA_ENVIRONMENT: 'development', REALBUD_MODELVIA_MODELS: model,
     }, join(root, 'managed-gateway'));
     await until(async () => { assert.equal(child.exitCode, null, child.qaLog.slice(-2000)); try { return (await call(gatewayBase, '/health', { timeout: 500 })).status === 200; } catch { return false; } }, 'RealBud gateway startup');
     assert.match(child.qaLog, /"provisioning":"composed"/);

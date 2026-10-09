@@ -26,6 +26,24 @@ function fixture() {
 const range = { from: '2026-01-01', to: '2026-06-30' };
 const pattern = (occurrenceId: string, revision = 1) => ({ occurrenceId, expectedOccurrenceRevision: revision, intervalMonths: 1, anchorDate: '2026-01-31', windowBeforeDays: 0, windowAfterDays: 0, timeZone: 'Australia/Brisbane', reviewReason: 'Customer confirmed monthly final-day arrival' });
 
+describe('staff maintenance classification', () => {
+  it('keeps legacy bills undecided and requires a separate staff confirmation with current source and revision', () => {
+    const f = fixture(), s = source(), accepted = acceptance(s);
+    const proposed = { ...accepted, facts: { ...accepted.facts, maintenanceClassification: 'not-maintenance' } };
+    expect(() => f.store.accept(proposed, s, 'fictional-reviewer')).toThrow('Separately confirm');
+    const saved = f.store.accept(accepted, s, 'fictional-reviewer'); expect(saved.facts).not.toHaveProperty('maintenanceClassification');
+    const correction = { ...proposed, maintenanceClassificationReviewed: true, expectedRevision: saved.revision, state: 'received' };
+    expect(() => f.store.correct(saved.id, { ...correction, expectedRevision: 0 }, s, 'fictional-reviewer')).toThrow('revision');
+    expect(() => f.store.correct(saved.id, { ...correction, sourceReviewed: false }, s, 'fictional-reviewer')).toThrow('reviewed');
+    expect(() => f.store.correct(saved.id, { ...correction, facts: { ...proposed.facts, maintenanceClassification: 'model-approved' } }, s, 'fictional-reviewer')).toThrow('classification');
+    const classified = f.store.correct(saved.id, correction, s, 'fictional-reviewer');
+    expect(classified.facts.maintenanceClassification).toBe('not-maintenance'); expect(classified.reviewedBy).toBe('fictional-reviewer');
+    expect(classified.history[0]).toEqual(expect.objectContaining({ facts: accepted.facts }));
+    expect(() => f.store.correct(saved.id, { ...correction, facts: accepted.facts, expectedRevision: classified.revision }, s, 'fictional-reviewer')).toThrow('Keep the reviewed');
+    expect(() => f.store.correct(saved.id, correction, s, 'fictional-reviewer')).toThrow('changed');
+  });
+});
+
 describe('source-linked bill acceptance', () => {
   it('separates stable source identity/digest from acquisition receipt provenance', () => {
     const first = previewBillSource(source()), next = previewBillSource({ ...source(), receiptId: 'scan-two' });

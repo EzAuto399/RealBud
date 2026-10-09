@@ -1,12 +1,16 @@
 // Restore before importing application stores: their constructors read and
 // sometimes recover persisted state. The normal service key never changes.
-import { DATA_DIR } from './config.ts';
+import { DATA_DIR, ensureDirs } from './config.ts';
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
 import { applyStagedPrivateRestore, PRIVATE_RESTORE_STAGE_FILE } from './private-workspace-backup.ts';
 import { applyStagedPrivateRestoreV2, PRIVATE_RESTORE_V2_STAGE_FILE } from './private-backup-cold-restore.ts';
 
+// Admit/migrate the data folder before looking for a staged restore. The
+// dynamic application graph may open stores, so it must see this admitted
+// folder only after any cold restore has completed.
+ensureDirs();
 const v1Restore = existsSync(join(DATA_DIR,PRIVATE_RESTORE_STAGE_FILE));
 const v2Restore = existsSync(join(DATA_DIR,PRIVATE_RESTORE_V2_STAGE_FILE));
 if (v1Restore && v2Restore) throw new Error('Conflicting private restores need recovery. Startup remains held; both restore records were preserved.');

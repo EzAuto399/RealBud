@@ -1,3 +1,4 @@
+import { MAIL_SENDS } from "@shared/app-tool-policy";
 import { officeAppLabel } from "@shared/office-sources";
 import { DESIGN_PREVIEW_REASON } from "@/lib/design-preview";
 import { officeSources, useOfficeSources } from "@/lib/connected-apps-refresh";
@@ -22,6 +23,21 @@ import { OfficeConnectors } from "./ConnectorReview";
 import { Card } from "./SettingsPrimitives";
 import { HermiosMark } from "./HermiosMark";
 import { connectedAppsMode, hasUnconfirmedGmailSettingsChange, useConnectionSettingsPending, selectedConnectedAppsConfigured } from "./GmailReadOnlySetup";
+import { CHANGED_CONNECTION_MAIL_ACKNOWLEDGEMENT, MANUAL_MAIL_ACKNOWLEDGEMENT, connectedMailGatewayOrigin, opaqueDigest } from '@shared/connected-app-binding';
+import { companyApi } from '@/lib/company-api';
+
+type MailRecoveryView = { operationId: string; expectedRevision: number; toolName: string; account: { provider: 'gmail' | 'outlook'; accountId: string; companyId: string; gatewayOrigin: string; label: string };
+  recoveryBindingDigest: string; reviewDigest: string; connectionChanged: boolean; startedAt: number; originalReview: { card: string; exact: string; approvedAt: number } };
+function mailRecoveryView(value: unknown): MailRecoveryView {
+  const row = value as MailRecoveryView;
+  if (!row || typeof row !== 'object' || typeof row.operationId !== 'string' || !/^[a-f0-9-]{36}$/.test(row.operationId) || !Number.isSafeInteger(row.expectedRevision) || row.expectedRevision < 0 ||
+    typeof row.toolName !== 'string' || !row.account || !['gmail', 'outlook'].includes(row.account.provider) || typeof row.account.accountId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(row.account.accountId) ||
+    typeof row.account.companyId !== 'string' || !/^[A-Za-z0-9._:@+-]{1,128}$/.test(row.account.companyId) || typeof row.account.gatewayOrigin !== 'string' || connectedMailGatewayOrigin(row.account.gatewayOrigin) !== row.account.gatewayOrigin ||
+    typeof row.account.label !== 'string' || !/^[^\r\n\u0000-\u001f\u007f]{1,300}$/.test(row.account.label) || !opaqueDigest(row.recoveryBindingDigest) || !opaqueDigest(row.reviewDigest) || typeof row.connectionChanged !== 'boolean' ||
+    !Number.isSafeInteger(row.startedAt) || !row.originalReview || typeof row.originalReview.card !== 'string' || !row.originalReview.card || row.originalReview.card.length > 1_500_000 ||
+    typeof row.originalReview.exact !== 'string' || row.originalReview.exact.length > 1_500_000 || !Number.isSafeInteger(row.originalReview.approvedAt)) throw new Error('This mail account or original review could not be verified for recovery.');
+  return row;
+}
 
 const control = "pm-control inline-flex items-center justify-center gap-1.5 rounded-lg border border-line bg-sheet px-3 py-1.5 text-[12.5px] text-ink hover:bg-raised disabled:cursor-not-allowed disabled:opacity-50";
 
@@ -215,6 +231,8 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
   const [operations, setOperations] = useState<ConnectedAppOperation[]>([]);
   const [operationsLoading, setOperationsLoading] = useState(false);
   const [operationsError, setOperationsError] = useState("");
+  const [mailRecovery, setMailRecovery] = useState<MailRecoveryView | null>(null);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
   const [customApp, setCustomApp] = useState("");
   const [appQuery, setAppQuery] = useState('');
@@ -243,6 +261,27 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
       if (!controller.signal.aborted) setOperationsLoading(false);
     }
   }, []);
+
+  const prepareMailRecovery = async (operation: ConnectedAppOperation) => {
+    setRecoveryBusy(true); setOperationsError(''); setMailRecovery(null);
+    try {
+      const row = mailRecoveryView(await api(`/api/connected-apps/operations/${operation.id}/recovery`, { headers: companyApi.memberSessionHeaders() }));
+      if (row.operationId !== operation.id || row.expectedRevision !== (operation.revision ?? 0)) throw new Error('This receipt changed. Refresh recent activity and inspect the current operation.');
+      setMailRecovery(row);
+    } catch (error) { setOperationsError(error instanceof Error ? error.message : 'The original mail account could not be verified. Its outcome remains held.'); }
+    finally { setRecoveryBusy(false); }
+  };
+  const recordMailOutcome = async (outcome: 'sent' | 'not-sent') => {
+    if (!mailRecovery || recoveryBusy) return;
+    setRecoveryBusy(true); setOperationsError('');
+    try {
+      await api(`/api/connected-apps/operations/${mailRecovery.operationId}/reconcile`, { method: 'POST', headers: companyApi.memberSessionHeaders(), body: JSON.stringify({ expectedRevision: mailRecovery.expectedRevision, outcome,
+        recoveryBindingDigest: mailRecovery.recoveryBindingDigest, reviewDigest: mailRecovery.reviewDigest,
+        acknowledgement: mailRecovery.connectionChanged ? CHANGED_CONNECTION_MAIL_ACKNOWLEDGEMENT : MANUAL_MAIL_ACKNOWLEDGEMENT }) });
+      setMailRecovery(null); await loadOperations();
+    } catch (error) { setOperationsError(error instanceof Error ? error.message : 'This outcome could not be recorded. Refresh and inspect the exact account again.'); }
+    finally { setRecoveryBusy(false); }
+  };
 
   useEffect(() => {
     setSelected({});
@@ -461,6 +500,30 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
                     <span className="text-[12px] text-ink-muted">{fmtDateTime(Date.parse(operation.startedAt))}</span>
                   </div>
                   <p className="mt-1 break-words text-ink-secondary">{operation.toolSlugs.join(", ") || operation.toolName || "Connected app operation"}</p>
+                  <p className="mt-1 break-all text-ink-secondary">Operation {operation.id}</p>
+                  {operation.repeatOf ? <p className="mt-1 text-ink-secondary">Separately approved intentional repeat of {operation.repeatOf}.</p> : null}
+                  {operation.reconciliation ? <p role="status" className="mt-2 text-ink-secondary">You recorded after inspecting the mail app: message {operation.reconciliation.outcome === 'sent' ? 'was sent' : 'was not sent'}. Manual evidence · {fmtDateTime(Date.parse(operation.reconciliation.at))}. The provider outcome remains {operation.status}. A new send still needs its own approval.</p> : null}
+                  {MAIL_SENDS.has(operation.toolName) && (operation.status === 'unknown' || operation.status === 'failed') && !operation.reconciliation ? (
+                    <button type="button" className={`${control} mt-2`} disabled={recoveryBusy || budBusy} onClick={() => void prepareMailRecovery(operation)}>Inspect and record mail outcome</button>
+                  ) : null}
+                  {!MAIL_SENDS.has(operation.toolName) && (operation.status === 'unknown' || operation.status === 'failed') ? <p className="mt-2 text-ink-secondary">Inspect this outcome in its app. Exact-account recovery is currently available for supported managed mail; this operation remains held and may need service support.</p> : null}
+                  {mailRecovery?.operationId === operation.id ? (
+                    <div className="mt-3 rounded-lg border border-line p-3">
+                      <p className="font-medium text-ink">Check {mailRecovery.account.label} in {mailRecovery.account.provider === 'gmail' ? 'Gmail' : 'Outlook'}</p>
+                      <p className="mt-1 break-all text-ink-secondary">Verified account {mailRecovery.account.accountId} · {mailRecovery.toolName} · operation {mailRecovery.operationId}</p>
+                      <p className="mt-1 break-all text-ink-secondary">Company {mailRecovery.account.companyId} · managed gateway {mailRecovery.account.gatewayOrigin}</p>
+                      <p className="mt-1 text-ink-secondary">Original approval {fmtDateTime(mailRecovery.originalReview.approvedAt)} · dispatch recorded {fmtDateTime(mailRecovery.startedAt)}</p>
+                      {mailRecovery.connectionChanged ? <p role="alert" className="mt-2 font-medium text-hold">The connection changed since the original approval. The account above is the same exact verified account. Inspect the original reviewed message below in that account before recording a manual outcome.</p> : null}
+                      <details className="mt-3" open><summary className="cursor-pointer font-medium text-ink">Original approved message and recipients</summary><pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words text-ink-secondary">{mailRecovery.originalReview.card}</pre></details>
+                      <details className="mt-2"><summary className="cursor-pointer text-ink-secondary">Original exact request</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-ink-secondary">{mailRecovery.originalReview.exact}</pre></details>
+                      <p className="mt-2 text-ink-secondary">Open this exact account in the mail app and inspect the operation. Record only what you checked. These controls save your manual evidence; they do not send mail or prove provider delivery.</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button type="button" className={control} disabled={recoveryBusy} onClick={() => void recordMailOutcome('sent')}>{mailRecovery.connectionChanged ? 'I checked the original message after reconnection: sent' : 'I checked: message was sent'}</button>
+                        <button type="button" className={control} disabled={recoveryBusy} onClick={() => void recordMailOutcome('not-sent')}>{mailRecovery.connectionChanged ? 'I checked the original message after reconnection: not sent' : 'I checked: message was not sent'}</button>
+                        <button type="button" className={control} disabled={recoveryBusy} onClick={() => setMailRecovery(null)}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : null}
                   <button
                     type="button"
                     className={`${control} mt-2`}

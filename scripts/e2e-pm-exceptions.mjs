@@ -333,7 +333,9 @@ try {
   check("standing rule revokes", revoked.status === 200 && !(revoked.body?.rules ?? []).some((r) => r.id === ruleId));
 
   // ── Training agency names do not invent an office ──
-  const demoName = await api("PATCH", "/api/desk/agency", { name: "RealBud Demo Book" });
+  const agencyBefore = (await api("GET", "/api/desk")).body;
+  if (typeof agencyBefore?.workspaceId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(agencyBefore.workspaceId)) throw new Error('The current private workspace could not be checked before naming the office.');
+  const demoName = await api("PATCH", "/api/desk/agency", { expectedWorkspaceId: agencyBefore.workspaceId, expectedRevision: agencyBefore.revision, name: "RealBud Demo Book" });
   check("demo agency name can be set", demoName.status === 200);
   check("demo agency name stays on the book as training copy", demoName.body?.book?.agency?.name === "RealBud Demo Book");
   const channels = await api("GET", "/api/channels");

@@ -111,7 +111,7 @@ function fakeModelvia(options: { chargeDetail?: 'all_in' | 'itemized' } = {}) {
   return {
     operator, client, calls, policies, requests,
     addCustomer(id: string) { customers.set(id, { id, name: id, active: true, monthlyCapNanoAud: '200000000000', maxConcurrent: 2, allowedModels: ['deepseek-v4.1-flash'], version: 1, clientId: CLIENT, payer: 'client' }); },
-    setServerNow(at: number) { serverNow = at; }, get serverNow() { return serverNow; }, noDateHeader() { dateHeader = false; },
+    setServerNow(at: number) { serverNow = at; }, get serverNow() { return serverNow; }, noDateHeader() { dateHeader = false; }, restoreDateHeader() { dateHeader = true; },
     /** Admission: priced under the policy in force at `at` (Modelvia's clock). */
     admit(customerId: string, r: { baseNano: bigint; model: string; user: string; projectId: string | null; tokensIn: number; tokensOut: number }) {
       const policy = active(customerId, serverNow); assert.ok(policy, 'a policy is in force');
@@ -391,4 +391,64 @@ test('a portal acceptance brings Modelvia to the accepted markup; a failed sync 
   assert.equal((await accept('care-a2', next.digest)).status, 200);
   assert.deepEqual(m.policies.map(p => p.clientMarkupBasisPoints), [2500]);
   assert.equal(officeMarkup(f.ledger, 'company-a').policy, 'not_synced');
+});
+
+
+test('month close holds missing, pending and latest failed exact pricing receipts, then succeeds after verified sync without repricing requests', async () => {
+  const { f, billing, m, accept, sync } = offices();
+  accept('company-a', 'care-a1', 2000);
+  f.setTime(Date.parse('2026-10-01T00:00:00Z'));
+  const close = (version: string) => closeOfficeMonth({ billing, modelvia: m.client, clientFundedCompanies: new Set() }, 'company-a', '2026-09', version);
+  const calls = m.calls.length;
+  await assert.rejects(close('care-a1'), /ai_policy_not_synced/);
+  assert.equal(m.calls.length, calls, 'no provider read or write while pricing proof is missing');
+  await sync('company-a');
+  const original = structuredClone(m.policies[0]);
+  accept('company-a', 'care-a2', 2000);
+  const pending = await sync('company-a'); assert.equal(pending.state, 'pending');
+  assert.equal(officeMarkup(f.ledger, 'company-a').policy, 'sync_pending');
+  await assert.rejects(close('care-a2'), /ai_policy_pending/);
+  m.setServerNow(m.serverNow + 1000);
+  assert.equal((await sync('company-a')).state, 'active');
+  m.noDateHeader(); assert.equal((await sync('company-a')).state, 'failed');
+  assert.equal(officeMarkup(f.ledger, 'company-a').policy, 'sync_failed');
+  await assert.rejects(close('care-a2'), /ai_policy_sync_failed/);
+  assert.equal(f.db.all('SELECT id FROM invoices').length, 0);
+  m.restoreDateHeader(); assert.equal((await sync('company-a')).state, 'active');
+  const count = m.policies.length;
+  const closed = await close('care-a2'); assert.equal(closed.ai, 'no_ai_usage');
+  assert.equal(m.policies.length, count, 'close never writes a provider pricing policy');
+  assert.deepEqual(m.policies[0], original, 'historical policy remains unchanged');
+});
+
+test('a latest failed sync after awaited Modelvia invoice read aborts the final transaction with no invoice, consolidation or email', async () => {
+  const { f, billing, m, accept, sync } = offices();
+  accept('company-a', 'care-a1', 2000); await sync('company-a');
+  m.admit('realbud-company-a', { baseNano: 1000000000n, model: 'auto', user: 'Fictional agent', projectId: null, tokensIn: 100, tokensOut: 50 });
+  m.finalize('realbud-company-a', 'Fictional Agency A', 'CI-00000999', '2026-09');
+  f.setTime(Date.parse('2026-10-01T00:00:00Z'));
+  const client = { ...m.client, async customerInvoice(customer: string, invoice: string) { const found = await m.client.customerInvoice(customer, invoice); m.noDateHeader(); await sync('company-a'); return found; } };
+  await assert.rejects(closeOfficeMonth({ billing, modelvia: client, clientFundedCompanies: new Set() }, 'company-a', '2026-09', 'care-a1'), /ai_policy_sync_failed/);
+  assert.equal(f.db.all('SELECT id FROM invoices').length, 0);
+  assert.equal(f.db.all('SELECT modelvia_invoice FROM office_ai_consolidations').length, 0);
+  assert.equal(f.db.all('SELECT invoice FROM invoice_email_outbox').length, 0);
+});
+
+test('newer anchor sync refreshes a formerly pending historical policy by read only, enabling deferred one-time consolidation', async () => {
+  const { f, billing, m, owners, draft, accept, sync } = offices();
+  accept('company-a','care-a1',2000); await sync('company-a');
+  accept('company-a','care-a2',3000); assert.equal((await sync('company-a')).state,'pending');
+  f.setTime(Date.parse('2026-10-01T00:00:00Z'));
+  const options={billing,modelvia:m.client,clientFundedCompanies:new Set<string>()};
+  await assert.rejects(closeOfficeMonth(options,'company-a','2026-09','care-a2'),/ai_policy_pending/);
+  const care=await closeOfficeMonth(options,'company-a','2026-09','care-a2',{deferAi:true}); assert.equal(care.invoice.totalCents,'12500');assert.equal(care.invoice.aiUsage!.modelviaInvoices.length,0);
+  m.setServerNow(Date.parse('2026-09-20T00:00:00Z'));m.admit('realbud-company-a',{baseNano:1000000000n,model:'auto',user:'Fictional agent',projectId:null,tokensIn:100,tokensOut:50});
+  m.finalize('realbud-company-a','Fictional Agency A','CI-00000995','2026-09');
+  const october=billing.commercialTerms!.publish(draft('company-a','care-oct',4000,{period:'2026-10'}));billing.commercialTerms!.accept(owners['company-a'],'2026-10','care-oct',october.digest);
+  m.setServerNow(Date.parse('2026-10-20T00:00:00Z'));const before=m.policies.length;assert.equal((await sync('company-a')).state,'active');assert.equal(m.policies.length,before+1,'only new acceptance appends; historical receipt reads no pricing write');
+  const historical=f.db.all<{body:string}>("SELECT body FROM events WHERE kind='ai_resale_policy_synced' ORDER BY seq").map(row=>JSON.parse(row.body)).filter(row=>row.historical);
+  assert.equal(historical.length,1);assert.equal(historical[0].clientMarkupBasisPoints,3000);assert.equal(historical[0].state,'active');
+  f.setTime(Date.parse('2026-11-01T00:00:00Z'));
+  const consolidated=await closeOfficeMonth(options,'company-a','2026-10','care-oct');assert.equal(consolidated.invoice.aiUsage!.modelviaInvoices[0].totalCents,'130','historical30% request keeps its price after40% acceptance');
+  assert.equal((await closeOfficeMonth(options,'company-a','2026-10','care-oct')).invoice.id,consolidated.invoice.id);assert.equal(f.db.all('SELECT modelvia_invoice FROM office_ai_consolidations').length,1);assert.equal(m.policies.length,before+1);
 });

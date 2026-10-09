@@ -8,6 +8,7 @@
 !managed-gateway/*.ts
 managed-gateway/*.test.ts
 managed-gateway/testing.ts
+managed-gateway/testing-resale-policy.ts
 managed-gateway/sandbox-smoke.ts
 !managed-gateway/package.json
 !managed-gateway/package-lock.json
@@ -23,6 +24,7 @@ managed-gateway/sandbox-smoke.ts
 !shared/source-attachments.ts
 !shared/service-entitlement.ts
 !shared/app-tool-policy.ts
+!shared/connected-app-binding.ts
 # Belt and braces on top of the allowlist: nothing below may ever be copied.
 managed-gateway/.env
 managed-gateway/.env.*

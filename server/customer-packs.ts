@@ -10,7 +10,7 @@ import type { CustomerPack, CustomerPackCheck, CustomerPackCheckId, CustomerPack
 import { loadRecipes, parseRecipeSchedule, resetRecipeApprovalsAtomically, saveRecipesAtomically, validateRecipe } from './recipes.ts';
 import { mkdirPrivate, privateDirectory, readPrivateJson, writePrivateJson } from './private-json.ts';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
-import { austinAccountsCustomerPack, austinCustomerPack, austinPropertyCustomerPack, austinReiFiles } from './customer-pack-definition.ts';
+import { austinAccountsCustomerPack, austinCustomerPack, latestAustinAccountsCustomerPack, latestAustinCustomerPack, austinPropertyCustomerPack, austinReiFiles } from './customer-pack-definition.ts';
 import { officeCoreCustomerPack } from './office-core-pack.ts';
 import { assertOwnPrivate, readPrivateFileSync, writeFileAtomic, fsyncDir } from './atomic.ts';
 import { lstatSync, unlinkSync } from 'node:fs';
@@ -208,7 +208,9 @@ export interface CustomerPackServiceOptions {
 }
 /** Packs generated from files inside the signed app bundle. Trusted as shipped:
  * the digest is computed from the current app files, never pinned. */
-const builtInPacks: Record<string, () => CustomerPack> = { 'austin-office': austinCustomerPack, 'austin-accounts': austinAccountsCustomerPack, 'austin-property': austinPropertyCustomerPack, 'office-core': officeCoreCustomerPack, 'department-starters': departmentStarterCustomerPack };
+const builtInPacks: Record<string, () => CustomerPack> = { 'austin-office': latestAustinCustomerPack, 'austin-accounts': latestAustinAccountsCustomerPack, 'austin-property': austinPropertyCustomerPack, 'office-core': officeCoreCustomerPack, 'department-starters': departmentStarterCustomerPack };
+/** Exact reviewed historical bytes remain trusted for installed revisions, repair and export. */
+const builtInHistory: Record<string, (() => CustomerPack)[]> = { 'austin-office': [austinCustomerPack, latestAustinCustomerPack], 'austin-accounts': [austinAccountsCustomerPack, latestAustinAccountsCustomerPack] };
 /** A pack from outside the app must carry a valid RealBud signature. A pack from
  * the office website always must: matching a built-in is no excuse there. */
 export function admitPack(value: unknown, keys: readonly PackPublisherKey[], requireSignature = false): CustomerPack {
@@ -218,7 +220,7 @@ export function admitPack(value: unknown, keys: readonly PackPublisherKey[], req
   else {
     // Built-ins are LF text; an editor may have saved the copy with CRLF. Normalise skill text for this comparison only, and install the LF form that was matched.
     const lf = { ...pack, skills: pack.skills.map(skill => ({ ...skill, instructions: skill.instructions.replace(/\r\n/g, '\n') })) };
-    if (hash(JSON.stringify(validateCustomerPack(builtInPacks[pack.id]()))) !== hash(JSON.stringify(lf))) fail(BUILT_IN_MISMATCH_MESSAGE);
+    if (!(builtInHistory[pack.id] ?? [builtInPacks[pack.id]]).some(read => hash(JSON.stringify(validateCustomerPack(read()))) === hash(JSON.stringify(lf)))) fail(BUILT_IN_MISMATCH_MESSAGE);
     return lf;
   }
   return pack;

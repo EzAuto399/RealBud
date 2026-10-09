@@ -5,10 +5,9 @@
 // one process that would have run on Windows.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { mkdirPrivateSync, writeFileAtomic, writeFileFsynced, writeFilePrivateSync } from './atomic.ts';
-import { ensureDirs } from './config.ts';
 import { DEFAULT_VAULT_DOCUMENTS, appendAllowedLine, seedVault } from './vault.ts';
 import { oplog, setOpLogPath } from './oplog.ts';
 import { loadDeskKey } from './desk-key.ts';
@@ -220,8 +219,14 @@ function writePrivateSyncAndFsynced(key: string, backup: string): void {
 }
 
 describe('boot-time creators in the data directory', () => {
-  it('ensureDirs restricts the data, events and native folders it creates in one process, then never again', () => {
-    const data = join(homedir(), '.realbud');
+  it('ensureDirs restricts the data, events and native folders it creates in one process, then never again', async () => {
+    // Imported stores may privately initialize the shared DATA_DIR already.
+    // Exercise the real boot creator against its own absent configured root.
+    const data = join(fixture(), 'data');
+    vi.stubEnv('REALBUD_DATA_DIR', data);
+    vi.resetModules();
+    const { DATA_DIR, ensureDirs } = await import('./config.ts');
+    expect(DATA_DIR).toBe(data);
     expect(existsSync(data)).toBe(false);
     ensureDirs();
     expect(acl.launches).toEqual([[data, join(data, 'events'), join(data, 'native')].map(path => [path, 'directory', 'restrict', null])]);
@@ -291,14 +296,14 @@ describe('boot-time creators in the data directory', () => {
     expect(readFileSync(path, 'utf8')).toContain('after rotation');
   });
 
-  it('a generated desk.key is protected before the key is written; an existing key launches nothing', () => {
+  it('a generated desk.key is protected before writing; a saved key is verified without restriction', () => {
     const dir = fixture(), path = join(dir, 'desk.key');
     vi.stubEnv('REALBUD_DESK_KEY', '');
     const first = loadDeskKey({ dir });
     expect(acl.launches).toEqual([[[path, 'file', 'restrict', 0]]]);
     acl.launches.length = 0;
     expect(loadDeskKey({ dir }).key).toEqual(first.key);
-    expect(acl.launches).toEqual([]);
+    expect(acl.launches).toEqual([[[path, 'file', 'verify', 32]]]);
   });
 
   it('workflow-state.sqlite is created empty and protected before SQLite opens it; a reopen launches nothing', () => {

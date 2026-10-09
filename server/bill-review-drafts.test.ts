@@ -214,9 +214,17 @@ describe('permanent encrypted bill review drafts', () => {
     expect(bytes(f)).toEqual(before);
   });
 
+  it('retains optional original-source references and undecided classification without saving staff confirmations', () => {
+    const f = fixture(), initial = input(f.workspaceId);
+    initial.fields.maintenanceClassification = 'unclassified';
+    initial.forwardedOriginalSource = { itemId: 'a'.repeat(64), messageId: 'cd', expectedSourceDigest: 'b'.repeat(64), expectedEnvelopeDigest: 'c'.repeat(64) };
+    const saved = f.store.create(randomUUID(), null, initial); expect(value(saved)).toEqual(initial); expect(validateSavedBillReviewDraft(billReviewDraftRecordId(saved.id), saved.revision, saved, f.workspaceId)).toEqual(saved);
+    expect(new BillReviewDraftStore(f.database, { workspaceId: f.workspaceId }).get(saved.id)).toEqual(saved);
+    for (const bad of [{ ...initial, originalSourceReviewed: true }, { ...initial, maintenanceClassificationReviewed: true }, { ...initial, forwardedOriginalSource: { ...initial.forwardedOriginalSource, sender: 'fake@example.test' } }, { ...initial, fields: { ...initial.fields, maintenanceClassification: 'model-approved' } }]) expect(() => f.store.create(randomUUID(), null, bad)).toThrow();
+  });
   it('limits individual fields and encrypted size while retaining multilingual raw text exactly', () => {
     const f = fixture(), initial = input(f.workspaceId), id = randomUUID();
-    for (const field of Object.keys(initial.fields) as (keyof typeof initial.fields)[]) initial.fields[field] = '漢'.repeat(BILL_REVIEW_DRAFT_LIMITS[field]);
+    for (const field of Object.keys(initial.fields) as (Exclude<keyof typeof initial.fields, 'maintenanceClassification'>)[]) initial.fields[field] = '漢'.repeat(BILL_REVIEW_DRAFT_LIMITS[field]);
     initial.reason = '漢'.repeat(BILL_REVIEW_DRAFT_LIMITS.reason); initial.seriesId = '漢'.repeat(BILL_REVIEW_DRAFT_LIMITS.seriesId); initial.arrivalDate = '漢'.repeat(BILL_REVIEW_DRAFT_LIMITS.arrivalDate);
     const saved = f.store.create(id, null, initial); expect(value(saved)).toEqual(initial);
     expect(Buffer.byteLength(JSON.stringify(saved))).toBeLessThanOrEqual(BILL_REVIEW_DRAFT_MAX_BYTES);

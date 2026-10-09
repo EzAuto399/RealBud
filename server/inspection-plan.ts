@@ -76,6 +76,16 @@ export interface InspectionPlan {
   days: PlanDay[];
   holds: PlanHold[];
   notDue: { propertyId: string; dueDate: string }[];
+  /** Existing bookings stay pinned; changed rules and conflicting pins need human review. */
+  diagnostics?: PlanDiagnostic[];
+}
+
+export interface PlanDiagnostic {
+  kind: 'closed-day' | 'capacity' | 'collision';
+  date: string;
+  inspector: string;
+  propertyIds: string[];
+  reason: string;
 }
 
 export interface InspectionPlanInput {
@@ -106,6 +116,10 @@ export function addMonths(value: string, months: number): string {
 }
 const weekday = (value: string) => parseDate(value)!.getUTCDay();
 const minutesToTime = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+const timeMinutes = (time: string) => { const [h, m] = time.split(':').map(Number); return h * 60 + m; };
+/** Both the appointment and reviewed travel allowance reserve the inspector's time. */
+export const inspectionTimesOverlap = (a: string, b: string, rules: Pick<InspectionRules, 'appointmentMinutes' | 'travelMinutes'>) =>
+  Math.abs(timeMinutes(a) - timeMinutes(b)) < rules.appointmentMinutes + rules.travelMinutes;
 
 /** Next inspection due date, or null when the chosen basis has no readable date. */
 export function dueDate(property: InspectionProperty, rules: Pick<InspectionRules, 'cycleBasis' | 'cycleMonths'>): string | null {
@@ -138,10 +152,10 @@ export function draftInspectionPlan(input: InspectionPlanInput): InspectionPlan 
   const holds: PlanHold[] = [];
   const notDue: InspectionPlan['notDue'] = [];
   // Per inspector-day: which times are taken and which areas it already serves.
-  const days = new Map<string, { times: Set<string>; areas: Set<string> }>();
+  const days = new Map<string, { times: Set<string>; areas: Set<string>; count: number }>();
   const day = (date: string, inspector: string) => {
     const key = `${date}|${inspector}`;
-    if (!days.has(key)) days.set(key, { times: new Set(), areas: new Set() });
+    if (!days.has(key)) days.set(key, { times: new Set(), areas: new Set(), count: 0 });
     return days.get(key)!;
   };
 
@@ -157,9 +171,10 @@ export function draftInspectionPlan(input: InspectionPlanInput): InspectionPlan 
   for (const [propertyId, { appt, status }] of [...pinned].sort(([a], [b]) => a.localeCompare(b))) {
     if (!parseDate(appt.date) || !TIME.test(appt.time) || !appt.inspector) throw new Error(`The booking for ${propertyId} needs a date, time and inspector.`);
     const property = byId.get(propertyId);
-    // ponytail: a pin on a closed day or over capacity is kept as the person set it; no warning yet.
+    // Preserve the person's booking. Diagnostics below name conflicts rather than moving it silently.
     const slot = day(appt.date, appt.inspector);
     slot.times.add(appt.time);
+    slot.count++;
     if (property) slot.areas.add(property.area);
     appointments.push({
       id: appt.id ?? `insp-${propertyId}-${appt.date}`, propertyId, address: property?.address ?? '', area: property?.area ?? '',
@@ -217,10 +232,12 @@ export function draftInspectionPlan(input: InspectionPlanInput): InspectionPlan 
       if (property.accessWeekdays?.length && !property.accessWeekdays.includes(wd)) continue;
       for (const inspector of rules.inspectors) {
         const slot = day(date, inspector);
+        if (slot.count >= rules.dailyCapacity) continue;
         if (slot.areas.size && !slot.areas.has(property.area)) continue;
-        const time = slotTimes.find((t) => !slot.times.has(t));
+        const time = slotTimes.find((t) => ![...slot.times].some(taken => inspectionTimesOverlap(t, taken, rules)));
         if (!time) continue;
         slot.times.add(time);
+        slot.count++;
         slot.areas.add(property.area);
         const why = [`Due ${due}.`];
         if (date !== due) why.push(date < due ? `Grouped with ${property.area} visits.` : 'Earlier days were full or unavailable.');
@@ -243,5 +260,18 @@ export function draftInspectionPlan(input: InspectionPlanInput): InspectionPlan 
     entry.appointments.push(appt);
     if (appt.area && !entry.areas.includes(appt.area)) entry.areas.push(appt.area);
   }
-  return { appointments, days: [...grouped.values()], holds, notDue };
+  const diagnostics: PlanDiagnostic[] = [];
+  for (const entry of grouped.values()) {
+    const base = { date: entry.date, inspector: entry.inspector, propertyIds: entry.appointments.map(a => a.propertyId) };
+    if (closed.has(entry.date) || !rules.workingDays.includes(weekday(entry.date))) diagnostics.push({ ...base, kind: 'closed-day',
+      reason: `${entry.inspector} has ${entry.appointments.length} kept booking${entry.appointments.length === 1 ? '' : 's'} on ${entry.date}, ${closed.has(entry.date) ? 'when the office is closed' : 'outside the working days'}. Review and move them if needed.` });
+    if (entry.appointments.length > rules.dailyCapacity) diagnostics.push({ ...base, kind: 'capacity',
+      reason: `${entry.inspector} has ${entry.appointments.length} kept bookings on ${entry.date}; the daily limit is ${rules.dailyCapacity}. Review and move the excess bookings.` });
+    for (let i = 0; i < entry.appointments.length; i++) for (let j = i + 1; j < entry.appointments.length; j++) {
+      const a = entry.appointments[i]!, b = entry.appointments[j]!;
+      if (inspectionTimesOverlap(a.time, b.time, rules)) diagnostics.push({ ...base, kind: 'collision', propertyIds: [a.propertyId, b.propertyId],
+        reason: `${entry.inspector}'s kept bookings at ${a.time} and ${b.time} on ${entry.date} overlap the ${rules.appointmentMinutes} minute visit and ${rules.travelMinutes} minute travel allowance. Review and move one.` });
+    }
+  }
+  return { appointments, days: [...grouped.values()], holds, notDue, diagnostics };
 }

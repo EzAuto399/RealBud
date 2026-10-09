@@ -23,6 +23,7 @@ export type MemberCredentialEnv = {
   newSession: (client: PoolClient, companyId: string, memberId: string) => Promise<SessionMint>;
   context: (client: PoolClient, companyId: string, memberId: string) => Promise<void>;
   bearer: (value: string) => string;
+  assertHostCompany: (client: PoolClient, expectedCompanyId: string) => Promise<void>;
 };
 
 type CredRow = {
@@ -232,14 +233,18 @@ export function createMemberCredentialApi(env: MemberCredentialEnv) {
       });
     },
 
-    async signInMember(input: { companyId: string; loginName: string; password: string }) {
+    async signInMember(input: { companyId: string; loginName: string; password: string; expectedCompanyId?: string }) {
       const companyId = uuid(input.companyId);
       const loginName = normalizeLoginName(input.loginName);
       const password = normalizePassword(input.password);
-      const preview = await env.transaction((client) => credentialByLogin(client, companyId, loginName));
+      const preview = await env.transaction(async (client) => {
+        if (input.expectedCompanyId !== undefined) await env.assertHostCompany(client, input.expectedCompanyId);
+        return credentialByLogin(client, companyId, loginName);
+      });
       const matches = await passwordMatches(password, preview?.password_verifier ?? DUMMY_VERIFIER);
       if (!preview) throw new CompanyError('unauthenticated');
       const outcome = await env.transaction(async (client) => {
+        if (input.expectedCompanyId !== undefined) await env.assertHostCompany(client, input.expectedCompanyId);
         await lockMemberExclusive(client, companyId, preview.member_id);
         const row = await credentialByLogin(client, companyId, loginName);
         if (!row || row.member_id !== preview.member_id || !row.active || String(row.revision) !== String(preview.revision) || row.blocked) {
@@ -260,19 +265,23 @@ export function createMemberCredentialApi(env: MemberCredentialEnv) {
       return outcome.session;
     },
 
-    async recoverMember(input: { companyId: string; loginName: string; recoveryKey: string; newPassword: string }) {
+    async recoverMember(input: { companyId: string; loginName: string; recoveryKey: string; newPassword: string; expectedCompanyId?: string }) {
       const companyId = uuid(input.companyId);
       const loginName = normalizeLoginName(input.loginName);
       const newPassword = normalizePassword(input.newPassword);
       if (typeof input.recoveryKey !== 'string' || input.recoveryKey.includes('\0') || input.recoveryKey.length > 256) {
         throw new CompanyError('invalid_input');
       }
-      const preview = await env.transaction((client) => credentialByLogin(client, companyId, loginName));
+      const preview = await env.transaction(async (client) => {
+        if (input.expectedCompanyId !== undefined) await env.assertHostCompany(client, input.expectedCompanyId);
+        return credentialByLogin(client, companyId, loginName);
+      });
       const matched = recoveryMatches(input.recoveryKey, preview?.recovery_hash ?? DUMMY_RECOVERY_HASH);
       if (!preview) throw new CompanyError('unauthenticated');
       const passwordVerifier = matched ? await derivePasswordVerifier(newPassword) : undefined;
       const rotated = matched ? createRecoverySecret() : undefined;
       const outcome = await env.transaction(async (client) => {
+        if (input.expectedCompanyId !== undefined) await env.assertHostCompany(client, input.expectedCompanyId);
         await lockMemberExclusive(client, companyId, preview.member_id);
         const row = await credentialByLogin(client, companyId, loginName);
         if (!row || row.member_id !== preview.member_id || !row.active || row.blocked) return { ok: false as const };

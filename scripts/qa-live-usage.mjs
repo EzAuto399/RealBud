@@ -320,7 +320,7 @@ globalThis.fetch=async(input,init)=>{
 
   await step('realbud-gateway-boot', async () => {
     const dataDir = join(workspace, 'realbud-data');
-    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     // Seed our own ledger tenant before the server opens the file: provisioning
     // reads it for the spend cap it applies at Modelvia.
     const { LedgerDatabase } = await import(pathToFileURL(join(ROOT, 'managed-gateway', 'database.ts')).href);
@@ -351,8 +351,8 @@ globalThis.fetch=async(input,init)=>{
         REALBUD_PAYMENT_MODE: 'local',
         REALBUD_ALLOWED_ORIGINS: RB_BASE,
         REALBUD_ENABLE_PROVIDER: '1',
-        REALBUD_GATEWAY_SECRETS_DIR: join(workspace, 'gateway-secrets'),
-        REALBUD_GATEWAY_CONNECTOR_REGISTRY: join(workspace, 'registry', 'devices.json'),
+        REALBUD_GATEWAY_SECRETS_DIR: join(dataDir, 'gateway-secrets'),
+        REALBUD_GATEWAY_CONNECTOR_REGISTRY: join(dataDir, 'registry', 'devices.json'),
         REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://fictional-live-usage.invalid',
         REALBUD_COMPOSIO_ORG_KEY: 'fictional-live-usage-org-key',
         REALBUD_COMPOSIO_API_BASE: `http://127.0.0.1:${COMPOSIO_PORT}`,

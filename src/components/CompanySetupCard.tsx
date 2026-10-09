@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { CompanyInvitationResponse, CompanySessionResponse, CompanyStatus } from "@shared/company-api";
 import { companyApi } from "@/lib/company-api";
+import { api } from '@/state/store';
+import { readDepartmentDraftActor, departmentDraftActorScope, type DepartmentDraftActor } from '@/lib/department-configuration-draft-journal';
 import { SERVICE_ADMIN_CHANGED } from "@/lib/service-admin-session";
 import { monitorCompanyStatus } from "@/lib/company-status-monitor";
 import { JOIN_INPUT_MAX_LENGTH, encodeCompanyJoinCode, invitationFromJoinInput, isCompanyJoinCode, joinCodeFailureMessage, readCompanyJoinTarget } from "@/lib/company-join-code";
@@ -10,6 +12,7 @@ import { CompanyDepartments } from './CompanyDepartments';
 import { CompanyPortalBindingsCard } from './company/CompanyPortalBindingsCard';
 import { CompanyRecovery } from './CompanyRecovery';
 import { CompanyHostRecovery } from './CompanyHostRecovery';
+import { CopyButton } from './CopyButton';
 
 const inputClass = "mt-1 w-full rounded-lg border border-line bg-inset px-3 py-2 text-[14px] text-ink placeholder:text-ink-muted focus-visible:outline-2 focus-visible:outline-agency";
 const controlClass = "min-h-10 rounded-lg border px-3 py-2 text-[13px] font-medium focus-visible:outline-2 focus-visible:outline-agency disabled:cursor-not-allowed disabled:opacity-50";
@@ -20,6 +23,18 @@ const summaryClass = "cursor-pointer py-2 text-[13px] focus-visible:outline-2 fo
 const carryOver = "Joining connects this computer to the office for shared department work. Its own Desk book and Bud setup stay on this computer.";
 
 type Invitation = CompanyInvitationResponse & { displayName: string };
+
+/** This destination exposes the existing sign-in, never grants administration. */
+export function CompanyAdministrationRecovery({ status, onOpen }: { status: CompanyStatus; onOpen?: () => void }) {
+  return <div className="space-y-2">
+    <p className="text-[13px] leading-relaxed text-ink-secondary">A service administrator needs to activate office hosting on this computer. Your private book and Work remain available.</p>
+    {status.member?.role === 'member' ? <>
+      <p className="text-[12.5px] text-ink-secondary">Ask your office owner to arrange setup. Office membership does not grant service administration.</p>
+      <CopyButton label="Copy request for your owner" text="Please arrange service administrator setup for office hosting on this computer. Open Workspace → Settings & help → Service administration. My private book and Work remain available; I need the existing host or a join code to use shared office work." />
+    </> : onOpen ? <button type="button" className={`pm-control ${buttonClass}`} onClick={onOpen}>Open service administration</button>
+      : <a className={`pm-control ${buttonClass}`} href="#you-service-admin">Open service administration</a>}
+  </div>;
+}
 
 /** A pasted join code gets a sentence about its failing part; everything else keeps the host's wording. */
 async function explainJoinCode<T>(stage: "connect" | "join", fromJoinCode: boolean, action: () => Promise<T>): Promise<T> {
@@ -32,9 +47,11 @@ async function explainJoinCode<T>(stage: "connect" | "join", fromJoinCode: boole
 }
 
 /** Local company foundation only. It does not switch Desk, Ask or source access. */
-export function CompanySetupCard() {
+export function CompanySetupCard({ onServiceAdministration }: { onServiceAdministration?: () => void } = {}) {
   const [intent, setIntent] = useState<"solo" | "join" | "host">("solo");
   const [status, setStatus] = useState<CompanyStatus | null>(null);
+  const [departmentActor, setDepartmentActor] = useState<DepartmentDraftActor | null>(null);
+  const [departmentIdentityError, setDepartmentIdentityError] = useState('');
   const [mode, setMode] = useState<"create" | "join" | "signin" | "recover" | null>(null);
   const [loginName, setLoginName] = useState("");
   const [password, setPassword] = useState("");
@@ -59,6 +76,7 @@ export function CompanySetupCard() {
   const active = useRef(true);
   const pending = useRef(false);
   const lastIdentity = useRef("");
+  const statusGeneration = useRef(0);
   const heading = useRef<HTMLHeadingElement>(null);
   const firstInput = useRef<HTMLInputElement>(null);
   const invitationInput = useRef<HTMLInputElement>(null);
@@ -70,10 +88,16 @@ export function CompanySetupCard() {
   const refresh = async (background = false): Promise<boolean | undefined> => {
     if (pending.current) return;
     pending.current = true; setBusy("Checking company…");
+    const generation = ++statusGeneration.current, epoch = companyApi.sessionVersion();
     if (!background) setError("");
     try {
       const next = await companyApi.status();
-      if (active.current) {
+      let actor: DepartmentDraftActor | null = null, identityError = '';
+      if (next.company && next.member) {
+        try { actor = readDepartmentDraftActor(await api('/api/company/local-state'), next, epoch); }
+        catch (cause) { identityError = cause instanceof Error ? cause.message : 'The private workspace identity could not be checked. Check company status before reopening department edits.'; }
+      }
+      if (active.current && generation === statusGeneration.current && epoch === companyApi.sessionVersion()) {
         const identity = `${next.company?.id ?? ""}:${next.member?.id ?? ""}`;
         if (identity !== lastIdentity.current) {
           setInvitation(null); setSavedRecoveryKey(""); setHostCode("");
@@ -81,13 +105,13 @@ export function CompanySetupCard() {
           setJoinInput(""); setJoinFromCode(false); setNotice("");
           lastIdentity.current = identity;
         }
-        setStatus(next); setConnectionError("");
+        setStatus(next); setConnectionError(""); setDepartmentActor(actor); setDepartmentIdentityError(identityError);
         if (next.member) setMode(null);
       }
       return true;
     }
     catch (cause) {
-      if (active.current) { setStatus(null); setConnectionError(cause instanceof Error ? cause.message : "Company status could not be checked."); }
+      if (active.current && generation === statusGeneration.current && epoch === companyApi.sessionVersion()) { setStatus(null); setDepartmentActor(null); setDepartmentIdentityError(''); setConnectionError(cause instanceof Error ? cause.message : "Company status could not be checked."); }
       return false;
     }
     finally { pending.current = false; if (active.current) setBusy(""); }
@@ -98,9 +122,21 @@ export function CompanySetupCard() {
     const stopMonitoring = monitorCompanyStatus({ check: () => refresh(true), visible: () => document.visibilityState === "visible", events: window, visibilityEvents: document });
     const onAdministrationChanged = () => { void refresh(); };
     window.addEventListener(SERVICE_ADMIN_CHANGED, onAdministrationChanged);
-    return () => { active.current = false; stopMonitoring(); window.removeEventListener(SERVICE_ADMIN_CHANGED, onAdministrationChanged); };
+    const stopSession = companyApi.subscribeSession(() => { statusGeneration.current++; setStatus(null); setDepartmentActor(null); setDepartmentIdentityError(''); });
+    return () => { active.current = false; statusGeneration.current++; stopSession(); stopMonitoring(); window.removeEventListener(SERVICE_ADMIN_CHANGED, onAdministrationChanged); };
   }, []);
   useEffect(() => { if (mode) firstInput.current?.focus(); }, [mode]);
+  useEffect(() => {
+    if (!status?.company || !status.member || departmentActor || departmentIdentityError) return;
+    let current = true;
+    const epoch = companyApi.sessionVersion(), generation = statusGeneration.current;
+    void Promise.all([companyApi.status(), api('/api/company/local-state')]).then(([checked, localState]) => {
+      if (!current || !active.current || epoch !== companyApi.sessionVersion() || generation !== statusGeneration.current) return;
+      if (checked.company?.id !== status.company!.id || checked.member?.id !== status.member!.id || checked.member.role !== status.member!.role) throw new Error('The company identity changed. Check company status before reopening department edits.');
+      setDepartmentActor(readDepartmentDraftActor(localState, checked, epoch));
+    }).catch(cause => { if (current && active.current && epoch === companyApi.sessionVersion() && generation === statusGeneration.current) setDepartmentIdentityError(cause instanceof Error ? cause.message : 'The private workspace identity could not be checked.'); });
+    return () => { current = false; };
+  }, [status, departmentActor, departmentIdentityError]);
   useEffect(() => { setJoinCopy(""); setRevealJoinCode(false); }, [invitation]);
   useEffect(() => { if (revealJoinCode) { joinCodeInput.current?.focus(); joinCodeInput.current?.select(); } }, [revealJoinCode]);
 
@@ -219,8 +255,8 @@ export function CompanySetupCard() {
         </dl>
         <p className="text-[12px] leading-relaxed text-ink-muted">This session stays in this app window. Company membership does not grant access to a colleague’s private accounts or conversations.</p>
         {hostHeld && <p role="status" className="text-[13px] text-ink-secondary">Collaboration is held for recovery or retirement. {status.remoteHost ? "The owner must finish the host cutover. Your private work stays available." : "Complete Host backup and recovery below before inviting people or changing shared work."}</p>}
-        {!hostHeld && <CompanyMembers key={`${status.company.id}:${status.member.id}`} status={status} onChanged={() => refresh()} />}
-        {!hostHeld && <div ref={departmentsArea}><CompanyDepartments key={`departments:${status.company.id}:${status.member.id}:${status.member.role}`} /></div>}
+        {!hostHeld && <CompanyMembers key={`${status.company.id}:${status.member.id}:${status.member.role}`} status={status} onChanged={() => refresh()} />}
+        {!hostHeld && <div ref={departmentsArea}>{departmentActor ? <CompanyDepartments key={`departments:${departmentDraftActorScope(departmentActor)}`} draftActor={departmentActor} /> : <p role="alert" className="text-[13px] text-danger">{departmentIdentityError || 'Checking the private workspace identity before reopening department edits.'} Your previous typing remains private. Use Check company status below to retry.</p>}</div>}
       {!hostHeld && <CompanyPortalBindingsCard key={`portal:${status.company.id}:${status.member.id}:${status.member.role}`} status={status} />}
         <details className="rounded-lg border border-line p-3">
           <summary className="cursor-pointer text-[13px] font-medium text-ink">Set up or change your sign-in</summary>
@@ -287,7 +323,7 @@ export function CompanySetupCard() {
         <button type="button" onClick={() => void signOut()} disabled={!!busy} className={`${buttonClass} self-start`}>Sign out of company</button>
         <p className="text-[12px] leading-relaxed text-ink-muted">Signing out ends this window’s session. It does not leave the office, unlink its host or remove your local work.</p>
       </> : status?.storageAvailable ? <>
-        <p className="text-[13px] leading-relaxed text-ink-secondary">{status.configured ? "Sign in to your company, or join with an invitation from its owner." : status.setupAllowed ? "Create a company as its owner." : "A service administrator needs to sign in under Advanced to enable company setup."}</p>
+        {status.configured || status.setupAllowed ? <p className="text-[13px] leading-relaxed text-ink-secondary">{status.configured ? "Sign in to your company, or join with an invitation from its owner." : "Create a company as its owner."}</p> : <CompanyAdministrationRecovery status={status} onOpen={onServiceAdministration} />}
         <div className="flex flex-wrap gap-2">
           {!status.configured && status.setupAllowed && <button type="button" disabled={!!busy} aria-pressed={mode === "create"} className={mode === "create" ? primaryClass : buttonClass} onClick={() => { setMode("create"); setError(""); }}>Create company</button>}
           {status.configured && <button type="button" disabled={!!busy} aria-pressed={mode === "join"} className={mode === "join" ? primaryClass : buttonClass} onClick={() => { setMode("join"); setError(""); }}>Join company</button>}
@@ -324,7 +360,7 @@ export function CompanySetupCard() {
             <button type="submit" disabled={!loginName || !password || (mode === "create" ? !name.trim() || !ownerName.trim() : mode === "join" ? !invitationToken.trim() : false)} className={`${primaryClass} self-start`}>{mode === "create" ? "Create and sign in" : mode === "join" ? "Join and sign in" : mode === "recover" ? "Recover my sign-in" : "Sign in"}</button>
           </fieldset>
         </form>}
-      </> : status && (!chooseSetup || intent === "host") && <p className="text-[13px] leading-relaxed text-ink-secondary">{status.storageSetupAvailable ? "Prepare storage on this computer, then create your company. Your existing local desk stays available." : "To set up this computer as the host, your service administrator needs to sign in under Advanced. To join an existing company, use the join code from its owner."}</p>}
+      </> : status && (!chooseSetup || intent === "host") && (status.storageSetupAvailable ? <p className="text-[13px] leading-relaxed text-ink-secondary">Prepare storage on this computer, then create your company. Your existing local desk stays available.</p> : <><CompanyAdministrationRecovery status={status} onOpen={onServiceAdministration} /><p className="text-[12.5px] text-ink-secondary">To join an existing office, choose Join an office and paste the join code from its owner.</p></>)}
       {!status?.storageAvailable && status?.storageSetupAvailable && intent === "host" && <button disabled={!!busy} className={`${primaryClass} self-start`} onClick={() => void run("Setting up this host…", async () => { await companyApi.setup(); setStatus(await companyApi.status()); setNotice("Host storage is ready. Create your company next."); })}>Set up this computer as host</button>}
       {status?.remoteJoinAvailable && intent === "join" && <form className="flex flex-col gap-2" onSubmit={event => { event.preventDefault(); void connect(); }}>
         <label className={labelClass}>Connect to an existing host<input type="password" value={joinInput} onChange={event => setJoinInput(event.target.value)} required maxLength={JOIN_INPUT_MAX_LENGTH} autoComplete="off" autoCapitalize="none" spellCheck={false} aria-describedby={`${id}-join-help`} className={`${inputClass} font-mono`} placeholder="Paste the join code" /></label>

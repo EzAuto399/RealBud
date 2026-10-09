@@ -34,7 +34,8 @@ describe("settings navigation", () => {
   });
   it("opens a section folded inside Settings & help and scrolls it just below the top", () => {
     const settings = { tagName: "DETAILS", open: false, parentElement: null };
-    const target = { tagName: "DETAILS", open: false, parentElement: settings, getBoundingClientRect: () => ({ top: 310 }) };
+    const summary = { focus: vi.fn() };
+    const target = { tagName: "DETAILS", open: false, parentElement: settings, getBoundingClientRect: () => ({ top: 310 }), querySelector: (selector: string) => selector === 'summary' ? summary : null };
     const scroller = { scrollTop: 20, getBoundingClientRect: () => ({ top: 10 }), scrollTo: vi.fn() };
     vi.stubGlobal("document", { getElementById: () => target, querySelector: () => scroller });
     vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
@@ -43,6 +44,7 @@ describe("settings navigation", () => {
       expect(target.open).toBe(true);
       expect(settings.open).toBe(true);
       expect(scroller.scrollTo).toHaveBeenCalledWith({ top: 312, behavior: "smooth" });
+      expect(summary.focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
     } finally { vi.unstubAllGlobals(); }
   });
   it.each([

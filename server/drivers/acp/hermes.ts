@@ -16,7 +16,7 @@ import { releaseHome, runtimeCommit } from "../../hermes-runtime-selection.ts";
 import { selectedWindowsRuntimeHome, windowsHermesRuntimeEnv } from "../../hermes-runtime-env.ts";
 import { applyAskModelRelayEnv, ASK_MODEL_RELAY_OVERLAY_ENV, askModelRelayPort } from "../../ask-model-relay.ts";
 import { DATA_DIR } from "../../config.ts";
-import { ensurePrivateRoot, NETWORK_ISOLATION_UNAVAILABLE, SANDBOX_TEST_WRITABLE, sandboxedLaunch, trustedPath, type SandboxDeps, type SandboxedLaunch } from "../../worker-network-sandbox.ts";
+import { assertWorkerIsolation, ensurePrivateRoot, NETWORK_ISOLATION_UNAVAILABLE, SANDBOX_TEST_WRITABLE, sandboxedLaunch, trustedPath, type SandboxDeps, type SandboxedLaunch } from "../../worker-network-sandbox.ts";
 import { ownedRuntimeHome } from "../../hermes-document-deps.ts";
 
 // Keep ACP's explicit per-session tools separate from configured discovery.
@@ -203,6 +203,7 @@ function launchProfile(args: readonly string[]): string {
  * owned runtime never is written.
  */
 export function hermesWorkerSandbox(job: HermesWorkerJob, command: string, args: readonly string[], env: Record<string, string | undefined>, loopbackPorts: readonly number[], deps?: SandboxDeps): SandboxedLaunch {
+  assertWorkerIsolation(deps?.platform ?? process.platform);
   const home = hermesHome(undefined, env);
   const profile = join(home, "profiles", launchProfile(args));
   if (job !== "diagnostic" && !reviewedCacheLayout(home, command)) throw new Error(UNREVIEWED_WORKER_RELEASE);
@@ -304,9 +305,9 @@ const support: AcpSupport = {
     applyAskModelRelayEnv(env, env.HERMES_HOME);
   },
 
-  // Only the Ask/ACP worker; one-shot CLI and department workers call the
-  // gateway directly. Windows and Linux rely on the pack's `approvals.deny`.
-  networkSandbox: process.platform === "darwin" ? hermesNetworkSandbox : undefined,
+  // Mandatory on every platform: an unsupported platform cannot choose the
+  // ACP core's raw launch path. The bounded host department loop has no child.
+  networkSandbox: hermesNetworkSandbox,
 
   pickAuthMethod: () => null,
   authFailure: "continue",
@@ -333,6 +334,8 @@ const managed = createAcpDriver({
 export const HermesAgentDriver = {
   ...base,
   create: (input: Parameters<typeof base.create>[0]) => {
+    // Before ACP allocates any broker ports or builds a private child profile.
+    assertWorkerIsolation();
     if (input.config.cli && input.config.cli !== "hermes" && input.config.cli !== hermesCli()) return base.create(input);
     // A first install can finish after the registry was created. Existing
     // workers keep their process selection throughout a staged update.

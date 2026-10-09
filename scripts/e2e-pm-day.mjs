@@ -190,7 +190,11 @@ try {
   check("PM retunes morning to 8:00", retune.status === 200 && retune.body?.loop?.schedule?.time === "08:00");
   await api("PATCH", "/api/loops/morning-arrears", { time: "07:30" });
 
+  const agencyBefore = (await api("GET", "/api/desk")).body;
+  if (typeof agencyBefore?.workspaceId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(agencyBefore.workspaceId)) throw new Error('The current private workspace could not be checked before naming the office.');
   const named = await api("PATCH", "/api/desk/agency", {
+    expectedWorkspaceId: agencyBefore.workspaceId,
+    expectedRevision: agencyBefore.revision,
     name: "Harbour PM",
     jurisdictions: ["ACT"],
     office: {
@@ -205,7 +209,7 @@ try {
   });
   check("agency name is Harbour PM", named.body?.book?.agency?.name === "Harbour PM");
   check("office visit fields stick", named.body?.book?.office?.pmUser === "Alex");
-  const refused = await api("PATCH", "/api/desk/agency", { office: { pmsBrand: "aime" } });
+  const refused = await api("PATCH", "/api/desk/agency", { expectedWorkspaceId: agencyBefore.workspaceId, expectedRevision: named.body?.revision, office: { pmsBrand: "aime" } });
   check("unknown PMS is refused", refused.status === 400);
 } finally {
   child.kill("SIGKILL");

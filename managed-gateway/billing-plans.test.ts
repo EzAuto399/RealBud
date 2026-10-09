@@ -1,5 +1,6 @@
 /** Billing plans: accept once, roll forward. Every identity, amount and key is
  * fictional; Modelvia is a stub shaped like the client billing routes. */
+import { syncTestResalePolicy } from './testing-resale-policy.ts';
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { careTermsDraft, fixture } from './testing.ts';
@@ -43,11 +44,11 @@ function office(options:{config?:BillingPlanConfig|{unavailable:string};clientFu
   const modelvia=modelviaStub([{id:'CI-000009',period:'2026-09',totalCents:'4400',gstCents:'400'},{id:'CI-000010',period:'2026-10',totalCents:'6600',gstCents:'600'},{id:'CI-000011',period:'2026-11',totalCents:'8800',gstCents:'800'}]);
   const close=(period:string,deferAi?:boolean)=>closeMonth({billing,modelvia:modelvia.client,clientFundedCompanies,plans},OPERATOR,{companyId:f.tenant.companyId,period,...(deferAi===undefined?{}:{deferAi})});
   const list=(period:string)=>closeList(billing,period,plans).offices.find(o=>o.companyId===f.tenant.companyId)!;
-  const accept=(period:string)=>{ const current=billing.commercialTerms!.current(f.owner,period); return billing.commercialTerms!.accept(f.owner,period,current.terms.version,current.digest); };
+  const accept=async(period:string)=>{ const current=billing.commercialTerms!.current(f.owner,period); const acceptance=billing.commercialTerms!.accept(f.owner,period,current.terms.version,current.digest); await syncTestResalePolicy(f.ledger,f.tenant.companyId); return acceptance; };
   return {f,billing,plans,modelvia,close,list,accept,terms:billing.commercialTerms!};
 }
 
-test('config: every seller and reference variable, checked by name; a reviewed seller-basis digest must match',()=>{
+test('config: every seller and reference variable, checked by name; a reviewed seller-basis digest must match',async()=>{
   const config=composeBillingPlanConfig(ENV);
   assert.ok(!('unavailable' in config));
   assert.deepEqual(config.seller,{legalName:'Fictional RealBud Seller',product:'RealBud',abn:SELLER_ABN,address:'1 Example Seller Street, Brisbane QLD',gstRegistered:true});
@@ -75,7 +76,7 @@ test('Austin: plan set in September, accepted once; September and October close 
   // The owner accepts September: the plan is accepted, October is covered by a
   // standing acceptance, and AI resale is accepted from the first month.
   f.setTime(at('2026-09-20T00:00:00Z'));
-  const anchor=accept('2026-09');
+  const anchor=await await accept('2026-09');
   assert.equal(anchor.subject,f.owner.subject);
   const october=terms.current(f.owner,'2026-10');
   assert.ok(october.acceptance && isStandingAcceptance(october.acceptance));
@@ -129,7 +130,7 @@ test('an included month closed under earlier terms is still never billed: the ac
   f.setTime(at('2026-10-05T00:00:00Z'));
   await close('2026-09');
   plans.set(OPERATOR,{companyId:f.tenant.companyId,...AUSTIN});
-  accept('2026-10');
+  await accept('2026-10');
   f.setTime(at('2026-12-02T00:00:00Z'));
   await close('2026-10');
   const nov=await close('2026-11');
@@ -139,7 +140,7 @@ test('an included month closed under earlier terms is still never billed: the ac
 test('a plan change is a new version: closed months stay, unclosed months are republished and wait for the owner; the same content is not a new version',async()=>{
   const {f,plans,close,list,accept,terms}=office();
   plans.set(OPERATOR,{companyId:f.tenant.companyId,...AUSTIN});
-  accept('2026-09');
+  await await accept('2026-09');
   f.setTime(at('2026-10-05T00:00:00Z'));
   const sept=await close('2026-09');
   // Idempotent: the same plan again (markup stated explicitly at the default) is the current version.
@@ -155,14 +156,14 @@ test('a plan change is a new version: closed months stay, unclosed months are re
   assert.deepEqual([list('2026-10').blocker,list('2026-09').invoiceId],['plan_awaiting_owner',sept.invoice.id]);
   f.setTime(at('2026-11-02T00:00:00Z'));
   await assert.rejects(close('2026-10'),/plan_awaiting_owner/);
-  const anchor2=accept('2026-10');
+  const anchor2=await accept('2026-10');
   assert.deepEqual([terms.current(f.owner,'2026-11').acceptance?.subject,plans.view(f.tenant.companyId).acceptance.acceptedAt],[`standing:${digest(anchor2)}`,anchor2.acceptedAt]);
   const oct=await close('2026-10');
   assert.deepEqual([oct.ai,oct.invoice.totalCents,oct.invoice.officeName],['included','0','Fictional Agency A Realty']);
   f.db.verify();
 });
 
-test('standing acceptances are only ever created for months of an accepted plan version, under a genuine anchor',()=>{
+test('standing acceptances are only ever created for months of an accepted plan version, under a genuine anchor',async()=>{
   const {f,plans,accept,terms}=office();
   plans.set(OPERATOR,{companyId:f.tenant.companyId,...AUSTIN});
   const {publishedAt:_published,...october}=terms.current(f.owner,'2026-10').terms;
@@ -172,7 +173,7 @@ test('standing acceptances are only ever created for months of an accepted plan 
   // No acceptance exists yet: an anchor that is not stored is refused, and nothing is published.
   assert.throws(()=>terms.publish(november,{anchor:forged}),/billing_plan_anchor_invalid/);
   assert.equal(f.db.all("SELECT seq FROM commercial_terms WHERE period='2026-11'").length,0);
-  const anchor=accept('2026-09');
+  const anchor=await await accept('2026-09');
   // A standing acceptance cannot anchor another; the owner's can.
   const standing=terms.current(f.owner,'2026-10').acceptance!;
   assert.throws(()=>terms.publish(november,{anchor:standing}),/billing_plan_anchor_invalid/);
@@ -232,10 +233,10 @@ test('blockers and refusals: no plan for an office invoiced before, the plan awa
   assert.deepEqual([plans.rollForward(f.tenant.companyId).blocker,list('2027-01').blocker],['commercial_tenant_inactive','commercial_tenant_inactive']);
 });
 
-test('the daily roll-forward publishes next month for every planned office with its standing acceptance, and is idempotent',()=>{
+test('the daily roll-forward publishes next month for every planned office with its standing acceptance, and is idempotent',async()=>{
   const {f,plans,accept,terms}=office();
   plans.set(OPERATOR,{companyId:f.tenant.companyId,...AUSTIN});
-  const anchor=accept('2026-09');
+  const anchor=await await accept('2026-09');
   f.setTime(at('2026-10-20T00:00:00Z'));
   assert.deepEqual(plans.rollForwardAll(),[{companyId:f.tenant.companyId,published:['2026-11'],blocker:null}]);
   assert.deepEqual(plans.rollForwardAll(),[{companyId:f.tenant.companyId,published:[],blocker:null}]);
@@ -245,14 +246,14 @@ test('the daily roll-forward publishes next month for every planned office with 
   f.db.verify();
 });
 
-test('the portal presentation shows the plan in the owner\'s words and the stored terms exactly (markup included), so the digest checks',()=>{
+test('the portal presentation shows the plan in the owner\'s words and the stored terms exactly (markup included), so the digest checks',async()=>{
   const {f,plans,accept,terms}=office();
   plans.set(OPERATOR,{companyId:f.tenant.companyId,...AUSTIN});
   const september=presentCommercialTerms(terms.current(f.owner,'2026-09'));
   assert.deepEqual(september.plan,{version:'plan-v1',startPeriod:'2026-09',includedMonths:2,includedUntil:'2026-10',careCents:'12500',careFrom:'2026-11',aiBilling:'resale',aiBilledFrom:'2026-11',month:1,included:true,accepted:false});
   assert.deepEqual(september.terms,terms.current(f.owner,'2026-09').terms);
   assert.equal(september.digest,terms.current(f.owner,'2026-09').digest);
-  accept('2026-09');
+  await await accept('2026-09');
   f.setTime(at('2026-10-20T00:00:00Z'));
   plans.rollForward(f.tenant.companyId);
   const november=presentCommercialTerms(terms.current(f.owner,'2026-11'));
@@ -261,4 +262,27 @@ test('the portal presentation shows the plan in the owner\'s words and the store
   const {billingPlan:_plan,...base}=terms.current(f.owner,'2026-09').terms;
   const legacy=presentCommercialTerms({terms:{...base,aiUsage:{billing:'resale',markupBasisPoints:2500,termsReference:'ref'}},digest:'x'.repeat(64),acceptance:null});
   assert.deepEqual([legacy.plan,legacy.terms.aiUsage,'billingPlan' in legacy.terms],[null,{billing:'resale',markupBasisPoints:2500,termsReference:'ref'},false]);
+});
+
+test('plan and month-close snapshots refuse stale reviewed versions while identical plan retry stays idempotent',async()=>{
+ const {f,plans,accept,billing,modelvia}=office();
+ const clientFundedCompanies=new Set<string>();
+ const first=plans.set(OPERATOR,{companyId:f.tenant.companyId,...AUSTIN,expectedPlanVersion:null});
+ assert.equal(first.plan!.version,'plan-v1');
+ assert.equal(plans.set(OPERATOR,{companyId:f.tenant.companyId,...AUSTIN,expectedPlanVersion:null}).plan!.version,'plan-v1');
+ assert.throws(()=>plans.set(OPERATOR,{companyId:f.tenant.companyId,...AUSTIN,careCents:'15000',expectedPlanVersion:null}),/billing_plan_changed/);
+ const changed=plans.set(OPERATOR,{companyId:f.tenant.companyId,...AUSTIN,careCents:'15000',expectedPlanVersion:'plan-v1'});assert.equal(changed.plan!.version,'plan-v2');
+ await accept('2026-09');f.setTime(at('2026-10-05T00:00:00Z'));
+ await assert.rejects(closeMonth({billing,modelvia:modelvia.client,plans,clientFundedCompanies},OPERATOR,{companyId:f.tenant.companyId,period:'2026-09',expectedTermsVersion:'plan-v1-2026-09'}),/commercial_terms_changed/);
+ assert.equal(billing.invoices(f.owner).length,0);assert.deepEqual(modelvia.calls,[]);
+ const closed=await closeMonth({billing,modelvia:modelvia.client,plans,clientFundedCompanies},OPERATOR,{companyId:f.tenant.companyId,period:'2026-09',expectedTermsVersion:'plan-v2-2026-09'});assert.equal(closed.invoice.status,'nothing_due');
+ f.db.verify();
+});
+
+test('accepted terms changed during the awaited AI read cannot finalize a stale month invoice',async()=>{
+ const {f,plans,accept,billing,modelvia}=office();
+ plans.set(OPERATOR,{companyId:f.tenant.companyId,...AUSTIN,includedMonths:0});await await accept('2026-09');f.setTime(at('2026-10-05T00:00:00Z'));
+ const racing={...modelvia.client,async customerInvoice(customer:string,invoiceId:string){const response=await modelvia.client.customerInvoice(customer,invoiceId);plans.set(OPERATOR,{companyId:f.tenant.companyId,...AUSTIN,includedMonths:0,careCents:'15000',expectedPlanVersion:'plan-v1'});await await accept('2026-09');return response;}};
+ await assert.rejects(closeMonth({billing,modelvia:racing,plans,clientFundedCompanies:new Set()},OPERATOR,{companyId:f.tenant.companyId,period:'2026-09',expectedTermsVersion:'plan-v1-2026-09'}),/commercial_terms_stale/);
+ assert.equal(billing.invoices(f.owner).length,0);assert.equal(f.db.all('SELECT modelvia_invoice FROM office_ai_consolidations').length,0);f.db.verify();
 });

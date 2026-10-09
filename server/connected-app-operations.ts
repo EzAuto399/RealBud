@@ -1,11 +1,14 @@
 // RealBud's dispatch receipts contain identifiers, fixed status text and, for a
 // card answered from a paired phone, who answered it and where. Tool arguments,
 // provider results, account details and credentials stay out.
-import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, statSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { writeFileAtomic } from "./atomic.ts";
+import { assertOwnPrivate, mkdirPrivateSync, openPrivateFileSync, restrictNewSync, writeFileAtomic } from "./atomic.ts";
+import { windowsFilePrivacySync } from "./windows-file-privacy.ts";
 import { DATA_DIR } from "./config.ts";
+import { opaqueDigest } from "../shared/connected-app-binding.ts";
+import { MAIL_SENDS } from "../shared/app-tool-policy.ts";
 
 export type ConnectedAppOperationStatus = "started" | "succeeded" | "failed" | "unknown" | "denied";
 export interface ConnectedAppOperation {
@@ -19,8 +22,18 @@ export interface ConnectedAppOperation {
   detail: string;
   /** Who answered the card when it was not this computer, e.g. "Allowed once by Sam via Telegram · 2:16 pm". */
   approval?: string;
+  /** Opaque reviewed identities only. No account labels or mail content. */
+  accountDigest?: string;
+  realmDigest?: string;
+  bindingDigest?: string;
+  effectDigest?: string;
+  reviewDigest?: string;
+  workspaceDigest?: string;
+  repeatOf?: string;
+  revision?: number;
+  reconciliation?: { outcome: "sent" | "not-sent"; at: number; source: "manual-app-inspection"; recoveryBindingDigest: string };
 }
-type OperationInput = Pick<ConnectedAppOperation, "threadId" | "toolName" | "toolSlugs" | "approval">;
+type OperationInput = Pick<ConnectedAppOperation, "threadId" | "toolName" | "toolSlugs" | "approval" | "accountDigest" | "realmDigest" | "bindingDigest" | "effectDigest" | "reviewDigest" | "workspaceDigest" | "repeatOf">;
 const MAX_OPERATIONS = 1_000;
 const MAX_BYTES = 2 * 1024 * 1024;
 const DETAILS = {
@@ -38,45 +51,130 @@ export const validAppToolSlug = (value: unknown): value is string => typeof valu
 const validThread = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_-]{1,200}$/.test(value);
 const validApproval = (value: unknown): boolean => value === undefined || (typeof value === "string" && /^[^\r\n]{1,300}$/.test(value));
 const timestamp = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 8_640_000_000_000_000;
-const clone = (row: ConnectedAppOperation): ConnectedAppOperation => ({ ...row, toolSlugs: [...row.toolSlugs] });
+const clone = (row: ConnectedAppOperation): ConnectedAppOperation => ({ ...row, toolSlugs: [...row.toolSlugs], ...(row.reconciliation ? { reconciliation: { ...row.reconciliation } } : {}) });
 const failure = () => Object.assign(new Error(RECOVERY), { status: 503 });
+const uuid = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
+const identities = (row: { realmDigest?: unknown; accountDigest?: unknown; bindingDigest?: unknown; effectDigest?: unknown; reviewDigest?: unknown; workspaceDigest?: unknown }) => {
+  const fields = [row.accountDigest, row.bindingDigest, row.effectDigest, row.reviewDigest, row.workspaceDigest];
+  return (fields.every(value => value === undefined) && row.realmDigest === undefined) || (fields.every(opaqueDigest) && (row.realmDigest === undefined || opaqueDigest(row.realmDigest)));
+};
+const conflict = (message: string) => Object.assign(new Error(message), { status: 409 });
+function privateDirectory(path: string): void {
+  mkdirPrivateSync(path, 0o700);
+  const stat = lstatSync(path); assertOwnPrivate(stat, "directory");
+  if (process.platform !== "win32" && (stat.mode & 0o077)) throw failure();
+  windowsFilePrivacySync(path, "directory");
+}
+function privateSnapshot(path: string, limit: number): unknown | undefined {
+  let descriptor: number;
+  try { descriptor = openPrivateFileSync(path); }
+  catch (error) { if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return undefined; throw error; }
+  try {
+    const stat = fstatSync(descriptor);
+    if (stat.size > limit || (process.platform !== "win32" && (stat.mode & 0o077))) throw failure();
+    windowsFilePrivacySync(path, "file");
+    const chunks: Buffer[] = []; let bytes = 0;
+    for (;;) {
+      const chunk = Buffer.alloc(Math.min(64_000, limit + 1 - bytes));
+      const count = readSync(descriptor, chunk, 0, chunk.length, null);
+      if (!count) break; bytes += count;
+      if (bytes > limit) throw failure(); chunks.push(chunk.subarray(0, count));
+    }
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } finally { closeSync(descriptor); }
+}
 
-export class ConnectedAppOperationStore {
-  private rows: ConnectedAppOperation[] = [];
-  private held = false;
-  private readonly file: string;
-  private readonly now: () => number;
-  constructor(options: { file?: string; now?: () => number } = {}) {
-    this.file = options.file ?? join(DATA_DIR, "connected-app-operations.json");
-    this.now = options.now ?? Date.now;
-    try {
-      if (statSync(this.file).size > MAX_BYTES) throw failure();
-      const saved: unknown = JSON.parse(readFileSync(this.file, "utf8"));
-      if (!record(saved) || saved.version !== 1 || !Array.isArray(saved.operations) || saved.operations.length > MAX_OPERATIONS) throw failure();
-      const ids = new Set<string>();
-      this.rows = saved.operations.map((row: unknown) => {
-        if (!record(row) || typeof row.id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(row.id) || ids.has(row.id) ||
+function validateOperationSnapshot(rows: unknown[]): ConnectedAppOperation[] {
+  const ids = new Set<string>();
+  return rows.map((row: unknown) => {
+        if (!record(row) || !uuid(row.id) || ids.has(row.id) ||
           !validThread(row.threadId) || !validAppToolName(row.toolName) || !Array.isArray(row.toolSlugs) ||
           row.toolSlugs.length > 50 || !row.toolSlugs.every(validAppToolSlug) || !timestamp(row.startedAt) ||
           typeof row.status !== "string" || !["started", "succeeded", "failed", "unknown", "denied"].includes(row.status) ||
           (row.status === "started" ? row.finishedAt !== undefined : !timestamp(row.finishedAt)) ||
           (row.finishedAt !== undefined && Number(row.finishedAt) < row.startedAt) ||
           (row.detail !== DETAILS[row.status as ConnectedAppOperationStatus] && !(row.status === "failed" && row.detail === DETAILS.partial)) || !validApproval(row.approval) ||
-          Object.keys(row).some(key => !["id", "threadId", "toolName", "toolSlugs", "status", "startedAt", "finishedAt", "detail", "approval"].includes(key))) throw failure();
+          !identities(row) || (row.repeatOf !== undefined && (!uuid(row.repeatOf) || !row.effectDigest)) ||
+          (row.revision !== undefined && (!Number.isSafeInteger(row.revision) || Number(row.revision) < 0)) ||
+          (row.reconciliation !== undefined && (!record(row.reconciliation) || !["sent", "not-sent"].includes(String(row.reconciliation.outcome)) ||
+            !timestamp(row.reconciliation.at) || row.reconciliation.at < row.startedAt || row.reconciliation.source !== "manual-app-inspection" ||
+            !opaqueDigest(row.reconciliation.recoveryBindingDigest) || Object.keys(row.reconciliation).some(key => !["outcome", "at", "source", "recoveryBindingDigest"].includes(key)) || !row.effectDigest || !["unknown", "failed"].includes(row.status))) ||
+          Object.keys(row).some(key => !["id", "threadId", "toolName", "toolSlugs", "status", "startedAt", "finishedAt", "detail", "approval", "accountDigest", "realmDigest", "bindingDigest", "effectDigest", "reviewDigest", "workspaceDigest", "repeatOf", "revision", "reconciliation"].includes(key))) throw failure();
         ids.add(row.id);
         return clone(row as unknown as ConnectedAppOperation);
-      });
+  });
+}
+
+/** Pure admission shared by live history and portable backup; no store/key opens. */
+export const CONNECTED_MAIL_OPERATIONS_FILE = 'connected-app-operations.json';
+export function validateConnectedAppOperationsSnapshot(value: unknown): { version: 1; operations: ConnectedAppOperation[] } {
+  if (!record(value) || Object.keys(value).sort().join(',') !== 'operations,version' || value.version !== 1 || !Array.isArray(value.operations) || value.operations.length > MAX_OPERATIONS || Buffer.byteLength(JSON.stringify(value)) > MAX_BYTES) throw failure();
+  return { version: 1, operations: validateOperationSnapshot(value.operations) };
+}
+/** Restore cannot infer provider failure from an interrupted dispatch. */
+export function interruptConnectedAppOperationsForRestore(value: unknown, at: number) {
+  if (!timestamp(at)) throw failure();
+  const saved = validateConnectedAppOperationsSnapshot(value);
+  return { version: 1, operations: saved.operations.map(row => row.status === 'started' ? { ...row, status: 'unknown' as const, revision: (row.revision ?? 0) + 1,
+    finishedAt: Math.max(row.startedAt, at), detail: DETAILS.unknown } : row) };
+}
+
+// Only the module's default singleton delays IO until startup migration and
+// restore have completed. Ordinary explicit stores remain eager.
+const DEFER_DEFAULT_SINGLETON = Symbol('connected-app-startup');
+
+export class ConnectedAppOperationStore {
+  private rows: ConnectedAppOperation[] = [];
+  private held = false;
+  private initialized = false;
+  private readonly file: string;
+  private readonly now: () => number;
+  private readonly workspaceIdOverride?: string;
+  private readonly workspaceFile: string;
+  /** Host-only injection for isolated tests; production reads persisted
+   * workspace identity, which stays stable when its backup moves paths. */
+  constructor(options: { file?: string; now?: () => number; workspaceId?: string } = {}, startup?: typeof DEFER_DEFAULT_SINGLETON) {
+    this.file = options.file ?? join(DATA_DIR, "connected-app-operations.json");
+    if (options.workspaceId !== undefined && !uuid(options.workspaceId)) throw failure();
+    this.workspaceIdOverride = options.workspaceId;
+    this.workspaceFile = join(dirname(this.file), 'company-installation', 'workspace.json');
+    this.now = options.now ?? Date.now;
+    if (startup !== DEFER_DEFAULT_SINGLETON) this.initialize();
+  }
+  private initialize(): void {
+    if (this.initialized) return;
+    // Recovery calls locked(), which re-enters assertAvailable(). Admit once
+    // before that recursion; a failure stays held for this store's lifetime.
+    this.initialized = true;
+    try {
+      privateDirectory(dirname(this.file));
+      const saved = privateSnapshot(this.file, MAX_BYTES);
+      if (saved === undefined) return;
+      if (!record(saved) || saved.version !== 1 || !Array.isArray(saved.operations) || saved.operations.length > MAX_OPERATIONS) throw failure();
+      this.rows = validateOperationSnapshot(saved.operations);
       if (this.rows.some(row => row.status === "started")) {
-        this.commit(this.rows.map(row => row.status === "started"
-          ? { ...row, status: "unknown", finishedAt: Math.max(row.startedAt, this.now()), detail: DETAILS.unknown } : row));
+        this.locked(() => this.commit(this.rows.map(row => row.status === "started"
+          ? { ...row, status: "unknown", revision: (row.revision ?? 0) + 1, finishedAt: Math.max(row.startedAt, this.now()), detail: DETAILS.unknown } : row)));
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") this.held = true;
     }
   }
+  get workspaceDigest(): string {
+    this.assertAvailable();
+    let workspaceId = this.workspaceIdOverride;
+    if (!workspaceId) {
+      privateDirectory(dirname(this.workspaceFile));
+      const saved = privateSnapshot(this.workspaceFile, 64_000);
+      if (!record(saved) || saved.version !== 1 || !uuid(saved.id) || Object.keys(saved).sort().join(",") !== "id,version,workerMemberKey" ||
+        !(saved.workerMemberKey === null || (typeof saved.workerMemberKey === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(saved.workerMemberKey)))) throw failure();
+      workspaceId = saved.id;
+    }
+    return createHash("sha256").update(workspaceId).digest("hex");
+  }
 
   list(threadId?: string): ConnectedAppOperation[] {
-    this.assertAvailable();
+    this.assertAvailable(); this.reload();
     return this.rows.filter(row => threadId === undefined || row.threadId === threadId)
       .sort((a, b) => b.startedAt - a.startedAt).map(clone);
   }
@@ -85,40 +183,116 @@ export class ConnectedAppOperationStore {
   deny(input: OperationInput): ConnectedAppOperation { return this.add(input, "denied"); }
 
   finish(id: string, status: Exclude<ConnectedAppOperationStatus, "started" | "denied">, partial = false): ConnectedAppOperation {
+    return this.locked(() => this.finishLocked(id, status, partial));
+  }
+  /** Only for a locally cancelled request or the gateway's documented
+   * pre-adapter session refusal, never a timeout or arbitrary HTTP error. */
+  cancelBeforeDispatch(id: string): ConnectedAppOperation {
+    return this.locked(() => {
+      const row = this.rows.find(item => item.id === id);
+      if (!row) throw Object.assign(new Error("No such app operation."), { status: 404 });
+      if (row.status !== "started") return clone(row);
+      const next: ConnectedAppOperation = { ...row, status: "denied", revision: (row.revision ?? 0) + 1, finishedAt: Math.max(row.startedAt, this.now()), detail: DETAILS.denied };
+      this.commit(this.rows.map(item => item.id === id ? next : item)); return clone(next);
+    });
+  }
+  private finishLocked(id: string, status: Exclude<ConnectedAppOperationStatus, "started" | "denied">, partial: boolean): ConnectedAppOperation {
     this.assertAvailable();
     const existing = this.rows.find(row => row.id === id);
     if (!existing) throw Object.assign(new Error("No such app operation."), { status: 404 });
     if (existing.status !== "started") return clone(existing);
-    const next = { ...existing, status, finishedAt: Math.max(existing.startedAt, this.now()), detail: partial && status === "failed" ? DETAILS.partial : DETAILS[status] };
+    const next = { ...existing, status, revision: (existing.revision ?? 0) + 1, finishedAt: Math.max(existing.startedAt, this.now()), detail: partial && status === "failed" ? DETAILS.partial : DETAILS[status] };
     this.commit(this.rows.map(row => row.id === id ? next : row));
     return clone(next);
   }
 
+  /** A fresh person/card may approve an intentional repeat of known success;
+   * it cannot make an uncertain operation safe to replay. */
+  priorMailEffect(effectDigest: string, realmDigest?: string): ConnectedAppOperation | undefined {
+    this.assertAvailable(); this.reload();
+    if (this.rows.some(row => row.effectDigest && row.status !== "denied" && row.workspaceDigest !== this.workspaceDigest))
+      throw conflict("Connected-app receipts belong to another private workspace. Restore the matching workspace identity and history before sending mail. Nothing new was sent.");
+    if (this.rows.some(row => row.effectDigest && row.status !== 'denied' && (!row.realmDigest || (realmDigest !== undefined && row.realmDigest !== realmDigest))))
+      throw conflict('Retained mail receipts belong to an unverified or different company/gateway realm. Restore the exact source company and managed gateway evidence before sending more mail. Nothing new was sent.');
+    const legacy = this.rows.find(row => !row.effectDigest && ["started", "unknown", "failed"].includes(row.status) &&
+      (MAIL_SENDS.has(row.toolName) || row.toolSlugs.some(slug => MAIL_SENDS.has(slug))));
+    if (legacy) throw conflict("An older mail operation has an uncertain or failed outcome and no verified account/payload/original-review identity. Check that operation in the mail app and recover the original history before sending more mail. Nothing new was sent.");
+    const rows = this.rows.filter(row => row.effectDigest === effectDigest && row.status !== "denied");
+    const unresolved = rows.find(row => row.status === "started" || ((row.status === "unknown" || row.status === "failed") && !row.reconciliation));
+    if (unresolved) throw conflict(`This exact reviewed message already has an unresolved outcome (operation ${unresolved.id}). Inspect that account in the mail app and record its outcome in Connected apps before trying again. Nothing new was sent.`);
+    return rows.reverse().find(row => row.status === "succeeded" || row.reconciliation?.outcome === "sent");
+  }
+
+  reconcile(id: string, expectedRevision: number, outcome: "sent" | "not-sent", binding: { accountDigest: string; realmDigest: string; originalBindingDigest: string; recoveryBindingDigest: string; workspaceDigest: string }): ConnectedAppOperation {
+    return this.locked(() => {
+      const row = this.rows.find(item => item.id === id);
+      if (!row) throw Object.assign(new Error("No such app operation."), { status: 404 });
+      if (!opaqueDigest(binding.accountDigest) || !opaqueDigest(binding.realmDigest) || row.realmDigest !== binding.realmDigest || !opaqueDigest(binding.originalBindingDigest) || !opaqueDigest(binding.recoveryBindingDigest) || row.accountDigest !== binding.accountDigest || row.bindingDigest !== binding.originalBindingDigest || !row.effectDigest ||
+        row.workspaceDigest !== this.workspaceDigest || binding.workspaceDigest !== this.workspaceDigest)
+        throw conflict("The original verified mail account or connection changed. This outcome remains held; recover that exact connection before recording its outcome.");
+      if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || !["sent", "not-sent"].includes(outcome)) throw conflict("Invalid recovery decision.");
+      if (row.reconciliation && row.reconciliation.outcome === outcome && row.reconciliation.recoveryBindingDigest === binding.recoveryBindingDigest && (row.revision ?? 0) === expectedRevision + 1) return clone(row);
+      if ((row.revision ?? 0) !== expectedRevision || row.reconciliation || !["unknown", "failed"].includes(row.status)) throw conflict("This app operation changed. Refresh its receipt before recording an outcome.");
+      const next: ConnectedAppOperation = { ...row, revision: expectedRevision + 1, reconciliation: { outcome, at: Math.max(row.startedAt, this.now()), source: "manual-app-inspection", recoveryBindingDigest: binding.recoveryBindingDigest } };
+      this.commit(this.rows.map(item => item.id === id ? next : item)); return clone(next);
+    });
+  }
+
   private add(input: OperationInput, status: "started" | "denied"): ConnectedAppOperation {
+    return this.locked(() => this.addLocked(input, status));
+  }
+  private addLocked(input: OperationInput, status: "started" | "denied"): ConnectedAppOperation {
     this.assertAvailable();
     if (!validThread(input.threadId) || !validAppToolName(input.toolName) || !Array.isArray(input.toolSlugs) ||
-      input.toolSlugs.length > 50 || !input.toolSlugs.every(validAppToolSlug) || !validApproval(input.approval)) throw Object.assign(new Error("Invalid app operation identifiers."), { status: 400 });
+      input.toolSlugs.length > 50 || !input.toolSlugs.every(validAppToolSlug) || !validApproval(input.approval) || !identities(input) ||
+      (input.repeatOf !== undefined && (!uuid(input.repeatOf) || !input.effectDigest)) || (input.effectDigest && (!opaqueDigest(input.realmDigest) || input.workspaceDigest !== this.workspaceDigest))) throw Object.assign(new Error("Invalid app operation identifiers."), { status: 400 });
+    if (status === "started" && input.effectDigest) {
+      const prior = this.priorMailEffect(input.effectDigest, input.realmDigest);
+      if (prior ? input.repeatOf !== prior.id : input.repeatOf !== undefined) throw conflict("Sending this exact message again requires a separate intentional-repeat approval for its current receipt.");
+    }
     const now = this.now();
     const row: ConnectedAppOperation = { id: randomUUID(), threadId: input.threadId, toolName: input.toolName,
       toolSlugs: [...new Set(input.toolSlugs)], status, startedAt: now,
-      ...(status === "denied" ? { finishedAt: now } : {}), detail: DETAILS[status], ...(input.approval ? { approval: input.approval } : {}) };
+      ...(status === "denied" ? { finishedAt: now } : {}), detail: DETAILS[status], ...(input.approval ? { approval: input.approval } : {}),
+      ...(input.effectDigest ? { accountDigest: input.accountDigest, realmDigest: input.realmDigest, bindingDigest: input.bindingDigest, effectDigest: input.effectDigest, reviewDigest: input.reviewDigest, workspaceDigest: input.workspaceDigest, revision: 0 } : {}),
+      ...(input.repeatOf ? { repeatOf: input.repeatOf } : {}) };
     // Unresolved outcomes cannot disappear when routine successful reads churn.
     const next = [...this.rows];
     if (next.length >= MAX_OPERATIONS) {
-      const evict = next.findIndex(item => item.status !== "started" && item.status !== "unknown");
-      if (evict < 0) throw Object.assign(new Error("Connected-app history is full of unresolved operations. Review their outcomes before starting more app work."), { status: 503 });
+      const evict = next.findIndex(item => item.status !== "started" && item.status !== "unknown" && !item.effectDigest);
+      if (evict < 0) throw Object.assign(new Error("Retained mail history reached its safety limit. Export/recover the retained history with service support before further app actions; no identified or uncertain outcomes were discarded."), { status: 503 });
       next.splice(evict, 1);
     }
     this.commit([...next, row]);
     return clone(row);
   }
 
-  private assertAvailable(): void { if (this.held) throw failure(); }
+  private assertAvailable(): void { this.initialize(); if (this.held) throw failure(); }
+  private reload(): void {
+    // Atomic rename gives readers one complete generation. Reopening an
+    // already-running store does not turn another instance's live start into a
+    // replayable failure; every mutation reads the current disk generation.
+    try {
+      const saved = privateSnapshot(this.file, MAX_BYTES);
+      if (saved === undefined) { if (this.rows.length) throw failure(); return; }
+      if (!record(saved) || saved.version !== 1 || !Array.isArray(saved.operations) || saved.operations.length > MAX_OPERATIONS) throw failure();
+      this.rows = validateOperationSnapshot(saved.operations);
+    } catch (error) { if ((error as NodeJS.ErrnoException)?.code !== "ENOENT" || this.rows.length) { this.held = true; throw failure(); } }
+  }
+  private locked<T>(action: () => T): T {
+    this.assertAvailable();
+    privateDirectory(dirname(this.file));
+    let descriptor: number;
+    try { descriptor = openSync(`${this.file}.lock`, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600); }
+    catch { throw conflict("Connected-app history is in use or needs lock recovery. Nothing new was dispatched. Close RealBud; after confirming no RealBud process is running, remove only the connected-app history .lock file in this private workspace, then reopen. Inspect unresolved receipts in the app before retrying; removing a lock does not confirm an operation failed."); }
+    try { restrictNewSync([{ path: `${this.file}.lock`, kind: "file" }]); this.reload(); return action(); }
+    finally { closeSync(descriptor); unlinkSync(`${this.file}.lock`); }
+  }
   private commit(next: ConnectedAppOperation[]): void {
     const body = JSON.stringify({ version: 1, operations: next });
     try {
       if (Buffer.byteLength(body) > MAX_BYTES) throw failure();
-      mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
+      privateDirectory(dirname(this.file));
       writeFileAtomic(this.file, body, 0o600);
       this.rows = next;
     } catch {
@@ -130,5 +304,5 @@ export class ConnectedAppOperationStore {
   }
 }
 
-export const connectedAppOperations = new ConnectedAppOperationStore();
+export const connectedAppOperations = new ConnectedAppOperationStore({}, DEFER_DEFAULT_SINGLETON);
 export const listConnectedAppOperations = (threadId?: string): ConnectedAppOperation[] => connectedAppOperations.list(threadId);

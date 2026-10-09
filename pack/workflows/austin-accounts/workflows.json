@@ -48,14 +48,14 @@
       "steps": [
         "W2 target: weekly review of the connected Composio Gmail account. Host collection binds scope for Kevin, the sole W2 owner; this preparation stage reads saved input, not the mailbox directly.",
         "Use emailed or supplied Property.csv as an example/reference for matching and timing. Never require a fresh CSV, use its arrival as the trigger, or import it as ongoing bill truth.",
-        "Read the invoice candidates and every required approved attachment",
+        "Read the invoice candidates and every required approved attachment. Calendar facts come from human-reviewed bills and approved patterns, bound to source IDs.",
         "Extract only explicit invoice fields and verified property mappings",
         "Link exact duplicates and hold conflicting corrections or unknown facts",
         "Prepare entry candidates for Kevin; create no payable or payment",
         "Return all documents and unresolved decisions for review",
         "Host validates typed output and source identity, then derives every internal review from it",
         "Propose new bills and justified missing-bill follow-ups for RealBud calendar/schedules, with source IDs to avoid duplicates. Prepare an in-app notification to Kevin explaining findings and gaps.",
-        "Weekly W2 orchestration is not implemented. Return proposals; only host receipts prove calendar writes or in-app notification. A generic recipe clock is no substitute. REI effects stay simulated."
+        "Weekly W2 has a host-owned runner. Return proposals; only host receipts prove calendar writes or in-app notification. A generic recipe clock is no substitute. REI effects stay simulated."
       ],
       "allowedOrigins": [],
       "evidence": "Complete source-linked typed preparation result, all supplied items retained, explicit holds, no external action or financial mutation",
@@ -78,7 +78,7 @@
       "steps": [
         "W2 target: weekly review of the connected Composio Gmail account. Host collection binds scope for Kevin, the sole W2 owner; this preparation stage reads saved input, not the mailbox directly.",
         "Use emailed or supplied Property.csv as an example/reference for matching and timing. Never require a fresh CSV, use its arrival as the trigger, or import it as ongoing bill truth.",
-        "Read accepted bill history, coverage and financial state",
+        "Read accepted bill history, coverage and financial state. Calendar facts come from human-reviewed bills and approved patterns, bound to source IDs.",
         "Separate received, absent, not-due and unknown arrival findings",
         "Keep arranged payment, confirmed payment, funding and advance recovery separate",
         "Surface unfinished funding, owner-payment and recovery handoffs",
@@ -86,7 +86,7 @@
         "Host validates typed output and source identity, then derives every internal review from it",
         "Distinguish expected arrival from payment due date in prose too: not-yet-expected arrival never means payment is not due",
         "Propose new bills and justified missing-bill follow-ups for RealBud calendar/schedules, with source IDs to avoid duplicates. Prepare an in-app notification to Kevin explaining findings and gaps.",
-        "Weekly W2 orchestration is not implemented. Return proposals; only host receipts prove calendar writes or in-app notification. A generic recipe clock is no substitute. REI effects stay simulated."
+        "Weekly W2 has a host-owned runner. Return proposals; only host receipts prove calendar writes or in-app notification. A generic recipe clock is no substitute. REI effects stay simulated."
       ],
       "allowedOrigins": [],
       "evidence": "Complete source-linked typed preparation result, all supplied items retained, explicit holds, no external action or financial mutation",

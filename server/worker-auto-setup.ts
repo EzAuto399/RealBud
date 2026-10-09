@@ -210,6 +210,11 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
   async function run(reason: WorkerAutoSetupReason, runEpoch: number): Promise<void> {
     if (!(await stillActive(runEpoch))) return;
     if (deps.customRuntime?.()) { halt(); return; }
+    // Check capability before reading/resetting attempt history or waiting for
+    // an install. An unsupported OS cannot acquire a worker by retrying setup.
+    const admission = await deps.status();
+    if (!(await stillActive(runEpoch))) return;
+    if (admission.workerIsolation) { cancelRetry(); parked = true; set("held", 0, "held_unavailable"); return; }
     if (reason === "periodic" && parked) return;
     parked = false;
     // Visible at once: the first status probe can take a while.
@@ -250,14 +255,20 @@ export function createWorkerAutoSetup(deps: WorkerAutoSetupDeps) {
     }
     cancelRetry();
     try {
+      let waitedForInstall = false;
       // An administrator's install already running: follow it, never start another.
       if (deps.installInFlight()) {
         set("installing", 1, "installing");
-        await deps.waitForInstall();
+        await deps.waitForInstall(); waitedForInstall = true;
         if (!(await stillActive(runEpoch))) return;
       }
-      let status = await deps.status();
+      let status = waitedForInstall ? await deps.status() : admission;
       if (!(await stillActive(runEpoch))) return;
+      if (status.workerIsolation) {
+        // Missing OS containment is a capability hold, not an installation
+        // failure. Preserve saved attempts and never download or retry it.
+        cancelRetry(); parked = true; set("held", 0, "held_unavailable"); return;
+      }
       if (status.ready && !needsReviewedRepair(status, reason)) return ready(saved, runEpoch);
       if (!usable(status) || needsReviewedRepair(status, reason)) {
         set("installing", 1, "installing");

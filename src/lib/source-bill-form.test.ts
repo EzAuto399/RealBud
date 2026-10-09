@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { emptyBillFacts, savedBillFacts, draftBillFacts, displayBillDate } from './source-bill-form';
 describe('source bill manual facts', () => {
+  it('keeps classification undecided until a staff choice, independent of supplier or payment facts', () => {
+    expect(savedBillFacts(emptyBillFacts()).maintenanceClassification).toBe('unclassified');
+    const classified = savedBillFacts({ ...emptyBillFacts(), maintenanceClassification: 'maintenance' });
+    expect(savedBillFacts(draftBillFacts(classified))).toEqual(classified);
+    expect(() => savedBillFacts({ ...emptyBillFacts(), maintenanceClassification: 'model-approved' as any })).toThrow('staff maintenance classification');
+  });
   it('keeps an unknown amount/date distinct from zero and avoids floating cents', () => {
     expect(savedBillFacts(emptyBillFacts())).toMatchObject({ amountCents: null, invoiceDate: null, dueDate: null, currency: 'AUD' });
     expect(savedBillFacts({ ...emptyBillFacts(), amount: '0' }).amountCents).toBe(0);

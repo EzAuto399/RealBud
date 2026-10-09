@@ -1,4 +1,5 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { officeDrafts, officeDraftScope, type EndedOfficeDraftReview, type OfficeChanges, type OfficeDraftContext } from "@/lib/office-draft-journal";
 
 import {
   AU_JURISDICTIONS, EXPORT_CADENCE_LABELS, EXPORT_CADENCES,
@@ -25,9 +26,7 @@ const verificationOptionLabels: Record<RentVerificationMethod, string> = {
   "bank-allocation": "Settled bank credit",
 };
 
-type OfficeChanges = { name?: string; jurisdictions?: string[]; office?: OfficeInput; expectedRevision?: number };
-
-export function OfficeCard({ agencyName, timezone, jurisdictions, office, profileName, revision, onSave, onReload }: {
+export function OfficeCard({ agencyName, timezone, jurisdictions, office, profileName, revision, draftContext, currentSessionVersion, getCurrentSessionVersion, identityError, identityChecking, onRetryIdentity, onSave, onReload }: {
   agencyName: string;
   /** The zone the book recorded, or null when it has none. Never a fixture. */
   timezone: string | null;
@@ -35,54 +34,94 @@ export function OfficeCard({ agencyName, timezone, jurisdictions, office, profil
   office?: OfficeInput | null;
   profileName?: string;
   revision: number;
+  draftContext?: OfficeDraftContext | null;
+  currentSessionVersion?: number;
+  getCurrentSessionVersion?: () => number;
+  identityError?: string;
+  identityChecking?: boolean;
+  onRetryIdentity?: () => void;
   onSave: (input: OfficeChanges) => Promise<void> | void;
   onReload: () => Promise<void>;
 }) {
   // Overlay only user edits. Snapshot refreshes update untouched fields without
   // erasing a draft; saving never resubmits hidden, unchanged office metadata.
-  const [changes, setChanges] = useState<OfficeChanges>({});
+  useSyncExternalStore(officeDrafts.subscribe, officeDrafts.snapshot, officeDrafts.snapshot);
+  const retained = draftContext ? officeDrafts.read(draftContext) : null;
+  const changes = retained?.changes ?? {};
   const name = changes.name ?? agencyName;
   const states = changes.jurisdictions ?? jurisdictions;
   const draft = { ...coerceOffice(office), ...changes.office };
   const rentWorkflow = draft.rentWorkflow ?? defaultRentWorkflow();
-  const editRevision = useRef<number | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const saving = useRef(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [conflict, setConflict] = useState(false);
+  const [clearEnded, setClearEnded] = useState<EndedOfficeDraftReview | null>(null);
   const changed = Object.keys(changes).length > 0;
+  const scope = draftContext ? officeDraftScope(draftContext) : null;
+  const currentScope = useRef(scope); currentScope.current = scope;
+  const identityHeld = !draftContext || Boolean(identityError) || Boolean(identityChecking);
+  const revisionHeld = retained !== null && retained.startingRevision !== revision;
+  const replyHeld = Boolean(retained?.needsReconciliation);
+  const liveEpoch = currentSessionVersion ?? draftContext?.sessionVersion;
+  const ended = liveEpoch === undefined ? null : officeDrafts.reviewEnded(liveEpoch);
+  const savingDraft = Boolean(retained?.saving);
+  useEffect(() => { setError(""); setSaved(false); setConflict(false); setClearEnded(null); }, [scope, liveEpoch]);
   const edit = (patch: OfficeChanges) => {
-    editRevision.current ??= revision;
-    setChanges(current => ({ ...current, ...patch, ...(patch.office ? { office: { ...current.office, ...patch.office } } : {}) }));
-    setSaved(false); setError("");
+    if (identityHeld || !draftContext) return;
+    try { officeDrafts.write(draftContext, revision, patch, retained?.sequence ?? null); setSaved(false); setError(""); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "The office draft could not be updated. Your typing is kept."); }
   };
   const editRent = (patch: Partial<RentWorkflow>) => edit({ office: { rentWorkflow: { ...rentWorkflow, ...patch } } });
   const discard = () => {
-    setChanges({}); editRevision.current = undefined; setError(""); setSaved(false); setConflict(false);
+    if (draftContext && retained) officeDrafts.discard(draftContext, retained.sequence);
+    setError(""); setSaved(false); setConflict(false);
   };
   const reload = async () => {
-    if (saving.current) return;
+    if (saving.current || savingDraft || identityHeld) return;
     saving.current = true; setBusy(true);
-    try { await onReload(); discard(); }
+    try { await onReload(); if (currentScope.current === scope) discard(); }
     catch { setError("Saved settings could not be reloaded. Your edits are still here."); }
     finally { saving.current = false; setBusy(false); }
   };
   const save = async () => {
-    if (saving.current || !changed || conflict) return;
+    if (saving.current || savingDraft || !changed || conflict || revisionHeld || replyHeld || identityHeld || !draftContext || !retained) return;
+    let sent;
+    try { sent = officeDrafts.beginSave(draftContext, revision, retained.sequence); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "The retained office draft changed. Review it before saving."); return; }
     saving.current = true; setBusy(true); setSaved(false); setError("");
     try {
-      await onSave({ ...changes, expectedRevision: editRevision.current, ...(changes.name !== undefined ? { name: changes.name.trim() } : {}) });
-      setChanges({}); editRevision.current = undefined; setSaved(true);
+      await onSave({ ...sent.changes, expectedRevision: sent.startingRevision, ...(sent.changes.name !== undefined ? { name: sent.changes.name.trim() } : {}) });
+      officeDrafts.finishSave(sent.context, sent.sequence, true);
+      if (currentScope.current === scope) setSaved(true);
     } catch (cause) {
-      setConflict((cause as { status?: number })?.status === 409);
-      setError(cause instanceof Error ? cause.message : "Office details could not be saved. Your edits are still here.");
+      officeDrafts.finishSave(sent.context, sent.sequence, false, Boolean((cause as { officeOutcomeUnknown?: boolean })?.officeOutcomeUnknown));
+      if (currentScope.current === scope) {
+        setConflict((cause as { status?: number })?.status === 409);
+        setError(cause instanceof Error ? cause.message : "Office details could not be saved. Your edits are still here.");
+      }
     } finally { saving.current = false; setBusy(false); }
   };
 
   return <Card title="This office" subtitle="Set the basics for your book. Software and technical details can wait.">
     <form onSubmit={event => { event.preventDefault(); void save(); }}>
-      <fieldset disabled={busy} className="flex min-w-0 flex-col gap-4">
+      {identityHeld && <div className="mb-3 space-y-2"><p role={identityError ? "alert" : "status"} className="text-[12.5px] text-ink-secondary">{identityError || "Checking the private workspace and office session before editing…"} Your retained drafts stay in their original workspace and session.</p>{identityError && onRetryIdentity && <button type="button" className="pm-control text-[13px] text-ink" disabled={identityChecking} onClick={onRetryIdentity}>Check office identity again</button>}</div>}
+      {revisionHeld && <p role="status" className="mb-3 text-[12.5px] text-ink-secondary">The saved book changed. Your typing is kept. Discard edits and reload saved settings before saving.</p>}
+      {replyHeld && <p role="status" className="mb-3 text-[12.5px] text-ink-secondary">The previous save reply could not be admitted. Your original typing is kept. Check saved settings before deciding whether to discard and reload; do not repeat the save.</p>}
+      {(saved || changed) && <p role="status" className="mb-3 text-[12px] text-agency">{saved ? "Changes saved" : "Unsaved changes · kept in this window"}</p>}
+      {ended && ended.endedCount > 0 && <div className="mb-3 space-y-2 text-[12.5px] text-ink-secondary">
+        <p>{ended.endedCount} unsaved office {ended.endedCount === 1 ? 'draft is' : 'drafts are'} kept from ended sign-in sessions in this window. Their text stays private. {ended.savingCount > 0 && `${ended.savingCount} still being saved will be kept.`}</p>
+        <button type="button" className="pm-control text-[13px] text-ink" disabled={!ended.discardableCount} onClick={() => { setClearEnded(officeDrafts.reviewEnded(getCurrentSessionVersion?.() ?? liveEpoch!)); setError(''); }}>Review clearing ended-session office drafts</button>
+        {clearEnded && <div role="group" aria-label="Confirm permanent removal of ended-session office typing" className="rounded-lg border border-line p-3 space-y-2">
+          <p>Clear {clearEnded.discardableCount} unsaved office {clearEnded.discardableCount === 1 ? 'draft' : 'drafts'} from ended sign-in sessions? This permanently removes that typing from this window’s memory. Saved office details and current-session drafts are unchanged. Drafts still being saved are kept.</p>
+          <div className="flex flex-wrap gap-2"><button type="button" className="pm-control text-[13px] text-danger" onClick={() => {
+            try { officeDrafts.discardEnded(clearEnded, getCurrentSessionVersion ?? (() => liveEpoch!)); setClearEnded(null); }
+            catch (cause) { setClearEnded(null); setError(cause instanceof Error ? cause.message : 'Drafts changed. Review again; no typing was removed.'); }
+          }}>Permanently clear {clearEnded.discardableCount} ended-session {clearEnded.discardableCount === 1 ? 'draft' : 'drafts'}</button><button type="button" className="pm-control text-[13px] text-ink" onClick={() => setClearEnded(null)}>Keep ended-session drafts</button></div>
+        </div>}
+      </div>}
+      <fieldset disabled={busy || savingDraft || identityHeld} className="flex min-w-0 flex-col gap-4">
         {/* The strip tracks the draft, not the saved book: it must clear as the
             fields above are filled, without waiting for a save. */}
         <OfficeSetupStrip agencyName={name} jurisdictions={states} office={draft} />
@@ -190,12 +229,11 @@ export function OfficeCard({ agencyName, timezone, jurisdictions, office, profil
           </div>
         </details>
         <div className="flex flex-wrap items-center gap-3">
-          <button type="submit" disabled={!changed || conflict || (changes.name !== undefined && !name.trim())} className="rounded-lg bg-agency px-4 py-2 text-[13px] font-medium text-white disabled:opacity-40">{busy ? "Saving…" : "Save changes"}</button>
-          {changed && <button type="button" onClick={() => conflict ? void reload() : discard()} className="text-[13px] text-ink-muted">{conflict ? "Discard edits and reload saved settings" : "Discard changes"}</button>}
-          <span role="status" className="text-[12px] text-agency">{saved ? "Changes saved" : changed ? "Unsaved changes" : ""}</span>
+          <button type="submit" disabled={!changed || conflict || revisionHeld || replyHeld || (changes.name !== undefined && !name.trim())} className="pm-control rounded-lg bg-agency px-4 py-2 text-[13px] font-medium text-white disabled:opacity-40">{busy || savingDraft ? "Saving…" : "Save changes"}</button>
+          {changed && <button type="button" onClick={() => conflict || revisionHeld || replyHeld ? void reload() : discard()} className="pm-control text-[13px] text-ink-muted">{conflict || revisionHeld || replyHeld ? "Discard edits and reload saved settings" : "Discard changes"}</button>}
         </div>
       </fieldset>
-      {error && <p role="alert" className="mt-3 text-[12.5px] text-danger">{error}{!conflict && " Your edits are kept; try saving again."}</p>}
+      {error && <p role="alert" className="mt-3 text-[12.5px] text-danger">{error}{!conflict && !replyHeld && " Your edits are kept."}</p>}
     </form>
   </Card>;
 }

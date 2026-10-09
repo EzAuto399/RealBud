@@ -62,6 +62,23 @@ describe('draftInspectionPlan', () => {
     expect(held.holds).toContainEqual(expect.objectContaining({ propertyId: 'SYN-P06', kind: 'manual-hold' }));
   });
 
+  it('keeps conflicting pins and reports closed-day, capacity and overlapping time diagnostics', () => {
+    const accepted = ['SYN-P01', 'SYN-P02', 'SYN-P03'].map((propertyId, i) => ({ propertyId, date: '2026-11-10', time: i < 2 ? '09:00' : '09:20', inspector: 'fictional-inspector-A' }));
+    const plan = draftInspectionPlan(input({ accepted }, { closedDates: ['2026-11-10'], dailyCapacity: 2 }));
+    expect(plan.appointments.filter(a => a.date === '2026-11-10').map(a => [a.propertyId, a.time, a.status])).toEqual(accepted.map(a => [a.propertyId, a.time, 'accepted']));
+    expect(plan.diagnostics?.map(d => d.kind)).toEqual(['closed-day', 'capacity', 'collision', 'collision', 'collision']);
+    expect(plan.diagnostics?.find(d => d.kind === 'capacity')?.reason).toContain('daily limit is 2');
+    expect(plan.appointments.filter(a => a.status === 'draft' && a.date === '2026-11-10')).toHaveLength(0);
+  });
+
+  it('counts pins outside the generated slots against capacity and reserves their travel allowance', () => {
+    const accepted = [{ propertyId: 'SYN-P01', date: '2026-11-10', time: '09:20', inspector: 'fictional-inspector-A' }];
+    const plan = draftInspectionPlan(input({ accepted, properties: [property('SYN-P01'), { ...property('SYN-P02'), lastCompleted: '2026-05-10' }] }, { dailyCapacity: 2 }));
+    expect(at(plan, 'SYN-P02')).toMatchObject({ date: '2026-11-11' });
+    expect(plan.appointments.filter(a => a.date === '2026-11-10')).toHaveLength(1); // both proposed slots overlap the kept pin
+    expect(draftInspectionPlan(input({ accepted }, { dailyCapacity: 1 })).appointments.filter(a => a.date === '2026-11-10')).toHaveLength(1);
+  });
+
   it('holds overdue, no-history and unschedulable properties instead of dropping them', () => {
     const plan = draftInspectionPlan(input());
     expect(plan.holds).toContainEqual(expect.objectContaining({ propertyId: 'SYN-P10', kind: 'overdue', dueDate: '2026-09-01' }));

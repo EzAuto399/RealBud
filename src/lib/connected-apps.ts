@@ -13,6 +13,9 @@ export interface ConnectedAppOperation {
   startedAt: string;
   finishedAt?: string;
   detail?: string;
+  revision?: number;
+  repeatOf?: string;
+  reconciliation?: { outcome: 'sent' | 'not-sent'; at: string; source: 'manual-app-inspection' };
 }
 
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -100,12 +103,19 @@ export function readConnectedAppOperations(value: unknown): ConnectedAppOperatio
   const statuses = new Set(["started", "succeeded", "failed", "unknown", "denied"]);
   return value.operations.slice(0, 200).map((entry): ConnectedAppOperation => {
     if (!record(entry) || !label(entry.id) || !timestamp(entry.startedAt) || !statuses.has(String(entry.status)) || !Array.isArray(entry.toolSlugs)) throw new Error("Recent app activity was incomplete.");
+    if (entry.revision !== undefined && (!Number.isSafeInteger(entry.revision) || Number(entry.revision) < 0)) throw new Error('Recent app recovery was incomplete.');
+    const reconciliation = entry.reconciliation;
+    if (reconciliation !== undefined && (!record(reconciliation) || !['sent', 'not-sent'].includes(String(reconciliation.outcome)) || reconciliation.source !== 'manual-app-inspection' ||
+      !Number.isSafeInteger(reconciliation.at) || Number(reconciliation.at) < 0 || !Number.isFinite(new Date(Number(reconciliation.at)).getTime()) || !['unknown', 'failed'].includes(String(entry.status)))) throw new Error('Recent app recovery was incomplete.');
     return {
       id: label(entry.id), threadId: label(entry.threadId), toolName: label(entry.toolName, 160),
       toolSlugs: entry.toolSlugs.map(slug => label(slug, 160)).filter(Boolean).slice(0, 50),
       status: entry.status as ConnectedAppOperation["status"], startedAt: timestamp(entry.startedAt),
       ...(timestamp(entry.finishedAt) ? { finishedAt: timestamp(entry.finishedAt) } : {}),
       ...(label(entry.detail, 600) ? { detail: label(entry.detail, 600) } : {}),
+      ...(entry.revision === undefined ? {} : { revision: Number(entry.revision) }),
+      ...(label(entry.repeatOf) ? { repeatOf: label(entry.repeatOf) } : {}),
+      ...(record(reconciliation) ? { reconciliation: { outcome: reconciliation.outcome as 'sent' | 'not-sent', at: new Date(Number(reconciliation.at)).toISOString(), source: 'manual-app-inspection' as const } } : {}),
     };
   }).sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
 }

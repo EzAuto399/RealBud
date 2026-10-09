@@ -15,7 +15,8 @@ import { parseMailScanRequest } from '../shared/mail-ingestion.ts';
 import { parseSourceAttachmentRequest } from '../shared/source-attachments.ts';
 import { TOOLKIT_SLUG, type ComposioAuthConfigClient, type KeyScheme } from './composio-auth-config.ts';
 import { composioAppAdapter, type AppAccount, type AppBinding, type AppTool, type ComposioAppAdapter } from './composio-apps.ts';
-import { classifyAppToolCall } from '../shared/app-tool-policy.ts';
+import { classifyAppToolCall, MAIL_SENDS } from '../shared/app-tool-policy.ts';
+import { parseConnectedMailBindings, unsupportedConnectedMailTool, connectedMailSenderArgsAllowed, verifiedMailAddress, type ConnectedMailBinding } from '../shared/connected-app-binding.ts';
 import { serialized } from './serialized.ts';
 import { ComposioTriggers, officeUserId, triggerSpec } from './composio-triggers.ts';
 
@@ -83,6 +84,8 @@ export interface ConnectorOptions {
   access?: typeof getGmailReadOnlyAccess; authorize?: typeof authorizeGmailReadOnly;
   /** Ask's Gmail MCP transport; defaults to the full-toolkit `gmailToolkit`. */
   transport?: typeof createGmailReadOnlyTransport;
+  /** Host/test adapter for the existing fixed account-bound Gmail profile reader. */
+  mailProfile?: typeof createGmailReadOnlyTransport;
   scan?: typeof scanGmailReadOnly;
   attachment?: typeof readGmailPdfAttachment;
   /** On-demand admission of any Composio toolkit. Both are needed; without them
@@ -292,6 +295,16 @@ export class ManagedConnectors {
     if (row && row.binding !== this.appLinkIdentity(device, app, authConfigId)) throw new GatewayError('connector_binding_changed_needs_recovery', 409);
     return row;
   }
+  /** The saved link generation is authority too: it can change without a
+   * registry/policy revision. Only the digest crosses the connector boundary. */
+  private mailGeneration(device: ConnectorDevice, app: 'gmail' | 'outlook', source: MailboxSource, accountId: string): string {
+    const binding = app === 'gmail' ? this.binding(device, source) : this.appBinding(device, app);
+    const link = app === 'gmail' ? this.link(device) : this.appLink(device, app, binding.authConfigId);
+    const linkedAccount = link?.result ? (JSON.parse(link.result) as { accountId?: string }).accountId : undefined;
+    return hash(canonical({ fingerprint: this.fingerprint(device, source), app, accountId, configuredAccount: binding.accountId ?? null,
+      authConfigId: binding.authConfigId, userId: binding.userId, link: link ? { binding: link.binding, state: link.state, created: link.created, accountId: linkedAccount ?? null } : null,
+      ...(app === 'outlook' ? { office: this.officeApp(device.companyId, app) } : {}) }));
+  }
   /**
    * Admit `app` for this device's office and device, on the person's own ask.
    * Serialized per (office, app): the office's Composio-managed (or person-key) auth config is
@@ -391,9 +404,10 @@ export class ManagedConnectors {
     let ready: Promise<AppTool[]> | undefined;
     const tools = (signal: AbortSignal): Promise<AppTool[]> => ready ??= (async () => {
       const access = await (this.options.access ?? getGmailReadOnlyAccess)(input);
+      input.assertAuthority?.();
       const gmail = access.services.gmail;
       requireThat(Boolean(binding.accountId) && gmail?.connected === true && gmail.accounts.some(account => account.id === binding.accountId && account.status === 'ACTIVE'), 'connector_account_not_connected', 409);
-      return this.appTools(binding, 'gmail', signal);
+      const listed = await this.appTools(binding, 'gmail', signal); input.assertAuthority?.(); return listed;
     })().catch(error => { ready = undefined; throw error; });
     const adapter = this.apps;
     return { async request(method, params, signal) {
@@ -410,8 +424,10 @@ export class ManagedConnectors {
       // provider access, verification included. Cards are desktop-side.
       if (classifyAppToolCall(call.name, args, { app: 'gmail' }) === 'blocked') return outside;
       const tool = (await tools(signal)).find(row => row.name === call.name);
+      input.assertAuthority?.();
       if (!tool) return outside;
-      return adapter.execute(binding, 'gmail', tool.name, args as Record<string, unknown>, signal);
+      const result = await adapter.execute(binding, 'gmail', tool.name, args as Record<string, unknown>, signal);
+      input.assertAuthority?.(); return result;
     } };
   }
 
@@ -427,7 +443,51 @@ export class ManagedConnectors {
     // the versioned full-access grant (OfficeMailbox.mailboxAccess); the grant
     // moves the policy revision and so the session fingerprint.
     const readOnly = this.officeMailbox.mailboxAccess(device.companyId, source) === 'read_only';
-    const gmail = appsOf(device).includes('gmail') ? labelled((this.options.transport ?? (readOnly ? createGmailReadOnlyTransport : (binding: GmailReadOnlyBinding) => this.gmailToolkit(binding)))({ ...this.binding(device, source), assertAuthority }),
+    const bindings: ConnectedMailBinding[] = [];
+    const checks: Array<() => void> = [];
+    const current = () => { assertAuthority(); for (const check of checks) check(); };
+    const capture = (app: 'gmail' | 'outlook', account: AppAccount) => {
+      const liveDevice = this.options.devices().find(row => row.id === device.id);
+      requireThat(liveDevice, 'connector_binding_changed', 409);
+      const selected = app === 'gmail' ? this.binding(liveDevice, source).accountId : this.appBinding(liveDevice, app).accountId;
+      requireThat(!selected || selected === account.id, 'connector_binding_changed', 409);
+      const generation = this.mailGeneration(liveDevice, app, source, account.id);
+      checks.push(() => {
+        // Read the current registry, saved link and configuration on every
+        // boundary check, including after provider/tool-list awaits.
+        const live = this.options.devices().find(row => row.id === device.id);
+        requireThat(live && this.mailGeneration(live, app, source, account.id) === generation, 'connector_binding_changed', 409);
+      });
+      bindings.push({ provider: app, accountId: account.id, companyId: liveDevice.companyId, ...(account.label ? { label: account.label } : {}), generation });
+      current(); return bindings.at(-1)!;
+    };
+    let gmailProfile: ((profileSignal: AbortSignal) => Promise<string | undefined>) | undefined;
+    const gmailBinding = appsOf(device).includes('gmail') ? this.binding(device, source) : undefined;
+    if (gmailBinding) {
+      const generation = gmailBinding.accountId ? this.mailGeneration(device, 'gmail', source, gmailBinding.accountId) : null;
+      const access = await (this.options.access ?? getGmailReadOnlyAccess)({ ...gmailBinding, assertAuthority: current }); current();
+      if (gmailBinding.accountId) requireThat(this.mailGeneration(device, 'gmail', source, gmailBinding.accountId) === generation, 'connector_binding_changed', 409);
+      const account = access.services.gmail?.connected ? access.services.gmail.accounts.find(row => row.id === gmailBinding.accountId && row.status === 'ACTIVE') : undefined;
+      if (account) {
+        const captured = capture('gmail', account);
+        // This is the existing fixed Gmail reader: it verifies the OAuth config,
+        // selected account and GMAIL_GET_PROFILE's user_id='me' schema, projects
+        // only {accountId,emailAddress,...}, and never accepts caller arguments.
+        gmailProfile = async (profileSignal: AbortSignal) => {
+          let result: Record<string, any>;
+          try { result = await (this.options.mailProfile ?? createGmailReadOnlyTransport)({ ...gmailBinding, assertAuthority: current })
+            .request('tools/call', { name: 'GMAIL_GET_PROFILE', arguments: {} }, profileSignal); }
+          catch { current(); return undefined; }
+          current();
+          if (result.isError || !Array.isArray(result.content) || result.content.length !== 1 || result.content[0]?.type !== 'text') return undefined;
+          let value; try { value = JSON.parse(result.content[0].text); } catch { return undefined; }
+          return value?.accountId === captured.accountId && verifiedMailAddress(value.emailAddress) ? value.emailAddress : undefined;
+        };
+        const address = await gmailProfile(signal); current();
+        if (address) captured.emailAddress = address;
+      }
+    }
+    const gmail = gmailBinding ? labelled((this.options.transport ?? (readOnly ? createGmailReadOnlyTransport : (binding: GmailReadOnlyBinding) => this.gmailToolkit(binding)))({ ...gmailBinding, assertAuthority: current }),
       // With both mailboxes in use, every Gmail tool says which mailbox it acts on.
       this.officeMailbox.policy(device.companyId).mode === 'both' ? (source === 'office' ? 'Office shared Gmail, not the person\'s own: use it only when they ask for the office mailbox; if unclear, ask which mailbox first. '
         : 'Your own Gmail, not the office shared mailbox. If a mail request does not say which mailbox, ask which one first. ') : '') : undefined;
@@ -435,8 +495,12 @@ export class ManagedConnectors {
     // An office-mailbox session in `both` carries only that mailbox; the person's
     // other apps stay on their own session.
     for (const app of source === 'office' && this.officeMailbox.policy(device.companyId).mode === 'both' ? [] : appsOf(device).filter(app => app !== 'gmail')) {
-      const status = await this.appStatus(device, app, signal, assertAuthority);
+      const before = app === 'outlook' ? this.appBinding(device, app).accountId : undefined;
+      const generation = app === 'outlook' && before ? this.mailGeneration(device, app, source, before) : undefined;
+      const status = await this.appStatus(device, app, signal, current); current();
+      if (app === 'outlook' && before) requireThat(this.mailGeneration(device, app, source, before) === generation, 'connector_binding_changed', 409);
       if (status.service.connected && status.binding) others.set(app, { binding: status.binding, tools: status.tools });
+      if (app === 'outlook' && status.service.connected) capture('outlook', status.service.accounts[0]!);
     }
     // Longest namespace wins, so `GOOGLE_CALENDAR_…` is not read as `GOOGLE_…`.
     const namespaces = [...others.keys()].map(app => ({ app, prefix: `${app.toUpperCase().replaceAll('-', '_')}_` })).sort((a, b) => b.prefix.length - a.prefix.length);
@@ -444,35 +508,55 @@ export class ManagedConnectors {
     const errorResult = (text: string) => ({ content: [{ type: 'text', text }], isError: true });
     const adapter = this.apps;
     return { async request(method, params, callSignal) {
-      assertAuthority();
-      if (method === 'initialize') return gmail ? gmail.request(method, params, callSignal) : { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'Bud connected apps', version: '1.0.0' } };
+      current();
+      if (method === 'initialize') {
+        const result = gmail ? await gmail.request(method, params, callSignal) : { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'Bud connected apps', version: '1.0.0' } };
+        current(); return { ...result, realbudMailBindings: parseConnectedMailBindings(bindings) };
+      }
       if (method === 'ping') return {};
       if (method === 'tools/list') {
         let tools: unknown[] = [];
         if (gmail) {
           // Gmail's listing fails as it always did when no account is bound; with
           // other apps connected that only leaves Gmail's tools out of the list.
-          try { const listed = (await gmail.request(method, params, callSignal)).tools; tools = Array.isArray(listed) ? [...listed] : []; }
+          try { const listed = (await gmail.request(method, params, callSignal)).tools; current(); tools = Array.isArray(listed) ? [...listed] : []; }
           catch (error) { if (!others.size) throw error; }
         }
         for (const { tools: appTools } of others.values()) for (const tool of appTools) tools.push({ name: tool.name, description: tool.description, inputSchema: structuredClone(tool.inputSchema),
           annotations: { readOnlyHint: tool.policy === 'read', destructiveHint: false } });
-        return { tools };
+        current(); return { tools };
       }
       requireThat(method === 'tools/call', 'connector_method_denied', 403);
-      const call = (params && typeof params === 'object' && !Array.isArray(params) ? params : {}) as { name?: unknown; arguments?: unknown };
+      const call = (params && typeof params === 'object' && !Array.isArray(params) ? params : {}) as { name?: unknown; arguments?: unknown; _meta?: unknown };
+      requireThat(Object.keys(call).every(key => ['name', 'arguments', '_meta'].includes(key)), 'invalid_connector_call', 400);
+      if (typeof call.name === 'string' && unsupportedConnectedMailTool(call.name)) return errorResult('This mail tool has no complete reviewed message/account contract. Use a supported direct mail tool.');
+      if (typeof call.name === 'string' && MAIL_SENDS.has(call.name)) {
+        const expected = bindings.find(row => call.name!.toString().startsWith(`${row.provider.toUpperCase()}_`));
+        let reviewed: ConnectedMailBinding[];
+        try { reviewed = parseConnectedMailBindings([call._meta && typeof call._meta === 'object' ? (call._meta as Record<string, unknown>).realbudReviewedMailBinding : null]); }
+        catch { throw new GatewayError('connector_mail_review_binding_required', 409); }
+        requireThat(expected && canonical(reviewed[0]) === canonical(expected), 'connector_mail_review_binding_changed', 409);
+        requireThat(expected?.companyId && expected.emailAddress && connectedMailSenderArgsAllowed(call.arguments), 'connector_mail_sender_identity_required', 409);
+        // Profile failure/address drift is a pre-adapter refusal; no approved
+        // dispatch is sent against a different or unidentified sender.
+        const currentAddress = expected.provider === 'gmail' ? await gmailProfile?.(callSignal) : undefined;
+        current(); requireThat(currentAddress === expected.emailAddress, 'connector_mail_sender_identity_changed', 409);
+      }
+      // Internal broker authority is consumed here; no worker metadata reaches
+      // an adapter, including Gmail's transport.
+      const projected = { name: call.name, arguments: call.arguments };
       // Anything that is not another app's tool goes to the Gmail transport,
       // which admits only Gmail's own listed, non-blocked tools.
       const app = typeof call.name === 'string' && !call.name.startsWith('GMAIL_') ? appFor(call.name) : undefined;
-      if (!app) { if (gmail) return gmail.request(method, params, callSignal); return errorResult('This tool belongs to no connected app of this office. Ask to connect the app first.'); }
+      if (!app) { if (gmail) { const result = await gmail.request(method, projected, callSignal); current(); return result; } return errorResult('This tool belongs to no connected app of this office. Ask to connect the app first.'); }
       const name = call.name as string;
       const { binding, tools } = others.get(app)!;
       const tool = tools.find(row => row.name === name);
       if (!tool) return errorResult('This tool is outside the connected-app boundary: destructive, bulk and administrative operations are unavailable.');
       const args = call.arguments === undefined ? {} : call.arguments;
       if (!args || typeof args !== 'object' || Array.isArray(args)) return errorResult('Tool arguments must be an object.');
-      const result = await adapter.execute({ ...binding, assertAuthority }, app, name, args as Record<string, unknown>, callSignal);
-      assertAuthority();
+      const result = await adapter.execute({ ...binding, assertAuthority: current }, app, name, args as Record<string, unknown>, callSignal);
+      current();
       return result;
     } };
   }
@@ -686,6 +770,14 @@ export class ManagedConnectors {
         return { status: 202 };
       }
       requireThat((typeof message.id === 'string' && message.id.length <= 100) || (typeof message.id === 'number' && Number.isSafeInteger(message.id)), 'invalid_connector_rpc_id');
+      if (message.method === 'realbud/mail-binding') {
+        // Owner recovery checks are read-only and do not consume a retained
+        // MCP session. This capability is never mounted in the worker broker.
+        requireThat(!input.session && message.params === undefined, 'invalid_connector_rpc', 400);
+        const transport = await this.compositeTransport(device, current, input.signal, source); current();
+        const result = await transport.request('initialize', undefined, input.signal); current();
+        return { status: 200, body: { jsonrpc: '2.0', id: message.id, result: { realbudMailBindings: result.realbudMailBindings } } };
+      }
       if (message.method === 'initialize') {
         // Gmail's admitted read-only method list is unchanged; other connected
         // apps add their classified tools under their own namespaces.

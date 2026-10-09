@@ -6,6 +6,7 @@ import { DATA_DIR } from './config.ts';
 import { createSupplierDirectory } from './supplier-directory.ts';
 import { createMaintenanceReviewApi, createMaintenanceReviewStore, maintenanceCoverage, maintenanceInvoices, readMaintenanceReview, runMaintenanceReview, senderAddress } from './maintenance-review.ts';
 import { computeMaintenanceFindings } from './maintenance-findings.ts';
+import { billSenderEnvelopeDigest } from './source-bill-rules.ts';
 import { previewBillSource } from './source-bills.ts';
 import type { SourceBillOccurrence } from '../shared/source-bills.ts';
 import type { RoutineResult } from '../shared/routine-result.ts';
@@ -17,13 +18,13 @@ const CSV = 'Reference,Description,Email\nFIC-PLUMB,Fictional Plumbing,accounts@
 
 // Gmail's own stamp confirming the From domain (fictional). `auth: null` leaves it off, as on older saved bills.
 const pass = (domain: string) => `mx.google.com; dkim=pass header.i=@${domain} header.s=fictional header.b=FICTIONAL; spf=pass (google.com: fictional) smtp.mailfrom=bounce@${domain}; dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=${domain}`;
-interface BillInput { id: string; property?: string; from?: string; replyTo?: string; auth?: string | null; number?: string | null; date?: string; amount?: number; kind?: string; work?: string; ref?: string | null; state?: SourceBillOccurrence['state'] }
+interface BillInput { id: string; property?: string; from?: string; replyTo?: string; auth?: string | null; number?: string | null; date?: string; amount?: number; kind?: string; work?: string; ref?: string | null; state?: SourceBillOccurrence['state']; classification?: SourceBillOccurrence['facts']['maintenanceClassification'] }
 const bill = (b: BillInput): SourceBillOccurrence => {
   const from = b.from ?? 'Fictional Plumbing <accounts@fictional-plumbing.example>', auth = b.auth === undefined ? pass(from.replace(/^.*@|>.*$/g, '')) : b.auth;
   return {
   id: `source-bill:${b.id.padEnd(64, '0')}`, state: b.state ?? 'received',
   facts: { propertyId: b.property ?? 'fictional-property-a', kind: b.kind ?? 'Maintenance', vendor: 'Fictional label', amountCents: b.amount ?? 12000, currency: 'AUD',
-    invoiceDate: b.date ?? '2026-09-10', dueDate: null, note: '', invoiceNumber: b.number === undefined ? `INV-${b.id}` : b.number, workDescription: b.work ?? 'Fictional tap repair', supplierReference: b.ref ?? null },
+    invoiceDate: b.date ?? '2026-09-10', dueDate: null, note: '', invoiceNumber: b.number === undefined ? `INV-${b.id}` : b.number, workDescription: b.work ?? 'Fictional tap repair', supplierReference: b.ref ?? null, ...(b.classification ? { maintenanceClassification: b.classification } : {}) },
   source: { accountId: 'fictional', receiptId: 'r', threadId: 't', digest: 'd', identity: 'i',
     message: { id: 'm', at: Date.parse(`${b.date ?? '2026-09-10'}T01:00:00Z`), from, subject: `Fictional invoice ${b.id}`, body: '', attachments: [],
       ...(b.replyTo === undefined ? {} : { replyTo: b.replyTo }), ...(auth === null ? {} : { authResults: auth }) } },
@@ -42,6 +43,33 @@ async function rig(options: { csv?: boolean; weekly?: RoutineResult | null } = {
 }
 
 describe('maintenance review inputs', () => {
+  it('keeps ambiguous no-supplier bills visible for staff classification instead of assuming they are unrelated', async () => {
+    const f = await rig(), directory = await f.directory.read(), ambiguous = bill({ id: 'ambiguous', from: 'unlisted@fictional-unlisted.example', kind: 'Other', work: 'FYI' });
+    const rows = maintenanceInvoices([ambiguous], directory, 'Australia/Brisbane');
+    expect(rows).toHaveLength(1); expect(rows[0].classificationNeeded).toBe(true);
+    const findings = computeMaintenanceFindings({ invoices: rows, coverage: { from: '2026-09-01', to: '2026-09-30', complete: true } });
+    expect(findings[0]).toMatchObject({ kind: 'sender-verification', reasons: ['classification-needed', 'supplier-unresolved', 'unlisted-sender'] });
+    expect(findings[0].notes.join(' ')).toContain('separate staff decision');
+    expect(maintenanceInvoices([{ ...ambiguous, facts: { ...ambiguous.facts, maintenanceClassification: 'not-maintenance' } }], directory, 'Australia/Brisbane')).toEqual([]);
+    const confirmed = maintenanceInvoices([{ ...ambiguous, facts: { ...ambiguous.facts, maintenanceClassification: 'maintenance' } }], directory, 'Australia/Brisbane');
+    expect(confirmed).toHaveLength(1); expect(confirmed[0].classificationNeeded).toBeUndefined(); expect(confirmed[0].senderMatch).toBe('unlisted');
+  });
+  it('uses only a reviewed actual original envelope and keeps quoted or unauthenticated original senders qualified', async () => {
+    const f = await rig(), directory = await f.directory.read();
+    const forwarded = bill({ id: 'forwarded', from: 'office@fictional-agency.example', kind: 'Maintenance' });
+    forwarded.source = previewBillSource({ ...forwarded.source, message: { ...forwarded.source.message, id: 'ab', subject: 'Fwd: Fictional repair invoice', body: '---------- Forwarded message ---------\nFrom: accounts@fictional-plumbing.example\nQuoted bill text' } });
+    const withoutOriginal = maintenanceInvoices([forwarded], directory, 'Australia/Brisbane')[0];
+    expect(withoutOriginal.senderMatch).toBe('unverified'); expect(withoutOriginal.supplierRef).toBeNull(); expect(withoutOriginal.senderNote).toContain('Quoted sender lines are unverified');
+    const original = previewBillSource({ ...forwarded.source, threadId: 'actual-original-thread', message: { ...forwarded.source.message, id: 'cd', at: forwarded.source.message.at - 1000, subject: 'Fictional repair invoice', from: 'accounts@fictional-plumbing.example', body: 'Actual saved original bill', authResults: pass('fictional-plumbing.example') } });
+    forwarded.reviewedAt = NOW;
+    forwarded.forwardedSenderReview = { version: 1, forwardedSourceDigest: forwarded.source.digest, originalItemId: 'a'.repeat(64), originalSource: original, originalEnvelopeDigest: billSenderEnvelopeDigest(original), reviewedAt: NOW, reviewedBy: 'fictional-staff-reviewer', reviewReason: 'Checked the actual original and the same forwarded bill' };
+    const verified = maintenanceInvoices([forwarded], directory, 'Australia/Brisbane')[0];
+    expect(verified).toMatchObject({ supplierRef: 'FIC-PLUMB', senderMatch: 'listed', senderEmail: 'accounts@fictional-plumbing.example' }); expect(verified.senderNote).toContain('actual saved original message cd');
+    delete forwarded.forwardedSenderReview.originalSource.message.authResults;
+    const changed = maintenanceInvoices([forwarded], directory, 'Australia/Brisbane')[0]; expect(changed.senderMatch).toBe('unverified'); expect(changed.senderNote).toContain('could not be checked');
+    forwarded.forwardedSenderReview.originalEnvelopeDigest = billSenderEnvelopeDigest(forwarded.forwardedSenderReview.originalSource);
+    const qualified = maintenanceInvoices([forwarded], directory, 'Australia/Brisbane')[0]; expect(qualified.senderMatch).toBe('unverified'); expect(qualified.senderNote).toContain('authentication not available');
+  });
   it('reads the address from a From header', () => {
     expect(senderAddress('Fictional Plumbing <Accounts@Fictional-Plumbing.example>')).toBe('accounts@fictional-plumbing.example');
     expect(senderAddress('office@fictional-electrical.example')).toBe('office@fictional-electrical.example');
@@ -168,7 +196,7 @@ describe('maintenance review inputs', () => {
     const rows = maintenanceInvoices([
       bill({ id: 'a1' }),
       bill({ id: 'a2', from: 'billing@fictional-plumbing.example' }),
-      bill({ id: 'a3', from: 'rates@fictional-council.example', kind: 'Council rates', work: '' }),
+      bill({ id: 'a3', from: 'rates@fictional-council.example', kind: 'Council rates', work: '', classification: 'not-maintenance' }),
       bill({ id: 'a4', state: 'cancelled' }),
       bill({ id: 'a5', ref: 'FIC-ELEC' }),
     ], d, 'Australia/Brisbane');

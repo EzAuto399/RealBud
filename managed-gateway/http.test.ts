@@ -1,3 +1,4 @@
+import { syncTestResalePolicy } from './testing-resale-policy.ts';
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
@@ -163,7 +164,7 @@ test('care invoice routes report collection mode, stay tenant-scoped and refuse 
   const request=(method:string,path:string,bearer:string=OWNER)=>fetch(base+path,{method,headers:{Authorization:`Bearer ${bearer}`,...(method==='POST'?{'Content-Type':'application/json'}:{})},...(method==='POST'?{body:'{}'}:{})});
   const list=await request('GET','/v1/portal/invoices');assert.equal(list.status,200);
   const expectedInvoices=[{id:invoice.id,kind:'Tax Invoice',period:'2026-09',currency:'AUD',gstInclusive:true,totalCents:'12500',gstCents:'1136',paid:false,aiUsageCsv:false,
-    dueAt:invoice.issuedAt+7*86_400_000,status:'unpaid',overdue:false,paidCents:'0',outstandingCents:'12500'}];
+    dueAt:invoice.issuedAt+7*86_400_000,status:'unpaid',overdue:false,paidCents:'0',outstandingCents:'12500',receiptKind:null}];
   const noInstructions={payId:null,bank:null};
   assert.deepEqual(await list.json(),{collectionMode:'off',invoices:expectedInvoices,paymentInstructions:noInstructions});
   assert.deepEqual(await (await request('GET',`/v1/portal/invoices/${invoice.id}`)).json(),{...invoice,links:{document:`/api/account/invoices/${invoice.id}?kind=document`}});
@@ -333,8 +334,9 @@ test('billing plan routes: operator bearer only; PUT sets and rolls forward, GET
   const composed=composeGateway({env,ledger:f.ledger,fetch:never,allowedOrigins:new Set(),portal:{async authenticate(bearer){if(bearer===OWNER)return f.owner;throw new GatewayError('unauthenticated',401);}}});
   assert.equal(composed.billingPlanConfig,'configured');
   assert.equal(composeGateway({env:{...env,REALBUD_CARE_AGREEMENT_REF:''},ledger:f.ledger,fetch:never,allowedOrigins:new Set(),portal:{async authenticate(){throw new GatewayError('unauthenticated',401);}}}).billingPlanConfig,'billing_plan_unconfigured:REALBUD_CARE_AGREEMENT_REF');
+  bindOfficeCustomer(f.ledger,f.tenant.companyId,'realbud-company-a');
   const synced:string[]=[];
-  const server=createGatewayServer({...composed.server,afterTermsAccepted:async companyId=>{synced.push(companyId);}});
+  const server=createGatewayServer({...composed.server,afterTermsAccepted:async companyId=>{synced.push(companyId);await syncTestResalePolicy(f.ledger,companyId);}});
   server.listen(0,'127.0.0.1');await once(server,'listening');
   cleanups.push(async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));f.close();});
   const base=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -360,13 +362,14 @@ test('billing plan routes: operator bearer only; PUT sets and rolls forward, GET
   // The owner reads September: the plan in words, no basis points anywhere; accepting it accepts the plan and syncs Modelvia resale.
   const portal=await (await fetch(base+'/v1/portal/commercial-terms?period=2026-09',{headers:{Authorization:`Bearer ${OWNER}`}})).json() as Record<string,any>;
   assert.deepEqual(portal.plan,{version:'plan-v1',startPeriod:'2026-09',includedMonths:2,includedUntil:'2026-10',careCents:'12500',careFrom:'2026-11',aiBilling:'resale',aiBilledFrom:'2026-11',month:1,included:true,accepted:false});
-  assert.deepEqual([portal.terms.version,portal.terms.careCents,portal.acceptance,'aiUsage' in portal.terms],['plan-v1-2026-09','0',null,false]);
+  assert.deepEqual([portal.terms.version,portal.terms.careCents,portal.acceptance,'aiUsage' in portal.terms,portal.pricingSync],['plan-v1-2026-09','0',null,false,'awaiting_acceptance']);
   assert.equal(portal.terms.billingPlan.markupBasisPoints,3000);
   const accepted=await fetch(base+'/v1/portal/commercial-terms/accept',{method:'POST',headers:{Authorization:`Bearer ${OWNER}`,'Content-Type':'application/json'},body:JSON.stringify({period:'2026-09',version:portal.terms.version,digest:portal.digest})});
   assert.equal(accepted.status,200);
   assert.deepEqual(synced,[f.tenant.companyId]);
   const october=await (await fetch(base+'/v1/portal/commercial-terms?period=2026-10',{headers:{Authorization:`Bearer ${OWNER}`}})).json() as Record<string,any>;
-  assert.deepEqual([october.plan.accepted,october.plan.month,october.acceptance.subject.startsWith('standing:')],[true,2,true]);
+  assert.deepEqual([october.plan.accepted,october.plan.month,october.acceptance.subject.startsWith('standing:'),october.pricingSync],[true,2,true,'synced']);
+  assert(!JSON.stringify({pricingSync:october.pricingSync}).includes('realbud-company-a'));
   assert.deepEqual((await call('GET',`/v1/operator/offices/billing-plan?companyId=${f.tenant.companyId}`)).body.months.map((m:{state:string})=>m.state),['accepted','standing']);
   // Later, the portal read itself publishes the next months with their standing acceptance.
   f.setTime(Date.parse('2026-11-03T00:00:00Z'));

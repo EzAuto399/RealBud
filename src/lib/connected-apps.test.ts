@@ -42,6 +42,16 @@ describe("connected email setup and account choice", () => {
     expect(canPrepareConnectedEmail(snapshot, "gmail", "office-1")).toBe(true);
   });
 
+  it('keeps manual mail evidence separate from an unknown provider outcome and omits protected account/review material', () => {
+    const row = { id: 'operation', threadId: 'thread', toolName: 'GMAIL_SEND_EMAIL', toolSlugs: [], status: 'unknown', startedAt: new Date(NOW).toISOString(), detail: 'Outcome needs checking', revision: 2,
+      accountDigest: 'a'.repeat(64), originalReview: { card: 'PRIVATE ORIGINAL' }, reconciliation: { outcome: 'not-sent', source: 'manual-app-inspection', at: NOW + 1, recoveryBindingDigest: 'b'.repeat(64) } };
+    const parsed = readConnectedAppOperations({ operations: [row] })[0];
+    expect(parsed.status).toBe('unknown'); expect(parsed.reconciliation).toEqual({ outcome: 'not-sent', source: 'manual-app-inspection', at: new Date(NOW + 1).toISOString() });
+    expect(parsed).not.toHaveProperty('accountDigest'); expect(JSON.stringify(parsed)).not.toContain('PRIVATE ORIGINAL');
+    expect(() => readConnectedAppOperations({ operations: [{ ...row, status: 'succeeded' }] })).toThrow();
+    expect(() => readConnectedAppOperations({ operations: [{ ...row, reconciliation: { ...row.reconciliation, source: 'provider-confirmed' } }] })).toThrow();
+    expect(() => readConnectedAppOperations({ operations: [{ ...row, revision: -1 }] })).toThrow();
+  });
   it("expires access at the action boundary and rejects future or invalid clocks", () => {
     expect(canPrepareConnectedEmail(status(), "gmail", "", NOW + 300_000)).toBe(true);
     for (const now of [NOW + 300_001, NOW - 1, Infinity, NaN]) {

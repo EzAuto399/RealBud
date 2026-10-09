@@ -153,9 +153,16 @@ export function createCompanyApi(request: Request, storage?: SessionStorage) {
     try { const result = await call('/api/company/department-outbox/ack', 'department', { requestId }); if (!object(result) || result.ok !== true) throw incomplete(); }
     finally { if (notify) notifyDepartmentChange(); }
   };
-  const departmentMutation = async (operation: DepartmentOutboxOperation): Promise<DepartmentCaseMutation | DepartmentLifecycleResult | DepartmentConfigurationSaved> => {
+  const departmentMutation = async (operation: DepartmentOutboxOperation, firstConfigurationAttempt = false): Promise<DepartmentCaseMutation | DepartmentLifecycleResult | DepartmentConfigurationSaved> => {
     try {
-      const result = await call(operation.path, 'department', operation.input);
+      let result;
+      try { result = await call(operation.path, 'department', operation.input); }
+      catch (cause) {
+        // This is client-authored stage evidence, never read from a server body.
+        // ACK/validation failures and explicit replays cannot prove no effect.
+        if (firstConfigurationAttempt && cause instanceof Error && [400, 401, 403, 404, 405, 409, 422].includes(Number((cause as { status?: unknown }).status))) Object.assign(cause, { departmentConfigurationFirstRefusal: true });
+        throw cause;
+      }
       if (!object(result) || result.receiptId !== operation.input.requestId || typeof result.replayed !== 'boolean') throw incomplete();
       if (operation.path === '/api/company/departments/configuration/save') {
         if (!remoteExact(result, ['department','configuration','receiptId','replayed']) || !department(result.department) || result.department.id !== operation.input.departmentId ||
@@ -219,7 +226,7 @@ export function createCompanyApi(request: Request, storage?: SessionStorage) {
       return result as unknown as DepartmentConfigurationHistory;
     },
     async saveDepartmentConfiguration(input: SaveDepartmentConfigurationInput): Promise<DepartmentConfigurationSaved> {
-      return await departmentMutation({ path: '/api/company/departments/configuration/save', input: normalizeSaveDepartmentConfiguration(input) }) as DepartmentConfigurationSaved;
+      return await departmentMutation({ path: '/api/company/departments/configuration/save', input: normalizeSaveDepartmentConfiguration(input) }, true) as DepartmentConfigurationSaved;
     },
     async departmentPreparationCatalog(departmentId: string): Promise<DepartmentWorkCatalog> {
       if (!companyExecutionUuid(departmentId)) throw incomplete();

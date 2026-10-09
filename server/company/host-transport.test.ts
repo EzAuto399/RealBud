@@ -207,11 +207,13 @@ describe('company host transport', () => {
     });
   });
 
-  it('forwards only x-realbud-member-session and rejects browser origin', async () => {
+  it('forwards only scoped authority/precondition headers and rejects browser origin', async () => {
     const handle = vi.fn<Handle>(async () => ({ status: 200, body: { me: true } }));
     await withTransport(handle, async (port) => {
       const allowed = await rawHttps(port, '/api/company/me', 'GET', {
         'x-realbud-member-session': 'member-secret',
+        'x-realbud-company-id': '11111111-1111-4111-8111-111111111111',
+        'x-realbud-company-precondition': 'not-required',
         cookie: 'sid=leak',
         authorization: 'Bearer leak',
         'x-realbud-admin': 'yes',
@@ -220,7 +222,8 @@ describe('company host transport', () => {
       });
       expect(allowed.status).toBe(200);
       expect(handle).toHaveBeenCalledTimes(1);
-      expect(handle.mock.calls[0][2].headers).toEqual({ 'x-realbud-member-session': 'member-secret' });
+      expect(handle.mock.calls[0][2].headers).toEqual({ 'x-realbud-member-session': 'member-secret',
+        'x-realbud-company-id': '11111111-1111-4111-8111-111111111111', 'x-realbud-company-precondition': 'required' });
       const browser = await rawHttps(port, '/api/company/me', 'GET', {
         origin: 'https://evil.example',
         'x-realbud-member-session': 'member-secret',

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { ManagedConnectors, newConnectorCredential, type ConnectorDevice, type ConnectorOptions } from './connectors.ts';
 import { composioAuthConfigClient, LEGACY_GMAIL_AUTH_CONFIG_NAME } from './composio-auth-config.ts';
 import type { GmailReadOnlyBinding } from '../server/composio-gmail.ts';
-import { fixture } from './testing.ts';
+import { fixture, gmailProfileTransport } from './testing.ts';
 
 /** Devices provisioned on the legacy readonly-v1 Gmail config (Google blocks every
  * consent under it) move to managed-v2 on their next connect, unless an account
@@ -158,23 +158,27 @@ test('composed registry rebinding moves only the named device and only while it 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('the gateway holds the mailbox line: blocked Gmail tools never reach the provider, and nothing runs before the account is verified', async () => {
+test('the gateway verifies before initialize and blocked Gmail tools never execute on a verified session', async () => {
   const s = setup(); const realFetch = globalThis.fetch; const upstream: string[] = [];
   globalThis.fetch = (async (url: string | URL) => { upstream.push(String(url)); throw new Error('no network in tests'); }) as typeof fetch;
   try {
-    // The default Gmail transport and adapters, not test doubles.
-    const broker = new ManagedConnectors({ ledger: s.f.ledger, devices: () => s.devices(), secret: () => 'ak_fictional_office_a' });
-    const rpc = (body: Record<string, unknown>, session?: string) => broker.handle({ token: s.a.token, profile: 'property', method: 'POST', path: '/v1/connectors/mcp', body: { jsonrpc: '2.0', ...body }, ...(session ? { session } : {}), signal: new AbortController().signal });
-    const init = await rpc({ id: 1, method: 'initialize' });
-    // Permanent delete, filters, forwarding identity and settings: refused with no provider access at all.
+    const offline = new ManagedConnectors({ ledger: s.f.ledger, devices: () => s.devices(), secret: () => 'ak_fictional_office_a' });
+    const rpc = (broker: ManagedConnectors, body: Record<string, unknown>, session?: string) => broker.handle({ token: s.a.token, profile: 'property', method: 'POST', path: '/v1/connectors/mcp', body: { jsonrpc: '2.0', ...body }, ...(session ? { session } : {}), signal: new AbortController().signal });
+    await assert.rejects(() => rpc(offline, { id: 1, method: 'initialize' }), /connector_check_failed/);
+    assert.ok(upstream.length > 0 && upstream.every(url => !url.includes('/tools/execute')));
+    upstream.length = 0;
+    s.set(s.devices().map(d => d.id === 'install-a' ? { ...d, accountId: 'ca_verified' } : d));
+    const verified = new ManagedConnectors({ ledger: s.f.ledger, devices: () => s.devices(), secret: () => 'ak_fictional_office_a', mailProfile: gmailProfileTransport,
+      access: async () => ({ checkedAt: '', services: { gmail: { connected: true, status: 'ACTIVE', accounts: [{ id: 'ca_verified', status: 'ACTIVE' }], accountSelectionRequired: false } }, tools: { available: false, names: [] } }) });
+    const init = await rpc(verified, { id: 1, method: 'initialize' });
     for (const name of ['GMAIL_DELETE_MESSAGE', 'GMAIL_DELETE_THREAD', 'GMAIL_BATCH_DELETE_MESSAGES', 'GMAIL_CREATE_FILTER', 'GMAIL_UPDATE_VACATION_SETTINGS', 'GMAIL_UPDATE_SEND_AS', 'GMAIL_EMPTY_TRASH', 'SLACK_POST_MESSAGE']) {
-      const reply = await rpc({ id: 2, method: 'tools/call', params: { name, arguments: { message_id: 'abc' } } }, init.session);
+      const reply = await rpc(verified, { id: 2, method: 'tools/call', params: { name, arguments: { message_id: 'abc' } } }, init.session);
       const result = (reply.body as { result: { isError: boolean; content: { text: string }[] } }).result;
-      assert.equal(result.isError, true); assert.match(result.content[0]!.text, /outside the connected-app boundary/);
+      assert.equal(result.isError, true);
+      assert.match(result.content[0]!.text, /outside|no complete reviewed/);
     }
     assert.equal(upstream.length, 0);
-    // A send is only ever forwarded after the Gmail config and account verify; here they cannot, so nothing executes.
-    await assert.rejects(() => rpc({ id: 3, method: 'tools/call', params: { name: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'someone@example.test' } } }, init.session), /connector_check_failed/);
-    assert.ok(upstream.length > 0 && upstream.every(url => !url.includes('/tools/execute')), upstream.join(' '));
+    await assert.rejects(() => rpc(verified, { id: 3, method: 'tools/call', params: { name: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'someone@example.test' } } }, init.session), /connector_mail_review_binding_required/);
+    assert.equal(upstream.length, 0);
   } finally { globalThis.fetch = realFetch; s.f.close(); }
 });

@@ -236,7 +236,9 @@ try {
   checks.push('Fresh workspace Desk shows one "Get started" card with five steps, 0 of 5 done, step 1 "Enter link code" as the single current step, Bud never current or done, and nothing claiming ready');
 
   // ── 1b. The agency name alone does not finish the pack step ────────────────
-  const namedAgency = await request('/api/desk/agency', 'PATCH', { name: FICTIONAL_AGENCY });
+  const agencyBefore = await request('/api/desk');
+  assert.match(agencyBefore.workspaceId, /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/);
+  const namedAgency = await request('/api/desk/agency', 'PATCH', { expectedWorkspaceId: agencyBefore.workspaceId, expectedRevision: agencyBefore.revision, name: FICTIONAL_AGENCY });
   assert.equal(namedAgency.book.agency.name, FICTIONAL_AGENCY);
   await desk.reload();
   card = await openSetupCard(desk);
@@ -396,7 +398,9 @@ try {
   checks.push(`Workspace → Office details shows the zone the fresh v3 book recorded (${hostZone}), matching the server process, with no "not recorded yet" fallback`);
 
   // ── 4. Completed setup persists in a fresh browser, preserving the contact ─
-  const named = await request('/api/desk/agency', 'PATCH', { office: { pmUser: SAVED_PERSON } });
+  const contactBefore = await request('/api/desk');
+  assert.match(contactBefore.workspaceId, /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/);
+  const named = await request('/api/desk/agency', 'PATCH', { expectedWorkspaceId: contactBefore.workspaceId, expectedRevision: contactBefore.revision, office: { pmUser: SAVED_PERSON } });
   assert.equal(named.book.office.pmUser, SAVED_PERSON);
   const freshContext = await browser.newContext({ viewport: { width: 1400, height: 1050 } });
   await onlyLocal(freshContext);

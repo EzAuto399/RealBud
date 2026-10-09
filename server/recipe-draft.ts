@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import type { Recipe, RunUsage } from "../shared/contracts.ts";
 import { BUD_IDENTITY } from "../shared/bud-identity.ts";
 import { hardenHermesChildEnv, hermesWorkerSandbox } from "./drivers/acp/hermes.ts";
-import { trackSandboxedChild } from "./worker-network-sandbox.ts";
+import { trackSandboxedChild, workerIsolationRefusal } from "./worker-network-sandbox.ts";
 import { applyAskModelRelayEnv, withAskModelRelayLease } from "./ask-model-relay.ts";
 import { emptyRunUsage } from "./run-cost.ts";
 import { augmentedPath } from "./env-path.ts";
@@ -109,6 +109,8 @@ export async function askWorker(
   prompt: string,
   opts?: WorkerChatOpts,
 ): Promise<({ ok: true; stdout: string } | { ok: false; detail: string }) & { usage?: RunUsage }> {
+  const isolation = workerIsolationRefusal();
+  if (isolation) return { ok: false, detail: isolation };
   if (opts?.signal?.aborted) return { ok: false, detail: "Preparation cancelled." };
   const serviceFailure = managedServiceFailure("reasoning");
   if (serviceFailure) return { ok: false, detail: serviceFailure };

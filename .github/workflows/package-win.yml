@@ -28,6 +28,13 @@ on:
         description: "Commit/tag/branch to build (defaults to the branch this is run from)"
         required: false
         type: string
+      qualification:
+        description: "Rehearsal, or signed installed-CI candidate (neither promotes stable)"
+        type: choice
+        default: rehearsal
+        options:
+          - rehearsal
+          - signed-ci-candidate
       proof:
         description: "Use all for candidate acceptance; select one job only for diagnosis"
         type: choice
@@ -40,11 +47,33 @@ on:
 # One Windows package per ref: a superseded push has nothing left to prove, and
 # a dispatched release build keeps its own group so a push cannot cancel it.
 concurrency:
-  group: package-win-${{ github.event_name }}-${{ inputs.ref || github.ref }}-${{ inputs.proof || 'all' }}
+  group: package-win-${{ github.event_name }}-${{ inputs.ref || github.ref }}-${{ inputs.proof || 'all' }}-${{ inputs.qualification || 'rehearsal' }}
   cancel-in-progress: true
 
 jobs:
+  qualification-admission:
+    name: Admit explicit artifact intent (stable held)
+    runs-on: windows-latest
+    timeout-minutes: 5
+    env:
+      WINDOWS_QUALIFICATION: ${{ inputs.qualification || 'rehearsal' }}
+      WINDOWS_REQUESTED_REF: ${{ inputs.ref || '' }}
+      WINDOWS_PROOF: ${{ inputs.proof || 'all' }}
+      AZURE_SIGN_PROFILE: ${{ vars.AZURE_SIGN_PROFILE }}
+      AZURE_SIGN_PUBLISHER: ${{ vars.AZURE_SIGN_PUBLISHER }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/windows-candidate.mjs preflight
+      - run: node --test scripts/windows-candidate.test.mjs
+
   package:
+    needs: qualification-admission
     if: github.event_name != 'workflow_dispatch' || inputs.proof != 'managed-runtime'
     name: NSIS installer
     runs-on: windows-latest
@@ -56,14 +85,21 @@ jobs:
       contents: read
       id-token: write
     env:
-      # Signing turns on once the certificate profile exists (it needs a
-      # completed identity validation first). Until then main builds unsigned.
-      SIGN_WINDOWS: ${{ vars.AZURE_SIGN_PROFILE != '' && github.ref == 'refs/heads/main' && (inputs.ref == '' || inputs.ref == 'main' || inputs.ref == 'refs/heads/main' || inputs.ref == github.sha) }}
+      WINDOWS_QUALIFICATION: ${{ inputs.qualification || 'rehearsal' }}
+      WINDOWS_REQUESTED_REF: ${{ inputs.ref || '' }}
+      WINDOWS_PROOF: ${{ inputs.proof || 'all' }}
+      AZURE_SIGN_PROFILE: ${{ vars.AZURE_SIGN_PROFILE }}
+      AZURE_SIGN_PUBLISHER: ${{ vars.AZURE_SIGN_PUBLISHER }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
+      - name: Admit explicit Windows qualification intent
+        id: admission
+        run: node scripts/windows-candidate.mjs preflight
+      - name: Verify candidate gate contracts
+        run: node --test scripts/windows-candidate.test.mjs
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -94,7 +130,7 @@ jobs:
           path: .postgres-cache
           key: postgres-${{ runner.os }}-${{ hashFiles('scripts/postgres-artifacts.mjs') }}
       - name: Azure login for signing (OIDC)
-        if: env.SIGN_WINDOWS == 'true'
+        if: steps.admission.outputs.signing == 'true'
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -104,7 +140,7 @@ jobs:
       # asks for a token at the end of packaging, so fetch it now; az caches it
       # for the rest of the job and AzureCliCredential reads that cache.
       - name: Prefetch signing token
-        if: env.SIGN_WINDOWS == 'true'
+        if: steps.admission.outputs.signing == 'true'
         run: az account get-access-token --resource https://codesigning.azure.net --output none
       - name: pnpm package:win
         shell: bash
@@ -112,7 +148,7 @@ jobs:
           AZURE_SIGN_PROFILE: ${{ vars.AZURE_SIGN_PROFILE }}
           AZURE_SIGN_PUBLISHER: ${{ vars.AZURE_SIGN_PUBLISHER }}
         run: |
-          if [ "$SIGN_WINDOWS" = "true" ]; then
+          if [ "${{ steps.admission.outputs.signing }}" = "true" ]; then
             : "${AZURE_SIGN_PROFILE:?Set AZURE_SIGN_PROFILE to the approved certificate profile}"
             : "${AZURE_SIGN_PUBLISHER:?Set AZURE_SIGN_PUBLISHER to the certificate CN}"
             # publisherName must equal the certificate CN exactly: it lands in
@@ -128,7 +164,7 @@ jobs:
             pnpm package:win
           fi
       - name: Verify Authenticode signatures
-        if: env.SIGN_WINDOWS == 'true'
+        if: steps.admission.outputs.signing == 'true'
         shell: pwsh
         env:
           AZURE_SIGN_PUBLISHER: ${{ vars.AZURE_SIGN_PUBLISHER }}
@@ -152,12 +188,20 @@ jobs:
           $installers = @(Get-ChildItem release/RealBud-*-setup.exe)
           if ($installers.Count -ne 1) { throw 'Expected exactly one Windows x64 installer.' }
           ./scripts/test-windows-installer.ps1 -Installer $installers[0].FullName -ReceiptDirectory release/windows-proof
+      - name: Qualify exact signed installed CI candidate
+        if: env.WINDOWS_QUALIFICATION == 'signed-ci-candidate'
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem release/RealBud-*-setup.exe)
+          if ($installers.Count -ne 1) { throw 'Expected exactly one candidate installer.' }
+          node scripts/windows-candidate.mjs installed $installers[0].FullName release/win-unpacked/RealBud.exe release/windows-proof release/windows-proof/signed-ci-candidate.json
       - name: report what was built
         shell: bash
         run: |
           echo "version: $(node -p "require('./package.json').version")"
           echo "commit:  $(git rev-parse HEAD)"
-          ls -lh release/*.exe release/*.yml 2>/dev/null || true
+          ls -lh release/*.exe 2>/dev/null || true
+          node -e "require('node:fs').writeFileSync('release/WINDOWS-QUALIFICATION.txt', 'Intent: ' + process.env.WINDOWS_QUALIFICATION + '\\nStable promotion: HELD. These artifacts never update a stable feed/tag. Inspect exact installed/native receipts; CI is not customer-device or upgrade proof.\\n')"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -167,16 +211,17 @@ jobs:
           retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-installer
+          name: ${{ steps.admission.outputs.artifactKind }}-${{ steps.admission.outputs.sourceRevision }}
           path: |
             release/*.exe
             release/*.exe.blockmap
             release/*.zip
-            release/latest.yml
+            release/WINDOWS-QUALIFICATION.txt
           if-no-files-found: error
           retention-days: 14
 
   memory-journal:
+    needs: qualification-admission
     if: github.event_name != 'workflow_dispatch' || inputs.proof != 'installer'
     name: Managed Windows runtime and native memory journal (held candidate)
     runs-on: windows-latest
@@ -218,4 +263,35 @@ jobs:
           name: windows-native-memory-journal-proof
           path: outputs/windows-native-memory/
           if-no-files-found: warn
+          retention-days: 14
+
+  candidate-receipts:
+    if: github.event_name == 'workflow_dispatch' && inputs.qualification == 'signed-ci-candidate' && inputs.proof == 'all'
+    name: Join exact signed CI receipts (stable held)
+    needs: [package, memory-journal]
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-installed-proof
+          path: outputs/qualification/installed
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-native-memory-journal-proof
+          path: outputs/qualification/native
+      - name: Validate exact candidate, scenario and source digests
+        run: node scripts/windows-candidate.mjs joined outputs/qualification/installed/signed-ci-candidate.json outputs/qualification/native/runtime.json outputs/qualification/native/journal.json outputs/qualification/ci-receipt-bundle.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-ci-receipt-bundle-stable-held
+          path: outputs/qualification/ci-receipt-bundle.json
+          if-no-files-found: error
           retention-days: 14

@@ -13,7 +13,7 @@ import { decodeDeskPlain } from './desk-v3-decode.ts';
 import { isPrivateBackupPath, MEMORY_SIGNING_PATH, privateWorkerFactWorkspace, validateMemorySigningFile, validatePrivateBusinessFile, validatePrivateLogicalRecord, validatePrivateWorkspaceIdentity, validatePrivatePackHistoryFiles } from './private-workspace-backup.ts';
 import { validateSourceBillGraph, type BillLookup, type BillLookupStore } from './source-bill-graph.ts';
 import { validateExecutionGraph } from './execution-history-backup.ts';
-import { validateBackupMailGraph } from './private-backup-mail-validation.ts';
+import { validateBackupConnectedMail, validateBackupMailGraph } from './private-backup-mail-validation.ts';
 import { validateSavedBillReviewDraft, validateBillReviewDraftProposalLink } from './bill-review-drafts.ts';
 import { validateBankReviewLinks } from './bank-reference-validation.ts';
 import { validateWebsiteWorkGraph } from './website-work-backup.ts';
@@ -476,6 +476,7 @@ export class PrivateBackupCatalog {
       validatePrivatePackHistoryFiles({ get: path => this.getFile(path)?.data, paths: () => this.filePaths() });
       const reader = { get: (kind: string, id: string) => this.getRecord(kind, id), iterate: (kind: string) => this.iterateRecords(kind) };
       validateBackupMailGraph(reader, { get: path => this.getFile(path), paths: () => this.filePaths() }, this.workspaceId);
+      validateBackupConnectedMail({ get: path => this.getFile(path), paths: () => this.filePaths() }, this.workspaceId);
       // Derived graph lookups do not grow the sealed catalog or its rollback
       // journal. Their separate 64 MiB in-memory database has a hard page cap.
       const lookups = new DatabaseSync(':memory:');

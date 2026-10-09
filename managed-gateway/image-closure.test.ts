@@ -111,7 +111,7 @@ test('the runtime closure reaches the shared PDF reader and never loads test fix
     assert.ok(runtime.files.has(file), `${file} expected in the runtime closure`);
   }
   for (const file of runtime.files) {
-    assert.doesNotMatch(file, /(?:\.test\.ts|\/testing\.ts|\/sandbox-smoke\.ts|\/demo\.ts|\/benchmark\.ts)$/, `${file} must never be loaded at runtime`);
+    assert.doesNotMatch(file, /(?:\.test\.ts|\/testing\.ts|\/testing-resale-policy\.ts|\/sandbox-smoke\.ts|\/demo\.ts|\/benchmark\.ts)$/, `${file} must never be loaded at runtime`);
   }
 });
 
@@ -120,7 +120,7 @@ test('every runtime file is admitted by Dockerfile.dockerignore', () => {
   for (const file of ['managed-gateway/package.json', 'managed-gateway/package-lock.json', 'managed-gateway/tsconfig.json']) {
     assert.ok(admitted(dockerignore, file), `${file} is excluded from the build context`);
   }
-  for (const secret of ['managed-gateway/.env', 'managed-gateway/.env.local', 'managed-gateway/data/ledger.sqlite', 'server/key.pem', 'managed-gateway/testing.ts', 'managed-gateway/ledger.test.ts', 'server/store.ts']) {
+  for (const secret of ['managed-gateway/.env', 'managed-gateway/.env.local', 'managed-gateway/data/ledger.sqlite', 'server/key.pem', 'managed-gateway/testing.ts', 'managed-gateway/testing-resale-policy.ts', 'managed-gateway/ledger.test.ts', 'server/store.ts']) {
     assert.ok(!admitted(dockerignore, secret), `${secret} must stay out of the build context`);
   }
 });

@@ -10,7 +10,7 @@ import { BootstrapError } from "./worker-bootstrap.ts";
 import { windowsHermesGit, windowsHermesRuntimeEnv } from "./hermes-runtime-env.ts";
 import { documentToolsStatus, type DocumentToolsStatus } from "./hermes-document-deps.ts";
 import { DATA_DIR } from "./config.ts";
-import { sandboxedLaunch, type SandboxedLaunch } from "./worker-network-sandbox.ts";
+import { workerIsolationRefusal, sandboxedLaunch, type SandboxedLaunch } from "./worker-network-sandbox.ts";
 
 /** The check could not run right now (worker custody, a launch hold, a
  * timeout, a process that could not start). It says nothing about the files:
@@ -44,6 +44,8 @@ export async function verifyRuntime(home: string, release: HermesRelease, option
   /** Per command and for the connection check; tests shorten it. */
   timeoutMs?: number;
 } = {}): Promise<string> {
+  const isolation = workerIsolationRefusal();
+  if (isolation) throw new RuntimeCheckUnavailable(isolation);
   const timeout = options.timeoutMs ?? 30_000;
   const scratch = mkdtempSync(join(tmpdir(), "realbud-runtime-check-"));
   let env: NodeJS.ProcessEnv = {

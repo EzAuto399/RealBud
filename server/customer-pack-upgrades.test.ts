@@ -6,7 +6,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 import type { CustomerPack, CustomerPackChangePreview } from '../shared/customer-packs.ts';
-import { austinAccountsCustomerPack, austinCustomerPack } from './customer-pack-definition.ts';
+import { austinAccountsCustomerPack, austinCustomerPack, latestAustinAccountsCustomerPack, latestAustinCustomerPack } from './customer-pack-definition.ts';
 const recipeRoot=vi.hoisted(()=>{const value=`${process.env.TMPDIR ?? '/tmp'}/rb-pack-upgrade-recipes-${process.pid}-${Date.now()}`;process.env.REALBUD_DATA_DIR=value;return value;});
 import { withFictionalPublisher } from './testing/pack-publisher.ts';
 const {createCustomerPackService:createPackService,validateCustomerPackUpgradeJournal,validateCustomerPack}=await import('./customer-packs.ts');
@@ -34,6 +34,23 @@ async function fixture(initial=pack()) {
 }
 /** Revision 6 (accounts revision 2) added the property-management skill; earlier revisions never had it. */
 const withoutPm=(pack:CustomerPack):CustomerPack=>({...pack,skills:pack.skills.filter(skill=>skill.id!=='property-management')});
+
+describe('truthful W2 guidance revision', () => {
+  it.each([[austinCustomerPack, latestAustinCustomerPack, 7], [austinAccountsCustomerPack, latestAustinAccountsCustomerPack, 3]] as const)('upgrades reviewed instructions while preserving staff title and historical skill provenance', async (readOld, readLatest, revision) => {
+    const initial = readOld(), next = readLatest(), f = await fixture(initial);
+    const id = 'wf-austin-accounts-invoice-review';
+    saveRecipe({ ...getRecipe(id)!, title: 'Fictional locally named bill review', expectedRevision: getRecipe(id)!.revision });
+    const before = loadRecipes(true), preview = await f.service.previewUpgrade(next);
+    expect(preview.canApply).toBe(true);
+    expect(loadRecipes(true)).toEqual(before);
+    const done = await f.service.upgrade(request(preview));
+    expect(done.revision).toBe(revision);
+    expect(getRecipe(id)).toMatchObject({ title: 'Fictional locally named bill review', status: 'shadow', schedule: null, planApprovedAt: null, approvedRevision: null });
+    expect(getRecipe(id)!.steps.join('\n')).toContain('Weekly W2 has a host-owned runner');
+    expect(next.skills).toEqual(initial.skills);
+    expect((await f.service.handle(`/api/customer-packs/${next.id}/export`, 'GET'))?.body).toEqual(next);
+  });
+});
 const request=(preview:CustomerPackChangePreview)=>({pack:preview.pack,expectedInstalledDigest:preview.installedDigest,expectedInstalledRevision:preview.installedRevision,expectedDigest:preview.digest,expectedPreviewDigest:preview.previewDigest});
 const resume=(id:string,installed:any)=>({route:`/api/customer-packs/${id}/resume-change`,body:{expectedInstalledDigest:installed.digest,expectedInstalledRevision:installed.installationRevision,expectedPreviewDigest:installed.pendingChange.previewDigest}});
 

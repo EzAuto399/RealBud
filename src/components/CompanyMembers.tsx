@@ -1,15 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { CompanyManagement, CompanyStatus } from '@shared/company-api';
 import { companyApi } from '@/lib/company-api';
 
 const button = 'min-h-10 rounded-lg border border-line px-3 py-2 text-[13px] text-ink disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-agency';
 export function CompanyMembers({ status, onChanged }: { status: CompanyStatus; onChanged: () => Promise<unknown> }) {
-  const [data, setData] = useState<CompanyManagement | null>(null);
+  const epoch = useSyncExternalStore(companyApi.subscribeSession, companyApi.sessionVersion, companyApi.sessionVersion);
+  const scope = JSON.stringify([status.company?.id, status.member?.id, status.member?.role, epoch]);
+  const currentScope = useRef(scope); currentScope.current = scope;
+  const [loaded, setLoaded] = useState<{ scope: string; data: CompanyManagement } | null>(null);
+  const data = loaded?.scope === scope ? loaded.data : null;
   const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [confirm, setConfirm] = useState<{ label: string; detail: string; action: () => Promise<unknown> } | null>(null);
+  type Confirmation = { label: string; detail: string; action: () => Promise<unknown> };
+  const [confirmation, setConfirmation] = useState<(Confirmation & { scope: string }) | null>(null);
+  const confirm = confirmation?.scope === scope ? confirmation : null;
+  const setConfirm = (value: Confirmation | null) => setConfirmation(value ? { ...value, scope } : null);
   const active = useRef(true);
   const pending = useRef(false);
   const generation = useRef(0);
@@ -17,32 +24,33 @@ export function CompanyMembers({ status, onChanged }: { status: CompanyStatus; o
     const current = ++generation.current;
     const epoch = companyApi.sessionVersion();
     const next = await companyApi.management(page);
-    if (active.current && current === generation.current && epoch === companyApi.sessionVersion()) { setData(next); setConfirm(null); }
+    if (active.current && currentScope.current === scope && current === generation.current && epoch === companyApi.sessionVersion()) { setLoaded({ scope, data: next }); setConfirm(null); }
   };
   useEffect(() => {
     active.current = true;
-    const stop = companyApi.subscribeSession(() => { setData(null); setConfirm(null); });
-    void load(offset).catch(() => { if (active.current) { setData(null); setError('Office administration could not be loaded. Check the host connection and refresh.'); } });
+    setLoaded(null); setConfirmation(null); setError(''); setNotice('');
+    const stop = companyApi.subscribeSession(() => { setLoaded(null); setConfirmation(null); });
+    void load(offset).catch(() => { if (active.current && currentScope.current === scope) { setLoaded(null); setError('Office administration could not be loaded. Check the host connection and refresh.'); } });
     return () => { active.current = false; generation.current++; stop(); };
-  }, [offset]);
+  }, [offset, scope]);
   const run = async (action: () => Promise<unknown>) => {
-    if (pending.current) return;
+    if (pending.current || !active.current || currentScope.current !== scope) return;
     pending.current = true; setBusy(true); setError(''); setNotice('');
     const epoch = companyApi.sessionVersion();
     try {
       await action();
-      if (!active.current) return;
+      if (!active.current || currentScope.current !== scope) return;
       setConfirm(null); setNotice('Saved. Checking the current office state…');
       await onChanged();
-      if (epoch === companyApi.sessionVersion()) await load();
-      if (active.current) setNotice('Office state updated.');
+      if (active.current && currentScope.current === scope && epoch === companyApi.sessionVersion()) await load();
+      if (active.current && currentScope.current === scope) setNotice('Office state updated.');
     } catch (cause) {
-      if (active.current) { setData(null); setError(cause instanceof Error ? cause.message : 'The operation could not be confirmed. Refresh before trying again.'); }
+      if (active.current && currentScope.current === scope) { setLoaded(null); setError(cause instanceof Error ? cause.message : 'The operation could not be confirmed. Refresh before trying again.'); }
     } finally { pending.current = false; if (active.current) setBusy(false); }
   };
   const owner = status.member?.role === 'owner';
   return <details className="rounded-lg border border-line p-3" open={!!status.departurePending || undefined}>
-    <summary className="cursor-pointer text-[13px] font-medium text-ink">{owner ? 'Members, invitations and ownership' : 'Membership and ownership'}</summary>
+    <summary className="cursor-pointer text-[13px] font-medium text-ink">People and access · {owner ? 'office owner' : 'office member'}</summary>
     <div className="mt-3 space-y-4 text-[13px]" aria-busy={busy}>
       {owner && data && <>
         <h4 className="font-medium">Members</h4>
@@ -59,7 +67,7 @@ export function CompanyMembers({ status, onChanged }: { status: CompanyStatus; o
           <span>{invitation.displayName} · {invitation.revokedAt ? 'cancelled' : invitation.redeemedAt ? 'used' : invitation.expiresAt && Date.parse(invitation.expiresAt) < Date.now() ? 'expired' : 'pending'}</span>
           {!invitation.revokedAt && !invitation.redeemedAt && <button disabled={busy} className={button} onClick={() => void run(() => companyApi.revokeInvitation(invitation.id))}>Cancel invitation</button>}
         </li>)}</ul>
-        <div className="flex gap-2"><button className={button} disabled={busy || offset === 0} onClick={() => { setData(null); setOffset(value => Math.max(0, value - 100)); }}>Previous page</button><button className={button} disabled={busy || !data.hasMore} onClick={() => { setData(null); setOffset(value => value + 100); }}>Next page</button></div>
+        <div className="flex gap-2"><button className={button} disabled={busy || offset === 0} onClick={() => { setLoaded(null); setOffset(value => Math.max(0, value - 100)); }}>Previous page</button><button className={button} disabled={busy || !data.hasMore} onClick={() => { setLoaded(null); setOffset(value => value + 100); }}>Next page</button></div>
       </>}
       {data?.transfer && <div className="rounded-lg border border-line p-3 space-y-2">
         <p>{data.transfer.toMemberId === status.member?.id ? 'You have been offered ownership of this office.' : 'Ownership has been offered. You remain owner until the recipient accepts.'}</p>
@@ -74,7 +82,7 @@ export function CompanyMembers({ status, onChanged }: { status: CompanyStatus; o
           {status.remoteHost && <button className={button} disabled={busy} onClick={() => setConfirm({ label: 'Disconnect this computer', detail: 'This ends the current office session and detaches the host from this private workspace. Your membership and other computer sessions remain. Your private work stays here.', action: () => companyApi.leaveOffice(true) })}>Disconnect this computer</button>}
         </div>
       </div>
-      {confirm && <div role="group" aria-label={confirm.label} className="rounded-lg border border-agency p-3 space-y-2"><p className="font-medium">{confirm.label}</p><p>{confirm.detail}</p><div className="flex gap-2"><button className={button} disabled={busy} onClick={() => void run(confirm.action)}>Confirm</button><button className={button} disabled={busy} onClick={() => setConfirm(null)}>Keep current setup</button></div></div>}
+      {confirm && <div role="group" aria-label={confirm.label} className="rounded-lg border border-agency p-3 space-y-2"><p className="font-medium">{confirm.label}</p><p>{confirm.detail}</p><div className="flex gap-2"><button className={button} disabled={busy} onClick={() => void run(confirm.action)}>{confirm.label}</button><button className={button} disabled={busy} onClick={() => setConfirm(null)}>Keep current setup</button></div></div>}
       {error && <p role="alert" className="text-danger">{error}</p>}
       <p role="status" className="text-ink-secondary">{busy ? 'Checking office state…' : notice}</p>
       <button className={button} disabled={busy} onClick={() => void run(() => load())}>Refresh administration</button>

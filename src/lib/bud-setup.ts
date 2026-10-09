@@ -93,6 +93,7 @@ const AUTO_SETUP_CODES: NonNullable<BudAutoSetup["code"]>[] = ["checking", "inst
 
 /** A hold that pressing Try again can clear (the server re-checks the link). */
 export function budAutoSetupRetryable(status: HermesStatus | null): boolean {
+  if (status?.workerIsolation) return false;
   const code = status?.autoSetup?.state === "held" ? status.autoSetup.code : undefined;
   return !status?.ready && (code === "held_exhausted" || code === "held_failed" || (!!status && managedIdle(status)));
 }
@@ -156,6 +157,7 @@ function setupPhase(auto: BudAutoSetup): string {
  * person; a hold carries the existing product copy of what stopped it.
  */
 export function budAutoSetupView(status: HermesStatus | null, now = Date.now()): { label: string; detail: string; working: boolean } | null {
+  if (status?.workerIsolation) return { label: "Worker unavailable on this computer", detail: status.workerIsolation.detail, working: false };
   const auto = status?.autoSetup;
   if (!status || !auto || status.ready || status.modelAccess?.withdrawn) return null;
   if (auto.state === "installing" || auto.state === "verifying") {
@@ -190,6 +192,8 @@ export function budAutoSetupView(status: HermesStatus | null, now = Date.now()):
  * mid-work.
  */
 export function budFirstSetupCover(status: HermesStatus | null, context: { connected: boolean; statusError: boolean; recovering: boolean }): "running" | "stopped" | null {
+  // A missing platform capability cannot trap saved records behind setup.
+  if (status?.workerIsolation) return null;
   const state = status?.autoSetup?.state;
   if (context.recovering || !status || status.readyOnce || !state || state === "idle" || state === "ready" || !budAutoSetupView(status)) return null;
   return context.connected && !context.statusError && (state === "installing" || state === "verifying") ? "running" : "stopped";
@@ -210,6 +214,7 @@ function budAvailabilityFacts(status: HermesStatus | null, connected: boolean, r
   if (!connected) return unavailable("Reconnecting", "The local service is reconnecting. Keep drafting; new work can start when the connection returns.");
   if (recovering) return unavailable("Recovery needed", "Restoring the property book when its saved key is available. Your draft stays here.", "Unlock book", "you-recovery");
   if (!status) return unavailable("Checking Bud", "Checking Bud's setup. You can prepare your request while this finishes.");
+  if (status.workerIsolation) return unavailable("Worker unavailable on this computer", status.workerIsolation.detail, "View Bud status");
   // A withdrawn service grant is its own hold: nothing on this computer is
   // broken and no key can fix it. Relinking on the Website account card is
   // the one way back; every saved record stays readable meanwhile.
@@ -269,7 +274,7 @@ function budAvailabilityFacts(status: HermesStatus | null, connected: boolean, r
 export function budAvailability(status: HermesStatus | null, connected: boolean, recovering = false, context?: { canAdminister: boolean; statusError?: boolean; officeLink?: "linked" | "not-linked" | "unavailable" }) {
   const availability = budAvailabilityFacts(status, connected, recovering);
   if (context?.statusError && connected && !recovering) return { ...availability, ready: false, label: "Status unavailable", detail: "Could not refresh Bud’s status. Your draft is kept; status will retry automatically.", action: "View Bud status", target: "you-worker", canVerify: false };
-  if (!context || context.canAdminister || availability.ready || !connected || recovering || !status || status.modelAccess?.withdrawn) return availability;
+  if (!context || context.canAdminister || availability.ready || !connected || recovering || !status || status.modelAccess?.withdrawn || status.workerIsolation) return availability;
   // Same hold Bud status shows: before an office link nothing can install, so
   // the next step is connecting, not finishing setup. A failed check stays itself.
   if (context.officeLink === "not-linked" && !status.modelAccess?.managed && !("automatic" in availability) && status.cli.probeState !== "timeout" && status.cli.probeState !== "error") {
@@ -297,7 +302,7 @@ const READINESS_DETAILS: Record<string, string> = Object.assign(Object.create(nu
  * not linked, or automatic setup running or stopped (it carries its own words).
  */
 export function budReadinessFailure(status: HermesStatus | null, officeLink?: "linked" | "not-linked" | "unavailable"): string | null {
-  if (!status || status.ready || status.modelAccess?.withdrawn || officeLink === "not-linked") return null;
+  if (!status || status.ready || status.workerIsolation || status.modelAccess?.withdrawn || officeLink === "not-linked") return null;
   const auto = status.autoSetup?.state;
   if (auto && auto !== "idle" && auto !== "ready") return null;
   const lastCheck = status.lastPing ?? (status.lastTest?.kind === "ping" ? status.lastTest : null);
@@ -328,6 +333,7 @@ export function parseBudStatus(value: unknown): HermesStatus {
     || (value.installerAvailable !== undefined && typeof value.installerAvailable !== "boolean")
     || (value.handsLabel !== undefined && typeof value.handsLabel !== "string")
     || typeof value.ready !== "boolean" || typeof value.detail !== "string"
+    || (value.workerIsolation !== undefined && (!record(value.workerIsolation) || value.workerIsolation.state !== "held" || typeof value.workerIsolation.platform !== "string" || !value.workerIsolation.platform || typeof value.workerIsolation.detail !== "string" || !value.workerIsolation.detail || value.ready))
     || typeof value.cli.installed !== "boolean" || typeof value.cli.matchesPin !== "boolean"
     || (value.cli.compatible !== undefined && typeof value.cli.compatible !== "boolean")
     || (value.cli.probeState !== undefined && !["ok", "missing", "timeout", "error"].includes(String(value.cli.probeState)))

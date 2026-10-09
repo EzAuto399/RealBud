@@ -211,6 +211,14 @@ export function createCompanyInstallation(options: {
   const privateDirectory = () => ensurePrivateDirectory(directory);
   const readPrivate = (path: string) => readPrivateJson(path, 20_000);
   const persist = writePrivateJson;
+  async function checkPeerCompany(target: CompanyPairing): Promise<void> {
+    const response = await requestCompanyHost({ ...target, path: '/api/company/status', method: 'GET', signal: abort.signal });
+    const status = response.body as { configured?: unknown; hostCompany?: { version?: unknown; companyId?: unknown } } | null;
+    if (response.status !== 200 || status?.configured !== true) throw new Error('The company host is not ready. Check its address and try again.');
+    if (status.hostCompany?.version !== 1 || status.hostCompany.companyId !== target.companyId) {
+      throw new CompanyBindingError('host_identity_mismatch', 'This host cannot confirm the expected office before making changes. Ask the office owner for a current host code and an updated host.');
+    }
+  }
   function validateSettings(value: unknown): Settings {
     const data = input(value, ['version', 'databasePort', 'network']);
     if (data.version !== 1 || !Number.isInteger(data.databasePort) || Number(data.databasePort) < 1024 || Number(data.databasePort) > 65535) throw new Error('Company host settings need service attention.');
@@ -422,14 +430,14 @@ export function createCompanyInstallation(options: {
             try { target = parseCompanyPairing(code); }
             catch { return { status: 400, body: { code: 'invalid_host_code', error: 'This host code is invalid or expired. Copy a current code from the company owner.' } }; }
             if (peer && target.origin === peer.origin && target.companyId === peer.companyId && target.certificatePem === peer.certificatePem) {
+              await checkPeerCompany(target);
               return { status: 200, body: { ok: true } };
             }
             if (peer && values.replaceExisting === true && target.companyId !== peer.companyId) return { status: 409, body: { code: 'host_identity_mismatch', error: 'A replacement host must serve the same office. Leave or disconnect before changing offices.' } };
             if (peer && values.replaceExisting === true && !await outbox.departureAllowed()) return { status: 409, body: { code: 'outbox_pending', error: 'Resolve or explicitly archive the pending share before replacing this host.' } };
             if (!await departmentOutbox.departureAllowed()) return pendingDepartmentReply();
             if (kernel || settings || (peer && values.replaceExisting !== true) || failure) return { status: 409, body: { error: 'This computer already has company settings. Service attention is needed to change hosts.' } };
-            const response = await requestCompanyHost({ ...target, path: '/api/company/status', method: 'GET', signal: abort.signal });
-            if (response.status !== 200 || !(response.body as { configured?: boolean })?.configured) throw new Error('The company host is not ready. Check its address and try again.');
+            await checkPeerCompany(target);
             if (abort.signal.aborted) throw new Error('Company setup stopped.');
             await persist(peerPath, code); peer = target;
             await vault.remove('departure');
@@ -445,15 +453,30 @@ export function createCompanyInstallation(options: {
           if (actor.role !== 'owner') return { status: 403, body: { error: 'The company owner must enable joining.' } };
           const value = input(body, ['hostname', 'renewIdentity']);
           return await exclusive(() => portalCertificateGate.run(async () => {
+            const commitAdmission = (): Reply | null => {
+              const currentAdmin = options.authorizeAdmin(request);
+              if (!currentAdmin.ok) return { status: currentAdmin.status, body: { error: currentAdmin.error } };
+              if (recovery.mode() !== 'active') return { status: 409, body: { code: 'host_held', error: 'Activate this host before enabling joining.' } };
+              return null;
+            };
             if (settings!.network && value.renewIdentity !== true) {
               if (String(value.hostname ?? '').trim() !== settings!.network.hostname) return { status: 409, body: { error: 'This host already has a saved network identity. Service attention is needed to change it without stranding connected computers.' } };
-              await listen(); return { status: 200, body: { ok: true } };
+              const admitted = await kernel!.withOwnerAuthority(companyMemberToken(request), async () =>
+                commitAdmission() ?? { status: 200, body: { ok: true } });
+              if (admitted.status === 200) await listen();
+              return admitted;
             }
             const hostname = String(value.hostname ?? '').trim();
             const material = await createHostCertificate(hostname);
             const next = { ...settings!, network: { hostname, port: settings!.network?.port ?? await vacantPort(), ...material } };
-            if (transport) { await transport.close(); transport = undefined; }
-            await persist(settingsPath, next); settings = next; await listen();
+            const committed = await kernel!.withOwnerAuthority(companyMemberToken(request), async (): Promise<Reply> => {
+              const denied = commitAdmission(); if (denied) return denied;
+              if (transport) { await transport.close(); transport = undefined; }
+              await persist(settingsPath, next); settings = next;
+              return { status: 200, body: { ok: true } };
+            });
+            if (committed.status !== 200) return committed;
+            await listen();
             return { status: 200, body: { ok: true } };
           }));
         }
@@ -476,6 +499,9 @@ export function createCompanyInstallation(options: {
           if (previous && path !== '/api/company/sign-in') return { status: 409, body: { code: 'enrollment_recovery_required', error: 'A previous sign-in operation needs confirmation. Sign in with the details you chose to finish.' } };
           const loginName = normalizeLoginName((body as { loginName?: unknown; credential?: { loginName?: unknown } })?.loginName ?? (body as { credential?: { loginName?: unknown } })?.credential?.loginName);
           if (previous && previous.loginName !== loginName) return { status: 409, body: { code: 'enrollment_recovery_required', error: 'Sign in using the username from the unfinished operation.' } };
+          // Old saved pairings also need a proved host precondition capability.
+          // A successful TLS pin alone does not prove which office the DB serves.
+          if (peer) await checkPeerCompany(peer);
           // No password, invitation, recovery key or session token is persisted.
           await writePrivateJson(enrollmentPath, { version: 1, loginName, operation: path, startedAt: new Date().toISOString() });
           const response = peer
@@ -508,6 +534,11 @@ export function createCompanyInstallation(options: {
           // A host identity mismatch never returns a member token to the renderer.
           const result = response.body as { company?: { id?: string }; transport?: string; limitations?: string[] };
           if (result?.company && result.company.id !== peer.companyId) throw new CompanyBindingError('host_identity_mismatch', 'The company identity does not match the saved host.');
+          if (path === '/api/company/status' && response.status === 200) {
+            const identity = (response.body as { hostCompany?: { version?: unknown; companyId?: unknown } } | null)?.hostCompany;
+            if (identity?.version !== 1 || identity.companyId !== peer.companyId) throw new CompanyBindingError('host_identity_mismatch',
+              'This host cannot confirm the expected office before making changes. Ask the office owner for a current host code and an updated host.');
+          }
           if (path === '/api/company/status' && response.status === 200) result.transport = 'encrypted-company';
           if (path === '/api/company/status' && response.status === 200) Object.assign(result, { enrollmentPending: (await readPrivate(enrollmentPath)) !== undefined, remoteHost: true, departurePending: leaving?.phase === 'pending' ? leaving.action : undefined });
           return response;
@@ -531,6 +562,9 @@ export function createCompanyInstallation(options: {
       } catch (error) {
         if (error instanceof WindowsPostgresAdmissionError) return { status: 503, body: { code: error.code, error: error.message } };
         if (error instanceof CompanyError && error.code === 'invalid_input') return { status: 400, body: { code: error.code, error: 'Check the company fields and username before retrying.' } };
+        if (error instanceof CompanyError && (error.code === 'forbidden' || error.code === 'unauthenticated')) return {
+          status: error.code === 'forbidden' ? 403 : 401, body: { code: error.code, error: 'Company authority changed. Sign in as the current owner before changing this host.' },
+        };
         if (error instanceof CompanyBindingError) return { status: 409, body: { code: error.code, error: error.message } };
         return { status: 503, body: { error: 'Company setup or connection could not be completed. Existing data and settings have been preserved.' } };
       }

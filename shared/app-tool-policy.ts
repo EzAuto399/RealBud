@@ -110,7 +110,7 @@ export const MAIL_SENDS = new Set([
 ]);
 /** Outlook archive is a move; only a move to these well-known folders runs without a card. */
 export const MAIL_MOVES = new Set(["OUTLOOK_MOVE_MESSAGE", "OUTLOOK_BATCH_MOVE_MESSAGES", "OUTLOOK_MOVE_MESSAGE_FROM_FOLDER", "OUTLOOK_MOVE_MESSAGE_FROM_CHILD_FOLDER"]);
-const MAIL_REVIEWS = new Set([
+export const MAIL_REVIEWS = new Set([
   ...MAIL_SENDS, ...MAIL_MOVES,
   // Trash is recoverable, but it hides mail from the office: reviewed.
   "GMAIL_MOVE_TO_TRASH", "GMAIL_MOVE_THREAD_TO_TRASH",

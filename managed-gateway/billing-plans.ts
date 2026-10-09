@@ -1,3 +1,4 @@
+import type { CommercialPricingSync } from './office-ai-terms.ts';
 /**
  * Billing plans: accept once, roll forward (owner decision, 29 September 2026,
  * `docs/decisions/2026-09-29-operator-billing.md`, second part).
@@ -123,7 +124,8 @@ export class BillingPlans {
   set(operator:OperatorPrincipal,value:unknown):BillingPlanView {
     requireThat(operator && typeof operator.subject==='string' && operator.subject.length>0,'operator_unauthenticated',401);
     object(value);
-    exact(value,['companyId','startPeriod','includedMonths','careCents','aiBilling',...(value.markupBasisPoints!==undefined?['markupBasisPoints']:[]),...(value.billingEmail!==undefined?['billingEmail']:[]),...(value.tradingName!==undefined?['tradingName']:[])]);
+    exact(value,['companyId','startPeriod','includedMonths','careCents','aiBilling',...(value.markupBasisPoints!==undefined?['markupBasisPoints']:[]),...(value.billingEmail!==undefined?['billingEmail']:[]),...(value.tradingName!==undefined?['tradingName']:[]),...(Object.hasOwn(value,'expectedPlanVersion')?['expectedPlanVersion']:[])]);
+    if(Object.hasOwn(value,'expectedPlanVersion') && value.expectedPlanVersion!==null) id(value.expectedPlanVersion);
     const terms=this.terms; id(value.companyId); const companyId=value.companyId;
     requireThat('unavailable' in this.config===false,('unavailable' in this.config?this.config.unavailable:''),503);
     requireThat(companyId!==terms.internalCompanyId,'internal_usage_not_billable',403);
@@ -151,6 +153,7 @@ export class BillingPlans {
     ledger.db.transaction(()=>{
       const current=this.current(companyId);
       if(current && content(current)===content(proposed)) return;
+      if(Object.hasOwn(value,'expectedPlanVersion')) requireThat((current?.version??null)===value.expectedPlanVersion,'billing_plan_changed',409);
       const count=ledger.db.get<{n:number}>('SELECT COUNT(*) AS n FROM billing_plans WHERE tenant=?',companyId)!.n;
       const plan:BillingPlan={companyId,version:`plan-v${count+1}`,...proposed,setBy:operator.subject,setAt:ledger.now()};
       ledger.db.run('INSERT INTO billing_plans(tenant,version,body) VALUES(?,?,?)',companyId,plan.version,canonical(plan));
@@ -245,14 +248,14 @@ export class BillingPlans {
  * the plan they belong to in the owner's words (included months, the monthly fee
  * from which month, AI billed after each month from which month). The digest is
  * the stored terms' digest, which the owner's acceptance names. */
-export function presentCommercialTerms(current:{terms:CommercialTerms;digest:string;acceptance:CommercialAcceptance|null}) {
+export function presentCommercialTerms(current:{terms:CommercialTerms;digest:string;acceptance:CommercialAcceptance|null},pricingSync?:CommercialPricingSync) {
   // The owner sees exactly the terms they accept, markup included (the invite
   // terms already state it), so the website can check the stored digest.
   // Wholesale cost is never on the terms.
   const {terms}=current, plan=terms.billingPlan;
   const presented=terms;
   const after=plan?addMonths(plan.startPeriod,plan.includedMonths):null;
-  return {terms:presented,digest:current.digest,acceptance:current.acceptance,
+  return {terms:presented,digest:current.digest,acceptance:current.acceptance,pricingSync:pricingSync??(!terms.aiUsage && plan?.aiBilling!=='resale'?'not_required':current.acceptance?'not_synced':'awaiting_acceptance'),
     plan:plan?{version:plan.version,startPeriod:plan.startPeriod,includedMonths:plan.includedMonths,includedUntil:plan.includedMonths>0?addMonths(plan.startPeriod,plan.includedMonths-1):null,
       careCents:plan.careCents,careFrom:plan.careCents==='0'?null:after,aiBilling:plan.aiBilling,aiBilledFrom:plan.aiBilling==='resale'?after:null,
       month:planMonthIndex(plan.startPeriod,terms.period),included:includedMonth(terms),accepted:!!current.acceptance}:null};

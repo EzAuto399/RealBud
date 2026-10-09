@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomUUID } from 'node:crypto';
+import { chmodSync, copyFileSync, linkSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,9 +12,101 @@ const tempFile = () => {
   return join(dir, "operations.json");
 };
 const input = { threadId: "thread-1", toolName: "COMPOSIO_MULTI_EXECUTE_TOOL", toolSlugs: ["GMAIL_FETCH_EMAILS"] };
+const workspaceId = '00000000-0000-4000-8000-000000000001';
+const mailInput = (store: ConnectedAppOperationStore) => ({ threadId: 'thread-mail', toolName: 'GMAIL_SEND_EMAIL', toolSlugs: [], accountDigest: 'a'.repeat(64), realmDigest: 'f'.repeat(64),
+  bindingDigest: 'b'.repeat(64), effectDigest: 'c'.repeat(64), reviewDigest: 'd'.repeat(64), workspaceDigest: store.workspaceDigest });
 afterEach(() => { vi.restoreAllMocks(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
 describe("connected-app durable operation receipts", () => {
+  it('holds the same effect across restart, RPC/thread changes and new binding generations', () => {
+    const file = tempFile(), first = new ConnectedAppOperationStore({ file, workspaceId });
+    const row = first.start(mailInput(first)); first.finish(row.id, 'unknown');
+    const restarted = new ConnectedAppOperationStore({ file, workspaceId });
+    expect(() => restarted.start({ ...mailInput(restarted), threadId: 'new-thread', bindingDigest: 'e'.repeat(64) })).toThrow(/unresolved outcome/);
+    expect(restarted.list()).toHaveLength(1);
+    const moved = tempFile(); copyFileSync(file, moved); chmodSync(moved, 0o600);
+    const restored = new ConnectedAppOperationStore({ file: moved, workspaceId });
+    expect(restored.workspaceDigest).toBe(first.workspaceDigest);
+    expect(() => restored.start(mailInput(restored))).toThrow(/unresolved outcome/);
+    const foreign = new ConnectedAppOperationStore({ file: moved, workspaceId: '00000000-0000-4000-8000-000000000002' });
+    expect(() => foreign.start({ ...mailInput(foreign), effectDigest: 'f'.repeat(64) })).toThrow(/another private workspace/);
+  });
+  it('holds legacy identified rows missing realm and rejects a new realm within retained workspace history', () => {
+    const file = tempFile(), first = new ConnectedAppOperationStore({ file, workspaceId });
+    const row = first.start(mailInput(first)); first.finish(row.id, 'unknown');
+    expect(() => first.start({ ...mailInput(first), accountDigest: 'e'.repeat(64), realmDigest: 'e'.repeat(64), effectDigest: 'e'.repeat(64) })).toThrow(/company\/gateway realm/);
+    const snapshot = JSON.parse(readFileSync(file, 'utf8')); delete snapshot.operations[0].realmDigest;
+    writeFileSync(file, JSON.stringify(snapshot), { mode: 0o600 });
+    const legacy = new ConnectedAppOperationStore({ file, workspaceId });
+    expect(legacy.list()[0].status).toBe('unknown'); expect(() => legacy.start(mailInput(legacy))).toThrow(/unverified or different company/);
+  });
+  it('serializes two independently opened stores before starting a second identical effect', () => {
+    const file = tempFile(), first = new ConnectedAppOperationStore({ file, workspaceId }), second = new ConnectedAppOperationStore({ file, workspaceId });
+    first.start(mailInput(first));
+    expect(() => second.start(mailInput(second))).toThrow(/unresolved outcome/);
+    expect(second.list()).toHaveLength(1);
+  });
+  it('keeps unidentified legacy mail outcomes held rather than guessing their account or payload', () => {
+    const file = tempFile(), old = new ConnectedAppOperationStore({ file });
+    const legacy = old.start({ ...input, toolName: 'COMPOSIO_MULTI_EXECUTE_TOOL', toolSlugs: ['OUTLOOK_FORWARD_MESSAGE'] }); old.finish(legacy.id, 'unknown');
+    const current = new ConnectedAppOperationStore({ file, workspaceId });
+    expect(() => current.start(mailInput(current))).toThrow(/older mail operation/);
+    expect(() => current.reconcile(legacy.id, 1, 'not-sent', { accountDigest: 'a'.repeat(64), realmDigest: 'f'.repeat(64), originalBindingDigest: 'b'.repeat(64), recoveryBindingDigest: 'b'.repeat(64), workspaceDigest: current.workspaceDigest })).toThrow(/original verified/);
+  });
+  it.each([false, true])('holds legacy failed mail, including partial batch=%s, without inventing not-sent evidence', partial => {
+    const file = tempFile(), old = new ConnectedAppOperationStore({ file });
+    const row = old.start({ ...input, toolName: partial ? 'COMPOSIO_MULTI_EXECUTE_TOOL' : 'GMAIL_SEND_EMAIL', toolSlugs: partial ? ['GMAIL_SEND_EMAIL'] : [] });
+    old.finish(row.id, 'failed', partial);
+    const current = new ConnectedAppOperationStore({ file, workspaceId });
+    expect(() => current.start(mailInput(current))).toThrow(/original-review identity/);
+    expect(current.list()[0].status).toBe('failed'); expect(current.list()[0].reconciliation).toBeUndefined();
+  });
+  it('retains all 1000 identified successful effects and explains the fixed safety capacity truthfully', () => {
+    const file = tempFile(), first = new ConnectedAppOperationStore({ file, workspaceId });
+    const started = first.start(mailInput(first)); const base = first.finish(started.id, 'succeeded');
+    const rows = Array.from({ length: 1000 }, (_, i) => ({ ...base, id: randomUUID(), effectDigest: i.toString(16).padStart(64, '0') }));
+    writeFileSync(file, JSON.stringify({ version: 1, operations: rows }), { mode: 0o600 });
+    const reopened = new ConnectedAppOperationStore({ file, workspaceId });
+    expect(() => reopened.start({ ...mailInput(reopened), effectDigest: 'f'.repeat(64) })).toThrow(/service support/);
+    expect(reopened.list()).toHaveLength(1000); expect(reopened.list().every(row => row.status === 'succeeded')).toBe(true);
+  });
+  it('records manual evidence separately, rejects stale/contrary decisions and requires explicit linked repeats', () => {
+    const store = new ConnectedAppOperationStore({ file: tempFile(), workspaceId }), row = store.start(mailInput(store));
+    store.finish(row.id, 'unknown');
+    const binding = { accountDigest: row.accountDigest!, realmDigest: row.realmDigest!, originalBindingDigest: row.bindingDigest!, recoveryBindingDigest: 'e'.repeat(64), workspaceDigest: store.workspaceDigest };
+    expect(() => store.reconcile(row.id, 0, 'sent', binding)).toThrow(/changed/);
+    const confirmed = store.reconcile(row.id, 1, 'sent', binding);
+    expect(confirmed.status).toBe('unknown'); expect(confirmed.bindingDigest).toBe(row.bindingDigest);
+    expect(confirmed.reconciliation).toMatchObject({ source: 'manual-app-inspection', outcome: 'sent', recoveryBindingDigest: 'e'.repeat(64) });
+    expect(store.reconcile(row.id, 1, 'sent', binding)).toEqual(confirmed);
+    expect(() => store.reconcile(row.id, 1, 'not-sent', binding)).toThrow(/changed/);
+    expect(() => store.start(mailInput(store))).toThrow(/intentional-repeat approval/);
+    const repeat = store.start({ ...mailInput(store), bindingDigest: 'e'.repeat(64), repeatOf: row.id });
+    expect(repeat.id).not.toBe(row.id); expect(repeat.repeatOf).toBe(row.id);
+    expect(() => store.start({ ...mailInput(store), repeatOf: row.id })).toThrow(/unresolved outcome/);
+  });
+  it('permits a fresh approved attempt after a proven pre-dispatch rollback or confirmed not-sent', () => {
+    const store = new ConnectedAppOperationStore({ file: tempFile(), workspaceId }), first = store.start(mailInput(store));
+    store.cancelBeforeDispatch(first.id);
+    const second = store.start(mailInput(store)); store.finish(second.id, 'unknown');
+    store.reconcile(second.id, 1, 'not-sent', { accountDigest: second.accountDigest!, realmDigest: second.realmDigest!, originalBindingDigest: second.bindingDigest!, recoveryBindingDigest: second.bindingDigest!, workspaceDigest: store.workspaceDigest });
+    expect(store.start(mailInput(store)).id).not.toBe(second.id);
+  });
+  it('rejects linked and too-open receipt files without changing or reading their targets', () => {
+    const original = tempFile(), file = tempFile(); new ConnectedAppOperationStore({ file: original }).start(input);
+    symlinkSync(original, file); expect(() => new ConnectedAppOperationStore({ file }).list()).toThrow(/history needs recovery/);
+    rmSync(file); linkSync(original, file); expect(() => new ConnectedAppOperationStore({ file }).list()).toThrow(/history needs recovery/);
+    rmSync(file); copyFileSync(original, file); chmodSync(file, 0o644);
+    expect(() => new ConnectedAppOperationStore({ file }).list()).toThrow(/history needs recovery/); expect(statSync(file).mode & 0o777).toBe(0o644);
+  });
+  it('does not infer a failed effect from an old crash lock; unlock recovery retains unknown outcome', () => {
+    const file = tempFile(), store = new ConnectedAppOperationStore({ file, workspaceId }); store.start(mailInput(store));
+    writeFileSync(`${file}.lock`, '', { mode: 0o600 });
+    expect(() => new ConnectedAppOperationStore({ file, workspaceId }).list()).toThrow(/history needs recovery/);
+    rmSync(`${file}.lock`);
+    const reopened = new ConnectedAppOperationStore({ file, workspaceId }); expect(reopened.list()[0].status).toBe('unknown');
+    expect(() => reopened.start(mailInput(reopened))).toThrow(/unresolved outcome/);
+  });
   it("stores only identifiers and fixed status text, atomically with private permissions", () => {
     const file = tempFile(); let now = 10;
     const store = new ConnectedAppOperationStore({ file, now: () => now });
@@ -44,6 +137,8 @@ describe("connected-app durable operation receipts", () => {
     const store = new ConnectedAppOperationStore({ file, now: () => 10 });
     const started = store.start(input);
     const reopened = new ConnectedAppOperationStore({ file, now: () => 20 });
+    // Explicit stores still recover eagerly, before any public method is used.
+    expect(JSON.parse(readFileSync(file, "utf8")).operations[0]).toMatchObject({ id: started.id, status: "unknown", finishedAt: 20 });
     expect(reopened.list()).toEqual([expect.objectContaining({ id: started.id, status: "unknown", finishedAt: 20 })]);
     expect(reopened.list()[0].detail).toContain("has not replayed");
     expect(new ConnectedAppOperationStore({ file }).list()[0].status).toBe("unknown");
@@ -51,12 +146,20 @@ describe("connected-app durable operation receipts", () => {
 
   it.each(["broken json", '{"version":2,"operations":[]}', '{"version":1,"operations":[null]}'])
     ("holds corrupt history without overwriting it", saved => {
-      const file = tempFile(); writeFileSync(file, saved);
+      const file = tempFile(); writeFileSync(file, saved, { mode: 0o600 });
       const store = new ConnectedAppOperationStore({ file });
       expect(() => store.list()).toThrow(/history needs recovery/);
       expect(() => store.start(input)).toThrow(expect.objectContaining({ status: 503 }));
       expect(readFileSync(file, "utf8")).toBe(saved);
     });
+
+  it("keeps an explicit store's initialization failure held after a fixture is repaired", () => {
+    const file = tempFile(); writeFileSync(file, 'broken json', { mode: 0o600 });
+    const store = new ConnectedAppOperationStore({ file });
+    writeFileSync(file, JSON.stringify({ version: 1, operations: [] }), { mode: 0o600 });
+    expect(() => store.list()).toThrow(/history needs recovery/);
+    expect(() => store.deny(input)).toThrow(/history needs recovery/);
+  });
 
   it("rejects malformed identifiers before creating any receipt", () => {
     const store = new ConnectedAppOperationStore({ file: tempFile() });
@@ -86,7 +189,7 @@ describe("connected-app durable operation receipts", () => {
 
   it("does not acknowledge a write when rename succeeded but durable confirmation failed", () => {
     const file = tempFile(); const store = new ConnectedAppOperationStore({ file });
-    vi.spyOn(atomic, "writeFileAtomic").mockImplementation((path, body) => { writeFileSync(path, body); throw new Error("fsync failed"); });
+    vi.spyOn(atomic, "writeFileAtomic").mockImplementation((path, body) => { writeFileSync(path, body, { mode: 0o600 }); throw new Error("fsync failed"); });
     expect(() => store.start(input)).toThrow(/history needs recovery/);
     vi.restoreAllMocks();
     expect(new ConnectedAppOperationStore({ file }).list()[0].status).toBe("unknown");
@@ -116,7 +219,7 @@ describe("connected-app durable operation receipts", () => {
     writeFileSync(file, JSON.stringify({ version: 1, operations: rows }));
     const store = new ConnectedAppOperationStore({ file });
     expect(store.list()).toHaveLength(1000);
-    expect(() => store.start(input)).toThrow(/full of unresolved/);
+    expect(() => store.start(input)).toThrow(/history reached its safety limit/);
     expect(store.list().every(row => row.status === "unknown")).toBe(true);
   });
 });

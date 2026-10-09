@@ -33,7 +33,7 @@ import type { UsageLedger } from './ledger.ts';
 import { absorbedAiPeriods, consolidatedAiInvoices, ensureAiConsolidationTable, type AiInvoiceInput, type AiLineInput, type BillingService, type Invoice } from './billing.ts';
 import { includedMonth, planMonthIndex, type CommercialTerms, type ResaleAcceptance } from './commercial-terms.ts';
 import type { ModelviaClientBilling, ModelviaCustomerMargin, ModelviaInvoiceLine } from './modelvia-client-billing.ts';
-import { officeChargeDetail, officeMarkup } from './office-ai-terms.ts';
+import { officeChargeDetail, officeMarkup, requireOfficeResalePolicies } from './office-ai-terms.ts';
 import { cents, periodAt } from './money.ts';
 import { serialized } from './provisioning.ts';
 
@@ -59,7 +59,7 @@ const resaleSince = (ledger: UsageLedger, companyId: string): string | undefined
   ledger.db.all<{ body: string }>("SELECT body FROM events WHERE tenant=? AND kind='ai_resale_terms_accepted' ORDER BY seq", companyId)
     .map(row => (JSON.parse(row.body) as ResaleAcceptance).period).sort()[0];
 
-export function closeOfficeMonth(options: OfficeBilling, companyId: string, period: string, termsVersion: string, close: { deferAi?: boolean } = {}): Promise<MonthClose> {
+export function closeOfficeMonth(options: OfficeBilling, companyId: string, period: string, termsVersion: string, close: { deferAi?: boolean; /** Host-only synchronous audit; never from a request body. */ onCreated?:(invoice:Invoice,outcome:MonthClose['ai'])=>void } = {}): Promise<MonthClose> {
   requireThat(MONTH.test(period), 'invalid_billing_period');
   return serialized(`office-month-close:${companyId}`, async () => {
     const { billing } = options, ledger = billing.ledger;
@@ -75,13 +75,21 @@ export function closeOfficeMonth(options: OfficeBilling, companyId: string, peri
     // absorbed by the close itself (billing.ts). Modelvia is not read: nothing of
     // this month can be owed, and AI owed for an earlier resale month is still
     // read by the next resale close (only absorbed months are ever skipped).
-    if (terms.billingPlan && !terms.aiUsage) return finalize(billing, companyId, period, termsVersion, undefined, includedMonth(terms) ? 'included' : 'care_only');
+    if (terms.billingPlan && !terms.aiUsage) return finalize(billing, companyId, period, termsVersion, undefined, includedMonth(terms) ? 'included' : 'care_only', close.onCreated);
     // Never resold: nothing at Modelvia can belong on this invoice.
-    if (options.clientFundedCompanies.has(companyId) || (!terms.aiUsage && since === undefined)) return finalize(billing, companyId, period, termsVersion, undefined, 'care_only');
+    if (options.clientFundedCompanies.has(companyId) || (!terms.aiUsage && since === undefined)) return finalize(billing, companyId, period, termsVersion, undefined, 'care_only', close.onCreated);
     const customerId = officeCustomer(ledger, companyId);
     requireThat(customerId, 'office_modelvia_customer_unbound', 409);
+    if (close.deferAi) {
+      // Explicit independent care billing: no provider configuration, read or
+      // pricing activation is needed. Current/unresolved AI remains deferred.
+      requireThat(terms.aiUsage, 'ai_usage_unconsolidated', 409);
+      const periods = [...new Set([period, ...unresolvedDeferredPeriods(ledger, companyId).filter(p => p < period)])].sort();
+      return finalize(billing, companyId, period, termsVersion, { invoices: [], deferredPeriods: periods, modelviaCustomerId: customerId, chargeDetail: officeChargeDetail(ledger, companyId) }, 'deferred', close.onCreated);
+    }
+    requireOfficeResalePolicies(billing.commercialTerms!, ledger, companyId, [period, ...unresolvedDeferredPeriods(ledger, companyId)], customerId);
     requireThat(options.modelvia, 'modelvia_client_unconfigured', 503);
-    const month = await options.modelvia.customerMonth(customerId, period);
+    const month = await options.modelvia!.customerMonth(customerId, period);
     // Modelvia must not also offer the office a way to pay these invoices.
     requireThat(month.customerCheckout === 'off', 'modelvia_checkout_enabled', 409);
     const done = consolidatedAiInvoices(ledger, companyId);
@@ -105,6 +113,7 @@ export function closeOfficeMonth(options: OfficeBilling, companyId: string, peri
     // Terms without AI resale cannot carry AI that is owed: refuse rather than drop it.
     requireThat(terms.aiUsage || (!due.length && !outstanding.length), 'ai_usage_unconsolidated', 409);
     if (outstanding.length && !close.deferAi) throw new GatewayError('modelvia_invoice_not_finalized', 409);
+    if (!close.deferAi) requireOfficeResalePolicies(billing.commercialTerms!, ledger, companyId, [period, ...due.map(entry => entry.period), ...outstanding], customerId);
     const invoices: AiInvoiceInput[] = [];
     let usedBy: string | undefined;
     for (const entry of due) {
@@ -115,13 +124,10 @@ export function closeOfficeMonth(options: OfficeBilling, companyId: string, peri
       invoices.push({ id: found.id, period: found.period, totalCents: found.totalCents, gstCents: found.gstCents, lines: found.lines.map(officeLine) });
       usedBy ??= found.usedBy?.displayName;
     }
-    if (!terms.aiUsage) return finalize(billing, companyId, period, termsVersion, undefined, 'care_only');
+    if (!terms.aiUsage) return finalize(billing, companyId, period, termsVersion, undefined, 'care_only', close.onCreated);
     const closed = finalize(billing, companyId, period, termsVersion, { invoices, ...(outstanding.length ? { deferredPeriods: outstanding } : {}),
       modelviaCustomerId: customerId, ...(usedBy ? { usedBy } : {}), chargeDetail: officeChargeDetail(ledger, companyId) },
-      outstanding.length ? 'deferred' : invoices.length ? 'consolidated' : 'no_ai_usage');
-    if (outstanding.length && closed.ai === 'deferred') {
-      try { ledger.db.transaction(() => ledger.db.append(companyId, 'ai_usage_deferred', null, ledger.now(), { periods: outstanding, invoiceId: closed.invoice.id })); } catch { /* the invoice records it too */ }
-    }
+      outstanding.length ? 'deferred' : invoices.length ? 'consolidated' : 'no_ai_usage', close.onCreated);
     return closed;
   });
 }
@@ -138,14 +144,23 @@ function officeLine(line: ModelviaInvoiceLine): AiLineInput {
     ...(usedBy ? { usedBy } : {}), ...(line.components ? { components: line.components } : {}) };
 }
 /** Close, reporting `already_closed` when another process closed the month first. */
-function finalize(billing: BillingService, companyId: string, period: string, termsVersion: string, ai: Parameters<BillingService['finalizeCommercialInvoice']>[3], outcome: MonthClose['ai']): MonthClose {
-  const report: { existing?: boolean } = {};
+function finalize(billing: BillingService, companyId: string, period: string, termsVersion: string, ai: Parameters<BillingService['finalizeCommercialInvoice']>[3], outcome: MonthClose['ai'], onCreated?:(invoice:Invoice,outcome:MonthClose['ai'])=>void): MonthClose {
+  const report: { existing?: boolean; onCreated:(invoice:Invoice)=>void } = { onCreated(invoice) {
+    if (outcome === 'deferred' && invoice.aiUsage?.deferredPeriods?.length)
+      billing.ledger.db.append(companyId, 'ai_usage_deferred', null, billing.ledger.now(), { periods: invoice.aiUsage.deferredPeriods, invoiceId: invoice.id });
+    return onCreated?.(invoice,outcome);
+  } };
   const invoice = billing.finalizeCommercialInvoice(companyId, period, termsVersion, ai, report);
   return { invoice, ai: report.existing ? 'already_closed' : outcome };
 }
 /** Months an earlier invoice deferred, read from the immutable invoices themselves. */
 const deferredPeriods = (ledger: UsageLedger, companyId: string): string[] => [...new Set(ledger.db.all<{ body: string }>('SELECT body FROM invoices WHERE tenant=?', companyId)
   .flatMap(row => (JSON.parse(row.body) as Invoice).aiUsage?.deferredPeriods ?? []))].sort();
+
+const unresolvedDeferredPeriods = (ledger: UsageLedger, companyId: string): string[] => {
+  const done = new Set([...consolidatedAiInvoices(ledger, companyId).values()].map(invoice => invoice.period)), absorbed = absorbedAiPeriods(ledger, companyId);
+  return deferredPeriods(ledger, companyId).filter(period => !done.has(period) && !absorbed.has(period));
+};
 
 // ---------------------------------------------------------------------------
 // Owner margin view
@@ -159,7 +174,7 @@ export interface MarginRow {
   /** An operator's proposal the office has not accepted yet. */
   proposedMarkupBasisPoints: number | null;
   /** Whether Modelvia was last seen pricing at the accepted markup. */
-  markupPolicy: 'synced' | 'sync_failed' | 'not_synced' | null;
+  markupPolicy: 'synced' | 'sync_pending' | 'sync_failed' | 'not_synced' | null;
   /** What the office pays for the month's AI: Modelvia price incl. RealBud's markup. */
   aiRetailCents: string | null;
   /** Modelvia's wholesale incl. its platform fee. */

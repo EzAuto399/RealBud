@@ -7,7 +7,7 @@ import { DATA_DIR } from './config.ts';
 import { listExpectedBills, type ExpectedBill } from './expected-bills.ts';
 import type { JevAnswer, JevQuestion, JevRequest, JevResult } from './jev-client.ts';
 import { SourceBillStorage } from './source-bill-storage.ts';
-import { fail, hash, object, text, date, positive, state, dateSpan, facts, reviewed, versionOf, seriesVersion, sameBillKind, pattern, cadenceDate, previewBillSource, projectBillCalendar, projectBillEntries, projectSeriesCalendar, billEvidenceMatch, financialObservation, observationOf } from './source-bill-rules.ts';
+import { fail, hash, object, text, date, positive, state, dateSpan, facts, reviewed, forwardedSenderReview, versionOf, seriesVersion, sameBillKind, pattern, cadenceDate, previewBillSource, projectBillCalendar, projectBillEntries, projectSeriesCalendar, billEvidenceMatch, financialObservation, observationOf } from './source-bill-rules.ts';
 export { previewBillSource, projectBillCalendar, validateSourceBillRegister } from './source-bill-rules.ts';
 
 type HeadKind = 'bill-occurrence' | 'bill-series';
@@ -191,30 +191,34 @@ export class SourceBillRegister {
     if (check.candidates.length) return duplicateHold('This source has a possible duplicate bill. Review the matching saved records and explicitly confirm a separate invoice before accepting it.');
     return undefined;
   }
-  accept(body: unknown, trustedSource: BillMailSource, actorId: string): SourceBillOccurrence {
-    const input = object(body, ['expectedSourceDigest', 'sourceReviewed', 'limitedSourceAcknowledged', 'facts', 'reviewReason', 'seriesId', 'expectedArrivalDate', 'duplicateReview']);
+  accept(body: unknown, trustedSource: BillMailSource, actorId: string, original?: { itemId: string; source: BillMailSource }): SourceBillOccurrence {
+    const input = object(body, ['expectedSourceDigest', 'sourceReviewed', 'limitedSourceAcknowledged', 'facts', 'reviewReason', 'maintenanceClassificationReviewed', 'forwardedOriginalSource', 'originalSourceReviewed', 'seriesId', 'expectedArrivalDate', 'duplicateReview']);
     const source = previewBillSource(trustedSource), reviewedFacts = facts(input.facts), reason = reviewed(input, source), actor = text(actorId, 200);
+    if (reviewedFacts.maintenanceClassification && reviewedFacts.maintenanceClassification !== 'unclassified' && input.maintenanceClassificationReviewed !== true) return fail('Separately confirm your staff maintenance classification. A proposed label is not a reviewed decision.');
     return this.change(() => {
+      const now = (this.options.now ?? Date.now)(), senderReview = forwardedSenderReview(input, source, actor, now, original);
       const duplicate = this.storage.byIdentity(source.identity);
       if (duplicate) {
+        if (input.forwardedOriginalSource !== undefined && (senderReview?.originalItemId !== duplicate.forwardedSenderReview?.originalItemId || senderReview?.originalEnvelopeDigest !== duplicate.forwardedSenderReview?.originalEnvelopeDigest)) return fail('This message already has a sender review. Open it and make an explicit correction.', 409);
         if (duplicate.source.digest === source.digest && sameBillFacts(duplicate.facts, reviewedFacts) && duplicate.seriesId === (input.seriesId ?? null) && duplicate.expectedArrivalDate === (input.expectedArrivalDate ?? null)) return duplicate;
         return fail('This message already has a bill review. Open it and make an explicit correction.', 409);
       }
-      const now = (this.options.now ?? Date.now)(), link = this.assignment(input, reviewedFacts, source);
+      const link = this.assignment(input, reviewedFacts, source);
       const duplicateReview = this.reviewDuplicates(input, source, reviewedFacts, reason, actor, now);
       const row: SourceBillOccurrence = { id: `source-bill:${source.identity}`, revision: 1, createdAt: now, facts: reviewedFacts, state: 'received', source,
-        ...link, reviewedAt: now, reviewedBy: actor, reviewReason: reason, history: [], ...(duplicateReview ? { duplicateReview } : {}) };
+        ...link, reviewedAt: now, reviewedBy: actor, reviewReason: reason, history: [], ...(senderReview ? { forwardedSenderReview: senderReview } : {}), ...(duplicateReview ? { duplicateReview } : {}) };
       this.storage.saveOccurrence(row); return row;
     });
   }
-  correct(id: string, body: unknown, trustedSource: BillMailSource, actorId: string): SourceBillOccurrence {
-    const input = object(body, ['expectedRevision', 'expectedSourceDigest', 'sourceReviewed', 'limitedSourceAcknowledged', 'facts', 'reviewReason', 'state', 'seriesId', 'expectedArrivalDate', 'duplicateReview']);
+  correct(id: string, body: unknown, trustedSource: BillMailSource, actorId: string, original?: { itemId: string; source: BillMailSource }): SourceBillOccurrence {
+    const input = object(body, ['expectedRevision', 'expectedSourceDigest', 'sourceReviewed', 'limitedSourceAcknowledged', 'facts', 'reviewReason', 'maintenanceClassificationReviewed', 'forwardedOriginalSource', 'originalSourceReviewed', 'state', 'seriesId', 'expectedArrivalDate', 'duplicateReview']);
     const source = previewBillSource(trustedSource), reviewedFacts = facts(input.facts), reason = reviewed(input, source), actor = text(actorId, 200), expectedRevision = positive(input.expectedRevision), nextState = state(input.state);
+    if (reviewedFacts.maintenanceClassification && reviewedFacts.maintenanceClassification !== 'unclassified' && input.maintenanceClassificationReviewed !== true) return fail('Separately confirm your staff maintenance classification. A proposed label is not a reviewed decision.');
     return this.change(() => {
       const row = this.storage.occurrence(id);
       if (!row) return fail('That received bill is unavailable.', 404);
       if (row.revision !== expectedRevision) return fail('This bill changed. Refresh it before correcting the record.', 409);
-      for (const key of ['invoiceNumber', 'invoiceVersion', 'supplierReference', 'workDescription'] as const) {
+      for (const key of ['invoiceNumber', 'invoiceVersion', 'supplierReference', 'workDescription', 'maintenanceClassification'] as const) {
         if (row.facts[key] && !Object.hasOwn(input.facts as object, key)) return fail('Keep the reviewed invoice number, version, supplier reference and work description, or explicitly clear an uncertain value before saving.', 409);
       }
       const alias = this.storage.byIdentity(source.identity);
@@ -225,6 +229,9 @@ export class SourceBillRegister {
       if (row.history.length >= 50) return fail('This bill has reached its correction history limit. Preserve its history and contact support.', 409);
       const link = this.assignment({ seriesId: input.seriesId === undefined ? row.seriesId : input.seriesId, expectedArrivalDate: input.expectedArrivalDate === undefined ? row.expectedArrivalDate : input.expectedArrivalDate }, reviewedFacts, source, row);
       const now = (this.options.now ?? Date.now)();
+      if (row.forwardedSenderReview && input.forwardedOriginalSource === undefined && source.digest !== row.source.digest) return fail('The forwarded source changed. Explicitly clear or re-review its original sender evidence before saving.', 409);
+      const senderReview = input.forwardedOriginalSource === undefined ? row.forwardedSenderReview : forwardedSenderReview(input, source, actor, now, original);
+
       const sameFacts = sameBillFacts(reviewedFacts, row.facts);
       const unchanged = source.digest === row.source.digest && sameFacts;
       // Staff can cancel or update the status of an unchanged bill without
@@ -235,6 +242,7 @@ export class SourceBillRegister {
       row.history.push(versionOf(row));
       delete row.duplicateReview;
       Object.assign(row, { revision: row.revision + 1, facts: sameFacts ? row.facts : reviewedFacts, source, state: nextState, ...link, reviewedAt: now, reviewedBy: actor, reviewReason: reason, ...(duplicateReview ? { duplicateReview } : {}) });
+      if (senderReview) row.forwardedSenderReview = senderReview; else delete row.forwardedSenderReview;
       this.storage.saveOccurrence(row); return row;
     });
   }

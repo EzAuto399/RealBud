@@ -28,7 +28,7 @@
     "typecheck": "tsc -b && tsc -p tsconfig.server.json",
     "test": "vitest run",
     "test:two-device-evidence": "node --test scripts/check-two-device-acceptance.test.mjs",
-    "test:release-guards": "node --test scripts/mac-release.test.mjs",
+    "test:release-guards": "node --test scripts/mac-release.test.mjs scripts/windows-candidate.test.mjs",
     "test:coverage": "vitest run --coverage",
     "qa:e2e": "node scripts/qa-e2e.mjs",
     "qa:e2e:quick": "node scripts/qa-e2e.mjs --quick",

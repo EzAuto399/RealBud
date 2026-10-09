@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { fixture } from './testing.ts';
+import { fixture, reviewedMailParams, gmailProfileTransport } from './testing.ts';
 import type { PortalPrincipal } from './contracts.ts';
 import { ManagedConnectors, newConnectorCredential, type ConnectorDevice, type ConnectorOptions } from './connectors.ts';
 import { createGatewayServer } from './http.ts';
@@ -14,7 +14,7 @@ function setup(overrides:Partial<ConnectorOptions>={}){
   const base:ConnectorDevice={id:'a',companyId:f.tenant.companyId,licenseId:f.tenant.licenseId,memberId:'staff-a',installationId:'desktop-a',profile:'property',tokenHash:a.tokenHash,active:true,expiresAt:f.tenant.serviceExpiresAt,projectKeyEnv:'REALBUD_COMPOSIO_PROJECT_A',authConfigId:'auth-a',userId:'staff-a',accountId:'personal-a'};
   let devices=[base,{...base,id:'b',installationId:'desktop-b',memberId:'staff-b',userId:'staff-b',tokenHash:b.tokenHash},{...base,id:'other',companyId:'company-b',licenseId:'license-b',installationId:'other',tokenHash:other.tokenHash,projectKeyEnv:'REALBUD_COMPOSIO_PROJECT_B'}];
   let connects=0,reads=0;const seen:string[]=[];
-  const options:ConnectorOptions={ledger:f.ledger,devices:()=>devices,secret:()=> 'ak_synthetic_office_secret',
+  const options:ConnectorOptions={mailProfile:gmailProfileTransport,ledger:f.ledger,devices:()=>devices,secret:()=> 'ak_synthetic_office_secret',
     authorize:async(binding)=>{connects++;seen.push(binding.userId);return {url:'https://connect.example.invalid/oauth',accountId:'shared-'+binding.userId,expiresAt:new Date(f.now()+60000).toISOString()};},
     transport:(binding)=>({async request(){return {content:[{type:'text',text:JSON.stringify({accountId:binding.accountId,emailAddress:'office@example.invalid'})}]};}}),
     access:async(binding)=>{reads++;seen.push(binding.accountId??'none');return {checkedAt:new Date(f.now()).toISOString(),services:{gmail:{connected:true,status:'ACTIVE',accounts:[{id:binding.accountId!,status:'ACTIVE'}],accountSelectionRequired:false}},tools:{available:true,names:[]}};},...overrides};
@@ -202,7 +202,7 @@ test('shared mailbox full access: read-only by default, owner-only versioned gra
     const company = s.f.tenant.companyId;
     const sendOnce = async (id: number) => {
       const opened = await s.request(s.a.token, '/v1/connectors/mcp', { jsonrpc: '2.0', id, method: 'initialize' });
-      const reply = await s.request(s.a.token, '/v1/connectors/mcp', { jsonrpc: '2.0', id: id + 1, method: 'tools/call', params: { name: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'tenant@example.invalid' } } }, opened.session);
+      const reply = await s.request(s.a.token, '/v1/connectors/mcp', { jsonrpc: '2.0', id: id + 1, method: 'tools/call', params: reviewedMailParams(opened, { name: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'tenant@example.invalid' } }) }, opened.session);
       return (reply.body as { result: { isError?: boolean; content: { text: string }[] } }).result;
     };
     // Default: an existing shared grant stays on the three bounded reads.

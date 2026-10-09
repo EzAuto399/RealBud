@@ -31,7 +31,7 @@ const SPEND_LABEL = 'A$70/month, A$4/request, 3 at once';
 
 function harness(persistent = false, bound = true) {
   const root = mkdtempSync(join(tmpdir(), 'realbud-provisioning-'));
-  const databasePath = persistent ? join(root, 'gateway.db') : ':memory:';
+  const databasePath = persistent ? join(root, 'ledger.sqlite') : ':memory:';
   const f = fixture(databasePath);
   // The operator binding the office AI access route records; fail-closed without it.
   if (bound) bindOfficeCustomer(f.ledger, f.tenant.companyId, CUSTOMER);

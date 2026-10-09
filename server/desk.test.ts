@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -12,9 +12,10 @@ import {
   type Property,
 } from "./desk.ts";
 import { DeskStore } from "./desk-store.ts";
+import { loadDeskKey } from "./desk-key.ts";
 import { readHandsLast } from "./hands-last.ts";
 import type { HermesLedgerAttempt } from "./hermes-hands.ts";
-import { removeFixture, windowsAdmissionTimeout } from "./testing/private-fixture.ts";
+import { plantPrivateFile, privateTempRoot, removeFixture, windowsAdmissionTimeout } from "./testing/private-fixture.ts";
 
 const dirs: string[] = [];
 
@@ -448,11 +449,13 @@ describe("Desk morning check", () => {
       ["empty file", ""],
     ];
     for (const [name, body] of cases) {
-      it(`enters recovery and never overwrites the book with Demo data on ${name}`, () => {
-        const dir = mkdtempSync(join(tmpdir(), "realbud-desk-corrupt-"));
+      it(`enters recovery and never overwrites the book with Demo data on ${name}`, windowsAdmissionTimeout(30), () => {
+        const dir = privateTempRoot(join(tmpdir(), "realbud-desk-corrupt-"));
         dirs.push(dir);
         const file = join(dir, "desk.json");
-        writeFileSync(file, body);
+        // Isolate book recovery from the independent missing-key admission gate.
+        loadDeskKey({ dir });
+        plantPrivateFile(file, body);
         const desk = new Desk({ file, now: () => new Date(2026, 7, 17, 8, 0, 0).getTime() });
         const snap = desk.snapshot();
         expect(snap.recovery.active).toBe(true);
@@ -460,6 +463,20 @@ describe("Desk morning check", () => {
         expect(snap.demo).toBe(false);
         expect(snap.hands).toBe("held");
         expect(() => desk.runMorningCheck()).toThrow(/recovery/);
+        const preserved = [file, ...snap.recovery.quarantined].filter((path) => existsSync(path));
+        expect(preserved.map((path) => readFileSync(path, "utf8"))).toContain(body);
+        expect(loadDeskKey({ dir }).source).toBe("file");
+      });
+      it(`refuses a missing key on saved ${name} bytes without creating a replacement key or Demo book`, windowsAdmissionTimeout(30), () => {
+        const dir = privateTempRoot(join(tmpdir(), "realbud-desk-corrupt-key-"));
+        dirs.push(dir);
+        const file = join(dir, "desk.json"), keyFile = join(dir, "desk.key");
+        plantPrivateFile(file, body);
+        for (let attempt = 0; attempt < 2; attempt++) {
+          expect(() => new Desk({ file })).toThrow(/saved workspace encryption key needs recovery.*No replacement key was created/);
+          expect(readFileSync(file, "utf8")).toBe(body);
+          expect(existsSync(keyFile)).toBe(false);
+        }
       });
     }
   });

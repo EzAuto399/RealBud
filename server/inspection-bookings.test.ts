@@ -2,7 +2,7 @@ import { privateTempRoot } from './testing/private-fixture.ts';
 import { readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createInspectionBookingsStore, createInspectionsApi, planBase, runInspectionDraft, type PlanBase } from './inspection-bookings.ts';
 import { createInspectionHistoryStore } from './inspection-history.ts';
 import { createInspectionRulesStore, defaultInspectionRules } from './inspection-rules.ts';
@@ -13,7 +13,20 @@ const { planStart: _start, ...officeRules } = portfolio.rules;
 const base: PlanBase = { properties: portfolio.properties, rules: { ...officeRules, closedDates: ['2026-11-10'] } };
 const directories: string[] = [];
 const dir = async () => { const d = privateTempRoot(join(tmpdir(), 'realbud-inspection-bookings-')); directories.push(d); return d; };
-afterEach(async () => { await Promise.all(directories.splice(0).map(path => removeFixture(path))); });
+afterEach(async () => { vi.restoreAllMocks(); await Promise.all(directories.splice(0).map(path => removeFixture(path))); });
+
+const apiFixture = async () => {
+  const d = await dir(), properties = portfolio.properties;
+  const rules = createInspectionRulesStore({ file: join(d, 'r.json') });
+  await rules.save({ expectedRevision: 0, rules: officeRules });
+  const history = createInspectionHistoryStore({ file: join(d, 'h.json') });
+  await history.importCsv({ expectedRevision: 0, properties, csv: 'id,area,last completed\n' + properties.filter((p: { lastCompleted?: string }) => p.lastCompleted).map((p: { id: string; area: string; lastCompleted: string }) => [p.id, p.area, p.lastCompleted].join(',')).join('\n') });
+  const bookings = createInspectionBookingsStore({ file: join(d, 'b.json') });
+  const host = { rules, history, bookings, properties: () => properties, recovery: () => false, today: () => '2026-10-05' };
+  const api = createInspectionsApi(host);
+  const saved = (await api('/api/inspections/draft', 'POST', {}))!.body as Awaited<ReturnType<typeof bookings.read>>;
+  return { ...host, api, saved };
+};
 
 describe('inspection bookings store', () => {
   it('accepts and moves by stable id and keeps both on rerun', async () => {
@@ -33,13 +46,13 @@ describe('inspection bookings store', () => {
     const target = drafts[3]!;
     await expect(store.move({ id: target.id, date: '2026-11-10', time: '09:00', expectedRevision: 2, base })).rejects.toThrow(/closed/);
     await expect(store.move({ id: target.id, date: '2026-11-14', time: '09:00', expectedRevision: 2, base })).rejects.toThrow(/working day/);
-    const moved = await store.move({ id: target.id, date: '2026-11-11', time: '14:00', expectedRevision: 2, base });
-    expect(moved.draft!.plan.appointments.find(a => a.id === target.id)).toMatchObject({ date: '2026-11-11', time: '14:00', status: 'manual' });
+    const moved = await store.move({ id: target.id, date: '2026-11-12', time: '14:00', expectedRevision: 2, base });
+    expect(moved.draft!.plan.appointments.find(a => a.id === target.id)).toMatchObject({ date: '2026-11-12', time: '14:00', status: 'manual' });
 
     // Rerun with a later start and a changed portfolio order: pins stay put.
     const rerun = await store.draft({ planStart: '2026-10-05', base: { ...base, properties: [...base.properties].reverse() } });
     for (const id of ids) expect(rerun.draft!.plan.appointments.find(a => a.id === id)).toEqual(accepted.draft!.plan.appointments.find(a => a.id === id));
-    expect(rerun.draft!.plan.appointments.find(a => a.id === target.id)).toMatchObject({ date: '2026-11-11', time: '14:00' });
+    expect(rerun.draft!.plan.appointments.find(a => a.id === target.id)).toMatchObject({ date: '2026-11-12', time: '14:00' });
   });
 
   it('refuses a move onto a taken time and a draft without inspectors', async () => {
@@ -49,9 +62,79 @@ describe('inspection bookings store', () => {
     await expect(store.move({ id: b!.id, date: a!.date, time: a!.time, expectedRevision: 1, base })).rejects.toMatchObject({ status: 409 });
     await expect(store.draft({ planStart: '2026-10-05', base: { ...base, rules: { ...base.rules, inspectors: [] } } })).rejects.toMatchObject({ status: 400 });
   });
+
+  it('refuses over-capacity moves and overlapping travel without changing the saved revision or pins', async () => {
+    const store = createInspectionBookingsStore({ file: join(await dir(), 'b.json') });
+    const saved = await store.draft({ planStart: '2026-10-05', base });
+    const visits = saved.draft!.plan.appointments;
+    const full = visits.filter(a => a.date === '2026-11-11');
+    expect(full).toHaveLength(base.rules.dailyCapacity);
+    const target = visits.find(a => a.date !== '2026-11-11')!;
+    await expect(store.move({ id: target.id, date: '2026-11-11', time: '14:00', expectedRevision: saved.revision, base })).rejects.toMatchObject({ status: 409, message: expect.stringContaining('daily limit') });
+    const first = full[0]!;
+    await expect(store.move({ id: full[1]!.id, date: first.date, time: '09:20', expectedRevision: saved.revision, base })).rejects.toMatchObject({ status: 409, message: expect.stringContaining('travel allowance') });
+    expect(await store.read()).toEqual(saved);
+    const moved = await store.move({ id: full[1]!.id, date: first.date, time: '14:00', expectedRevision: saved.revision, base });
+    expect(moved.draft!.plan.appointments.filter(a => a.date === first.date)).toHaveLength(base.rules.dailyCapacity);
+  });
 });
 
 describe('inspections api', () => {
+  it.each(['closed-day', 'capacity'] as const)('uses rules edited during history read and refuses a %s move without changing the plan', async kind => {
+    const { api, rules, history, bookings, saved } = await apiFixture();
+    const visits = saved.draft!.plan.appointments;
+    const full = visits.filter(a => a.date === visits[0]!.date);
+    expect(full).toHaveLength(officeRules.dailyCapacity);
+    const target = visits.find(a => a.date !== full[0]!.date)!;
+    const destination = kind === 'closed-day' ? '2026-11-12' : full[0]!.date;
+    const read = history.read;
+    vi.spyOn(history, 'read').mockImplementationOnce(async () => {
+      const captured = await read(), current = await rules.read();
+      await rules.save({ expectedRevision: current.revision, rules: { ...current.rules, ...(kind === 'closed-day' ? { closedDates: [destination] } : { dailyCapacity: 2 }) } });
+      return captured;
+    });
+    await expect(api('/api/inspections/move', 'POST', { id: target.id, date: destination, time: '14:00', expectedRevision: saved.revision })).rejects.toMatchObject({ status: kind === 'closed-day' ? 400 : 409, message: expect.stringContaining(kind === 'closed-day' ? 'closed' : 'daily limit') });
+    expect(await bookings.read()).toEqual(saved);
+    // A refused plan commit releases the lease; a subsequent edit is admitted.
+    const current = await rules.read();
+    expect((await rules.save({ expectedRevision: current.revision, rules: { ...current.rules, cycleMonths: 3 } })).revision).toBe(current.revision + 1);
+  });
+
+  it('keeps the rules lease until the actual move commit completes, then admits the waiting rule edit', async () => {
+    const { api, rules, bookings, saved } = await apiFixture();
+    const target = saved.draft!.plan.appointments[0]!, destination = '2026-11-12', move = bookings.move;
+    let begin!: () => void, finish!: () => void;
+    const started = new Promise<void>(resolve => { begin = resolve; }), released = new Promise<void>(resolve => { finish = resolve; });
+    vi.spyOn(bookings, 'move').mockImplementationOnce(async input => { begin(); await released; return move(input); });
+    const request = api('/api/inspections/move', 'POST', { id: target.id, date: destination, time: '14:00', expectedRevision: saved.revision });
+    await started;
+    let edited = false;
+    const edit = rules.save({ expectedRevision: 1, rules: { ...officeRules, closedDates: [destination] } }).then(state => { edited = true; return state; });
+    try { await new Promise<void>(resolve => setImmediate(resolve)); expect(edited).toBe(false); }
+    finally { finish(); }
+    expect((await request)!.status).toBe(200);
+    expect((await bookings.read()).manual[0]).toMatchObject({ id: target.id, date: destination });
+    expect((await edit).rules.closedDates).toEqual([destination]);
+  });
+
+  it.each(['draft', 'accept', 'loop'] as const)('recomputes %s with the newest leased rules and preserves an accepted visit with a visible conflict', async action => {
+    const { api, rules, history, bookings, properties, saved } = await apiFixture();
+    const target = saved.draft!.plan.appointments[0]!;
+    const accepted = await bookings.accept({ ids: [target.id], expectedRevision: saved.revision, base: await planBase(properties(), history, rules) });
+    const read = history.read;
+    vi.spyOn(history, 'read').mockImplementationOnce(async () => {
+      const captured = await read(), current = await rules.read();
+      await rules.save({ expectedRevision: current.revision, rules: { ...current.rules, closedDates: [target.date] } });
+      return captured;
+    });
+    if (action === 'loop') await runInspectionDraft({ rules, history, bookings, properties, today: async () => '2026-10-05' });
+    else await api(`/api/inspections/${action}`, 'POST', action === 'accept' ? { ids: [target.id], expectedRevision: accepted.revision } : {});
+    const current = await bookings.read();
+    expect(current.accepted).toEqual(accepted.accepted);
+    expect(current.draft!.plan.appointments.find(a => a.id === target.id)).toMatchObject({ date: target.date, status: 'accepted' });
+    expect(current.draft!.plan.diagnostics).toContainEqual(expect.objectContaining({ propertyIds: expect.arrayContaining([target.propertyId]), kind: 'closed-day', reason: expect.stringContaining('closed') }));
+  });
+
   it('imports history, drafts from Desk properties and holds the rest', async () => {
     const d = await dir();
     const rules = createInspectionRulesStore({ file: join(d, 'r.json') });

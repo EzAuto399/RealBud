@@ -6,6 +6,22 @@ import { digest, UsageLedger } from './ledger.ts';
 import { twoMonthsAfter } from './money.ts';
 import { ManagedGateway } from './gateway.ts';
 import type { CommercialTermsDraft } from './commercial-terms.ts';
+import { MAIL_SENDS } from '../shared/app-tool-policy.ts';
+import { parseConnectedMailBindings } from '../shared/connected-app-binding.ts';
+
+/** Fixed reader projection: fictional account/address, no provider request. */
+export const gmailProfileTransport = (binding: { accountId?: string }) => ({ async request() {
+  return { content: [{ type: 'text', text: JSON.stringify({ accountId: binding.accountId, emailAddress: 'office@example.test', messagesTotal: 0, threadsTotal: 0 }) }] };
+} });
+
+/** Mimic only the desktop broker's projection of verified initialize data. */
+export function reviewedMailParams(opened: { body?: unknown }, call: { name: string; arguments?: unknown }) {
+  if (!MAIL_SENDS.has(call.name)) return call;
+  const result = (opened.body as { result?: { realbudMailBindings?: unknown } })?.result;
+  const binding = parseConnectedMailBindings(result?.realbudMailBindings).find(row => call.name.startsWith(`${row.provider.toUpperCase()}_`));
+  if (!binding) throw new Error('Synthetic session has no verified mail binding.');
+  return { ...call, _meta: { realbudReviewedMailBinding: binding } };
+}
 
 export const FIXTURE_TIME=Date.parse('2026-09-15T00:00:00Z');
 export function fixture(path=':memory:') {

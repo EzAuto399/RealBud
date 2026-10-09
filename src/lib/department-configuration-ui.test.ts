@@ -74,7 +74,7 @@ describe('department starter selection is a draft convenience', () => {
   });
 
   it('renders a checking state without editable or approval controls before permission data arrives', () => {
-    const html = renderToStaticMarkup(createElement(CompanyDepartmentConfiguration, { departmentId: fixture().department.id, operationBlocked: true }));
+    const html = renderToStaticMarkup(createElement(CompanyDepartmentConfiguration, { departmentId: fixture().department.id, draftActor: { workspaceId: 'fictional-private-workspace', companyId: 'a0000000-0000-4000-8000-000000000002', memberId: 'a0000000-0000-4000-8000-000000000003', role: 'owner', sessionVersion: 0 }, operationBlocked: true }));
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain('Checking current workflow settings');
     expect(html).toContain('Each assigned case still needs its own owner approval.');

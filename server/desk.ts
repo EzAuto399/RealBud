@@ -28,7 +28,7 @@ import type {
 import { REI_FIELDS } from "../shared/contracts.ts";
 import type { BookProposal } from "../shared/desk-v3.ts";
 import { DATA_DIR } from "./config.ts";
-import { writeFilePrivateSync } from "./atomic.ts";
+import { writeFileAtomic, writeFilePrivateSync } from "./atomic.ts";
 import { persistArtifact } from "./audit-artifacts.ts";
 import { normalizeAddress, parsePmsExport, resolveExportRows } from "./csv-ledger.ts";
 import { runBoundedPrefill } from "./portal-handoff.ts";
@@ -805,6 +805,10 @@ export class Desk {
       renameSync(source, destination);
       preserved.push(basename(destination));
     }
+    // This explicit recovery decision starts an empty book using the current
+    // session key. Keep that selected identity for restart; the key loader
+    // must never infer permission to replace a lost key from preserved data.
+    writeFileAtomic(this.keyFilePath, this.recoveryKeyHex(), 0o600);
     return { ok: true, needsRestart: true, preserved };
   }
 

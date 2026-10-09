@@ -27,9 +27,10 @@
 // Children inherit the profile. A missing or refusing `sandbox-exec` refuses
 // the launch; there is no unconfined fallback.
 //
-// Windows and Linux have no equivalent here yet: there the pack's
-// `approvals.deny` globs (server/hermes-pack.ts WORKER_DENIED_COMMANDS) are a
-// blocklist, not a boundary. Windows needs a per-program firewall rule.
+// Windows and Linux have no admitted equivalent here yet. Every worker launch
+// is held on those platforms; approval globs, environment stripping and process
+// cleanup are not confidentiality boundaries. Admission needs a reviewed OS
+// boundary for files, credentials, descendants and the exact broker channel.
 import { spawnSync, type ChildProcess } from "node:child_process";
 import { accessSync, closeSync, constants, fchmodSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readlinkSync, readSync, realpathSync, rmSync } from "node:fs";
 import { createServer, request, type Server } from "node:http";
@@ -125,6 +126,17 @@ function stopSandboxedChild(child: ChildProcess, deadlineMs: number): Promise<vo
 
 export const NETWORK_ISOLATION_UNAVAILABLE =
   "This computer can't isolate Bud's network, so Bud was not started. Restart RealBud; if this keeps happening, contact RealBud support.";
+
+export const WORKER_PLATFORM_HELD = "Bud's worker cannot safely run on this operating system yet. Your saved records and recovery stay available. Contact RealBud support for a supported worker setup.";
+/** No runtime setting or environment variable can grant missing OS isolation.
+ * Explicit platform injection is for source tests, never a product override. */
+export function workerIsolationRefusal(platform: NodeJS.Platform = process.platform): string | null {
+  return platform === "darwin" ? null : WORKER_PLATFORM_HELD;
+}
+export function assertWorkerIsolation(platform: NodeJS.Platform = process.platform): void {
+  const refusal = workerIsolationRefusal(platform);
+  if (refusal) throw new Error(refusal);
+}
 
 /** Credential and private-data locations under the person's home that no
  * worker may read, whatever its job. */
@@ -412,7 +424,7 @@ export interface SandboxedLaunch {
  * The launch for one worker. macOS wraps it in `sandbox-exec` with the
  * profile above and points the worker's temp variables at a private folder,
  * or refuses when sandbox-exec is missing or rejects the profile; never an
- * unconfined fallback. Other platforms launch unchanged (see the file note).
+ * unconfined fallback. Platforms without an admitted OS boundary refuse.
  * `env` is the child's environment and is changed in place.
  */
 export function sandboxedLaunch(command: string, args: readonly string[], env: Record<string, string | undefined>, spec: WorkerSandboxSpec, deps: SandboxDeps = {}): SandboxedLaunch {
@@ -420,7 +432,7 @@ export function sandboxedLaunch(command: string, args: readonly string[], env: R
   // Work from an earlier run whose stop was never confirmed may overlap this one.
   const custody = workerCustodyRefusal();
   if (custody) throw new Error(custody);
-  if ((deps.platform ?? process.platform) !== "darwin") return { command, args: [...args], release() {} };
+  assertWorkerIsolation(deps.platform ?? process.platform);
   // A missing program fails as a plain spawn would (ENOENT), not as a
   // sandbox refusal: setup copy depends on telling the two apart.
   const program = command.includes("/") ? command

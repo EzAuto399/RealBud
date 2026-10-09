@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ManagedConnectors, newConnectorCredential, validateConnectorDevices, type ConnectorDevice } from './connectors.ts';
-import { fixture } from './testing.ts';
+import { fixture, gmailProfileTransport } from './testing.ts';
 import { createGatewayServer } from './http.ts';
 import type { MailScanRequest, MailScanResult } from '../shared/mail-ingestion.ts';
 
@@ -13,7 +13,7 @@ function setup() {
   let calls=0, captured:unknown;
   const access=async(binding:unknown)=>{calls++;captured=binding;return {checkedAt:new Date(f.now()).toISOString(),services:{gmail:{connected:true,status:'ACTIVE',accounts:[{id:'account-a',status:'ACTIVE'}],accountSelectionRequired:false}},tools:{available:true,names:['GMAIL_GET_PROFILE']}};};
   const make=(overrides:Partial<ConstructorParameters<typeof ManagedConnectors>[0]>={})=>new ManagedConnectors({ledger:f.ledger,devices:()=>devices,
-    secret:()=> 'ak_fictional_vendor_secret',access,transport:()=>({async request(method){calls++;return method==='initialize'?{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'Fictional',version:'1'}}:{content:[{type:'text',text:'Fictional projected result'}]};}}),...overrides});
+    secret:()=> 'ak_fictional_vendor_secret',access,mailProfile:gmailProfileTransport,transport:()=>({async request(method){calls++;return method==='initialize'?{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'Fictional',version:'1'}}:{content:[{type:'text',text:'Fictional projected result'}]};}}),...overrides});
   const request={token:credential.token,profile:'property',method:'GET',path:'/v1/connectors/status',signal:new AbortController().signal};
   return {f,credential,make,request,calls:()=>calls,captured:()=>captured,device:()=>devices[0]!,set:(next:ConnectorDevice[])=>{devices=next;}};
 }

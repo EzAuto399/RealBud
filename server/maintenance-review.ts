@@ -3,6 +3,7 @@
 // findings store that notifies once per evidence version. "Alert Sherry" is the
 // loop run itself: a run that records new or changed findings is left unseen, so
 // Desk and Schedule show it for attention. Nothing is sent outside the app.
+import { billSenderEnvelopeDigest, isForwardedBillSource, validateForwardedSenderReview } from './source-bill-rules.ts';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { DATA_DIR } from './config.ts';
@@ -198,25 +199,34 @@ export function maintenanceInvoices(bills: SourceBillOccurrence[], directory: Su
   const invoices: MaintenanceInvoice[] = [];
   for (const bill of bills) {
     if (bill.state === 'cancelled') continue;
-    const message = bill.source.message, from = senderAddress(message.from), fromDomain = from.slice(from.lastIndexOf('@') + 1), relay = INVOICE_RELAYS.get(fromDomain);
+    let message = bill.source.message, originalNote = '', originalVerified = false;
+    if (bill.forwardedSenderReview) {
+      try {
+        validateForwardedSenderReview(bill.forwardedSenderReview, bill.source, bill.reviewedAt);
+        if (billSenderEnvelopeDigest(bill.forwardedSenderReview.originalSource) !== bill.forwardedSenderReview.originalEnvelopeDigest) throw new Error('Changed original envelope');
+        message = bill.forwardedSenderReview.originalSource.message; originalVerified = true;
+        originalNote = `Staff linked the actual saved original message ${message.id} from the same Gmail account. Its saved envelope, not quoted body text, supplies this sender check.`;
+      } catch { originalNote = 'Saved original sender evidence could not be checked. Keep the original sender qualified and review its source again.'; }
+    }
+    const unresolvedForward = isForwardedBillSource(bill.source) && !originalVerified;
+    if (unresolvedForward && !originalNote) originalNote = 'Forwarded copy: no reviewed actual original saved-message envelope is attached. Quoted sender lines are unverified; check the actual original source.';
+    const from = senderAddress(message.from), fromDomain = from.slice(from.lastIndexOf('@') + 1), relay = INVOICE_RELAYS.get(fromDomain);
     const email = relay ? senderAddress(message.replyTo ?? '') : from, match = matchSender(directory, email);
     const auth = parseMailAuth(message.authResults), confirmed = !!from && mailAuthConfirms(auth, fromDomain);
-    const notes = [!relay ? '' : email ? `Sent via ${relay} for ${email}.` : `Sent via ${relay} with no single Reply-To address, so the supplier could not be checked.`];
+    const notes = [originalNote, !relay ? '' : email ? `Sent via ${relay} for ${email}.` : `Sent via ${relay} with no single Reply-To address, so the supplier could not be checked.`];
     // An unlisted sender is already a finding; the verification note matters when a match would be trusted.
     if (!confirmed && match.kind !== 'unlisted') notes.push(!message.authResults ? 'Sender not verified (mail authentication not available for this message).'
       : relay ? `Claims to be sent via ${relay} but ${relay}'s signature was not confirmed (${mailAuthWords(auth)}).`
       : `Mail server did not confirm this sender, so it could be forged (${mailAuthWords(auth)}).`);
     const senderNote = notes.filter(Boolean).join(' ') || undefined;
     const reviewed = bill.facts.supplierReference?.trim() || null;
-    // ponytail: the kind keyword list decides "maintenance" for bills with no supplier
-    // reference and an unlisted sender. Upgrade: a reviewed maintenance flag on bill facts.
-    if (!reviewed && match.kind === 'unlisted' && !MAINTENANCE_KIND.test(`${bill.facts.kind} ${bill.facts.workDescription ?? ''}`)) continue;
+    if (bill.facts.maintenanceClassification === 'not-maintenance') continue;
+    const classificationNeeded = bill.facts.maintenanceClassification !== 'maintenance' && !reviewed && match.kind === 'unlisted' && !MAINTENANCE_KIND.test(`${bill.facts.kind} ${bill.facts.workDescription ?? ''}`);
     let supplierRef: string | null = reviewed, senderMatch: MaintenanceInvoice['senderMatch'] = 'unlisted';
     if (match.kind === 'listed') { supplierRef = reviewed ?? match.supplierRef; senderMatch = reviewed && reviewed !== match.supplierRef ? 'conflict' : confirmed ? 'listed' : 'unverified'; }
     if (match.kind === 'conflict') { supplierRef = reviewed && match.supplierRefs.includes(reviewed) ? reviewed : null; senderMatch = 'conflict'; }
-    // ponytail: a forwarded copy is judged by the forwarding address; original-sender
-    // evidence is not extracted yet, so it stays a sender finding for Sherry to check.
-    invoices.push({ sourceId: bill.id, propertyId: bill.facts.propertyId, supplierRef, senderEmail: email || `unclear sender: ${redactSecretsInText(message.from).replace(/\s+/g, ' ').trim().slice(0, 200)}`, senderMatch, ...(senderNote ? { senderNote } : {}),
+    if (unresolvedForward) { supplierRef = reviewed; senderMatch = 'unverified'; }
+    invoices.push({ senderEvidenceVersion: createHash('sha256').update(JSON.stringify([bill.source.digest, bill.forwardedSenderReview?.originalEnvelopeDigest ?? null, bill.facts.maintenanceClassification ?? 'unclassified'])).digest('hex'), ...(classificationNeeded ? { classificationNeeded: true } : {}), sourceId: bill.id, propertyId: bill.facts.propertyId, supplierRef, senderEmail: email || `unclear sender: ${redactSecretsInText(message.from).replace(/\s+/g, ' ').trim().slice(0, 200)}`, senderMatch, ...(senderNote ? { senderNote } : {}),
       invoiceNumber: bill.facts.invoiceNumber ?? null, invoiceVersion: bill.facts.invoiceVersion ?? null, invoiceDate: bill.facts.invoiceDate,
       receivedDate: billDateInZone(message.at, timeZone), amountCents: bill.facts.amountCents,
       description: (bill.facts.workDescription?.trim() || bill.facts.note.trim() || bill.facts.kind).slice(0, 500) });

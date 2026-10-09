@@ -174,8 +174,10 @@ import * as box from "./box.ts";
 import * as composio from "./composio.ts";
 import { ConnectedAppAccessCache, connectedAppConfigPatch, connectedAppsConfigured, gmailReadOnlyBinding, gmailReadOnlyMode, checkSelectedConnectionAccess } from "./connected-app-access.ts";
 import { authorizeGmailReadOnly, getGmailReadOnlyAccess, isGmailReadOnlyAuthorizationUrl, listGmailReadOnlyAccounts, verifyGmailReadOnlyConfig } from "./composio-gmail.ts";
-import { listConnectedAppOperations } from "./connected-app-operations.ts";
-import { asksForOfficeMailbox, CONNECTED_APP_APPROVAL, recordConnectedAppApproval, revokeConnectedAppsBrokers, taskReadGrants } from "./connected-apps-broker.ts";
+import { connectedAppOperations, listConnectedAppOperations } from "./connected-app-operations.ts";
+import { connectedMailGatewayOrigin } from "../shared/connected-app-binding.ts";
+import { ConnectedAppRecovery, createConnectedMailReviewArtifacts, readCurrentConnectedMailBindings } from "./connected-app-recovery.ts";
+import { asksForOfficeMailbox, CONNECTED_APP_APPROVAL, governConnectedMailReviewArtifacts, recordConnectedAppApproval, revokeConnectedAppsBrokers, taskReadGrants } from "./connected-apps-broker.ts";
 import {
   containerComputerAction,
   containerComputerScreenshot,
@@ -224,6 +226,7 @@ import { readArtifact } from "./audit-artifacts.ts";
 import { readCsvMapping } from "./csv-ledger.ts";
 import { inspectLedgerColumns } from "./import-inspect.ts";
 import { Desk } from "./desk.ts";
+import { deskSnapshotForWorkspace, patchDeskAgencyForWorkspace } from './desk-agency-authority.ts';
 import { seedVault, DEFAULT_VAULT_DOCUMENTS } from "./vault.ts";
 import { openTerminalAndRun, setupCommandFor } from "./engine-setup.ts";
 import { installBlocksUpdate, installInFlight, installStatus, modelStatus, reconcileManagedModelProfile, setManagedModelChoice, cancelBootstrapInstall, waitForBootstrapStop } from "./hermes-bridge.ts";
@@ -4577,7 +4580,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       return json(res, 201, saveAskAttachment(DATA_DIR, body));
     }
     if (path === "/api/desk" && method === "GET") {
-      return json(res, 200, desk.snapshot());
+      return json(res, 200, { ...deskSnapshotForWorkspace(desk.snapshot(), workspaceIdentity.id), onboardingScope: onboarding.currentScope() });
     }
     if (path === "/api/desk/check" && method === "POST") {
       const { snapshot, usage } = await runDeskCheck();
@@ -4618,12 +4621,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       }
       const body = await readBody(req);
       try {
-        const snapshot = desk.patchAgency({
-          name: typeof body.name === "string" ? body.name : undefined,
-          jurisdictions: Array.isArray(body.jurisdictions) ? body.jurisdictions : undefined,
-          office: body.office,
-          expectedRevision: body.expectedRevision,
-        });
+        const snapshot = patchDeskAgencyForWorkspace(desk, workspaceIdentity.id, body);
         commitDesk(snapshot);
         return json(res, 200, snapshot);
       } catch (e) {
@@ -6021,6 +6019,38 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         ...(row.finishedAt === undefined ? {} : { finishedAt: new Date(row.finishedAt).toISOString() }),
       })) });
     }
+    const appRecovery = /^\/api\/connected-apps\/operations\/([a-f0-9-]{36})\/(recovery|reconcile)$/.exec(path);
+    if (appRecovery && ((method === 'GET' && appRecovery[2] === 'recovery') || (method === 'POST' && appRecovery[2] === 'reconcile'))) {
+      // These owner controls inherit the boot-session, same-origin and restore
+      // barriers above. They are never a worker tool or provider proof.
+      if (!managedConnectorConfigured(cfg)) return json(res, 409, { error: 'Restore the original managed mail connection before recording this outcome.' });
+      const authority = () => JSON.stringify([workspaceIdentity.id, currentWorkerProfile().profile, cfg.composio, managedMailPolicyRevision()]);
+      const captured = authority();
+      const assertAuthority = () => {
+        managedService.assertCapability('connected-tools');
+        if (shuttingDown || privateRestoreLocked || workspaceActivity.paused || authority() !== captured)
+          throw Object.assign(new Error('The private workspace or connection changed. Refresh this receipt before recording an outcome.'), { status: 409 });
+      };
+      const grant = await connectorAuthority(req); assertAuthority();
+      if (grant.authority !== 'manage') return json(res, 403, { error: 'Only this office owner or service administrator can record an uncertain mail outcome.' });
+      const verifyAuthority = async () => {
+        if (!await grant.stillManages()) throw Object.assign(new Error('Owner permission changed. This mail outcome remains held.'), { status: 403 });
+        assertAuthority();
+      };
+      const signal = AbortSignal.timeout(35_000);
+      const recovery = new ConnectedAppRecovery({ store: connectedAppOperations, gatewayOrigin: () => connectedMailGatewayOrigin(managedConnectorSettings(cfg, managedMailPolicyRevision()).url), authority, assertAuthority, verifyAuthority, reviews: connectedMailReviews,
+        bindings: async requestSignal => {
+          const settings = managedConnectorSettings(structuredClone(cfg), managedMailPolicyRevision());
+          const personal = await readCurrentConnectedMailBindings(settings, requestSignal); assertAuthority();
+          const access = connectedAppAccess.status(connectedAppsConfigured(cfg));
+          if (!('mailboxMode' in access) || access.mailboxMode !== 'both') return personal;
+          const office = await readCurrentConnectedMailBindings(managedConnectorSettings(structuredClone(cfg), managedMailPolicyRevision(), 'office'), requestSignal);
+          assertAuthority(); return [...personal, ...office];
+        } });
+      if (method === 'GET') return json(res, 200, await recovery.prepare(appRecovery[1], signal));
+      const row = await recovery.reconcile(appRecovery[1], await readBody(req), signal); assertAuthority();
+      return json(res, 200, { operation: { id: row.id, status: row.status, revision: row.revision, reconciliation: row.reconciliation } });
+    }
 
     // ── voice ─────────────────────────────────────────────────────────
     // Splitting text into utterances lives HERE, not in the renderer, for
@@ -6222,6 +6252,8 @@ const hermiosConnection = createHermiosConnectionService({ vault: createPrivateV
 // MCP connectors (generic core; Redbark is the first preset). Tokens only in the
 // encrypted vault; only owners/admins connect; egress pinned to each connector.
 const connectorVault = createPrivateVault(DATA_DIR, Buffer.from(desk.recoveryKeyHex(), 'hex'));
+const connectedMailReviews = createConnectedMailReviewArtifacts(connectorVault);
+governConnectedMailReviewArtifacts(connectedMailReviews);
 const connectorAuthority = officeAuthority({ serviceAdmin: req => serviceAdmin.authorize(req).ok, seatIdentity: () => companyHost.seatIdentity(),
   companyMe: req => companyHost.handle('/api/company/me', 'GET', req) });
 const redbark = createRedbarkConnection({ vault: connectorVault, workspaceId: () => workspaceIdentity.id, redirectBase: () => `http://127.0.0.1:${PORT}`, authorize: connectorAuthority });
@@ -6375,6 +6407,16 @@ const agencySetup = createAgencySetupService({ directory: DATA_DIR, workspaceId:
   },
 });
 const mailWorkspace = createMailIngestionService({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, key: Buffer.from(desk.recoveryKeyHex(),'hex'), workroomDirectory: join(DATA_DIR,'vault'), database: workflowDatabase,
+  withReviewContext: async work => {
+    // The installation object caches its identity. Check the current private
+    // record after all waits instead of letting a replaced workspace inherit it.
+    return agencySetup.withConfiguration(async state => {
+      const current = await readPrivateJson(join(DATA_DIR, 'company-installation', 'workspace.json')) as { id?: unknown } | undefined;
+      if (desk.recovery.active || current?.id !== workspaceIdentity.id || state.workspaceId !== workspaceIdentity.id)
+        throw Object.assign(new Error('The private workspace changed or needs recovery. Refresh before saving a mail review.'), { status: 409 });
+      return work({ workspaceId: state.workspaceId, setupRevision: state.revision, accountId: state.settings.gmailAccountId });
+    });
+  },
   authorize: async purpose => {
     if (desk.recovery.active) throw Object.assign(new Error('The private book needs recovery.'), { status: 503 });
     await refreshOfficeSources();
@@ -6425,6 +6467,13 @@ const billMailSource = async (itemId:string,messageId:string)=>{
   return {accountId:saved.accountId,receiptId:saved.receiptId,threadId:saved.thread.id,message};
 };
 const sourceBillsApi = createSourceBillsApi({ register:sourceBills, actorId:()=>workspaceIdentity.id, recovery:()=>desk.recovery.active,
+  sourceToken: () => workflowDatabase().changeToken(),
+  withReviewContext: async work => agencySetup.withConfiguration(async state => {
+    const current = await readPrivateJson(join(DATA_DIR, 'company-installation', 'workspace.json')) as { id?: unknown } | undefined;
+    if (desk.recovery.active || current?.id !== workspaceIdentity.id || state.workspaceId !== workspaceIdentity.id)
+      throw Object.assign(new Error('The private workspace changed or needs recovery. Refresh before reviewing bill sources.'), { status: 409 });
+    return work({ workspaceId: state.workspaceId, setupRevision: state.revision, accountId: state.settings.gmailAccountId });
+  }),
   propertyIds:()=>desk.snapshot().properties.map(p=>p.id), collect:()=>mailWorkspace.collect('bills-calendar'),
   source:billMailSource,
   savedThread: async (accountId,threadId) => {

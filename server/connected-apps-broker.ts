@@ -7,6 +7,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { readMcpRpcResponse } from "./composio.ts";
 import { redactSecrets, redactSecretsInText } from "./redact.ts";
 import { connectedAppOperations, validAppToolName, validAppToolSlug, type ConnectedAppOperationStore } from "./connected-app-operations.ts";
+import { connectedAppCanonical, parseConnectedMailBindings, unsupportedConnectedMailTool, connectedMailSenderArgsAllowed, verifiedMailAddress, connectedMailGatewayOrigin, type ConnectedMailBinding, type ConnectedMailReview, type ConnectedMailReviewArtifacts } from "../shared/connected-app-binding.ts";
 import { appToolOperations, classifyAppToolCall, combineAppToolPolicies, MAIL_SENDS } from "../shared/app-tool-policy.ts";
 import { approvalGroupKey, decide, defaultApprovalSettings, lockedOff, OFFICE_UNCHECKED, READ_ONLY_APP_TOOLS, type ApprovalCall, type ApprovalCallClass, type ApprovalDecision, type ApprovalSettings } from "../shared/approval-settings.ts";
 import { approvalsEditableHere, governingApprovals, OFFICE_NOT_CHECKED, settingsAfterCard } from "./approval-settings.ts";
@@ -30,11 +31,16 @@ export const asksForOfficeMailbox = (text: string): boolean =>
   /\b(?:office|shared|team)(?:'s)?\s+(?:shared\s+)?(?:g?mail(?:box)?|inbox|e-?mails?|account)\b/i.test(text);
 type Call = { name: string; arguments?: Record<string, unknown>; _meta?: Record<string, unknown> };
 type Policy = "read" | "review" | "blocked";
+let hostMailReviewArtifacts: ConnectedMailReviewArtifacts | undefined;
+/** Called by host startup with its protected encrypted vault. Never a worker
+ * configuration or tool; a missing store holds mail instead of losing review. */
+export function governConnectedMailReviewArtifacts(artifacts: ConnectedMailReviewArtifacts): void { hostMailReviewArtifacts = artifacts; }
 
 export function connectedAppPolicy(call: Call, options: { managed?: boolean } = {}): Policy {
   if (!validAppToolName(call.name) || (call.arguments !== undefined &&
     (!call.arguments || typeof call.arguments !== "object" || Array.isArray(call.arguments)))) return "blocked";
   if (BLOCKED.has(call.name)) return "blocked";
+  if (unsupportedConnectedMailTool(call.name)) return "blocked";
   if (DISCOVERY.has(call.name)) return "read";
   if (call.name === "COMPOSIO_MANAGE_CONNECTIONS") {
     const rows = call.arguments?.toolkits;
@@ -49,8 +55,8 @@ export function connectedAppPolicy(call: Call, options: { managed?: boolean } = 
     // Behind the managed gateway a batch is as strict as its strictest member;
     // one blocked slug blocks it all, and a message is sent only on its own
     // card. A direct connection reviews every batch.
+    if (rows.some(row => MAIL_SENDS.has(row.tool_slug) || unsupportedConnectedMailTool(row.tool_slug))) return "blocked";
     if (!options.managed) return "review";
-    if (rows.some(row => MAIL_SENDS.has(row.tool_slug))) return "blocked";
     return combineAppToolPolicies(rows.map(row => namespacedPolicy(row.tool_slug, row.arguments)));
   }
   // A direct connection keeps the original line: unknown tools, read-looking
@@ -116,6 +122,7 @@ export async function startConnectedAppsBroker(options: {
   /** The approval settings that govern this desktop (default: the host's registered store). */
   approvalSettings?: () => Promise<ApprovalSettings[]>;
   operations?: ConnectedAppOperationStore;
+  reviewArtifacts?: ConnectedMailReviewArtifacts;
   localTransport?: ConnectedAppsLocalTransport;
   /** Server-selected account shown on read approvals, never a caller argument. */
   readOnlyAccountId?: string;
@@ -147,6 +154,10 @@ export async function startConnectedAppsBroker(options: {
     : { "x-api-key": options.key };
   let closed = false;
   let session: string | null = null;
+  let mailBindings: ConnectedMailBinding[] = [];
+  const acceptBindings = (result: Record<string, unknown>) => {
+    mailBindings = result.realbudMailBindings === undefined ? [] : parseConnectedMailBindings(result.realbudMailBindings);
+  };
   // The worker's own handshake, replayed if the gateway expires the session.
   let initializeParams: unknown = { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "Bud connected apps", version: "1.0.0" } };
   let refreshing: Promise<boolean> | null = null;
@@ -178,7 +189,8 @@ export async function startConnectedAppsBroker(options: {
           body: JSON.stringify({ jsonrpc: "2.0", id: rpcId, method: "initialize", params: initializeParams }) });
         const fresh = initialized.headers.get("mcp-session-id");
         if (!initialized.ok || !fresh) { await initialized.body?.cancel().catch(() => {}); return false; }
-        await readMcpRpcResponse(initialized, rpcId, signal);
+        const result = await readMcpRpcResponse(initialized, rpcId, signal);
+        acceptBindings(result);
         const notified = await fetch(upstream!, { method: "POST", headers: { ...headers, "mcp-session-id": fresh }, redirect: "error", signal,
           body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) });
         await notified.body?.cancel().catch(() => {});
@@ -246,6 +258,9 @@ export async function startConnectedAppsBroker(options: {
         const releases: Array<() => void> = [];
         let dispatched = false;
         let receiptSaveFailed = false;
+        let reviewedOperation = false;
+        let reviewedBinding: ConnectedMailBinding | undefined;
+        const bindingCurrent = () => !reviewedBinding || mailBindings.some(row => connectedAppCanonical(row) === connectedAppCanonical(reviewedBinding));
         const finish = (status: "succeeded" | "failed" | "unknown", partial = false) => {
           if (!operationId) return;
           try { operations.finish(operationId, status, partial); }
@@ -272,17 +287,35 @@ export async function startConnectedAppsBroker(options: {
             if (policy === "blocked") return errorResult(options.localTransport
               ? "This Gmail review allows only GMAIL_GET_PROFILE, GMAIL_LIST_THREADS and GMAIL_FETCH_MESSAGE_BY_THREAD_ID. Sending, drafts, account changes and other app tools are unavailable."
               : "This operation is outside Bud's connected-app boundary. Use direct app tools to prepare reviewable work. Ask Bud to connect an app separately.");
+            if (!options.managed && !options.localTransport && MAIL_SENDS.has(call.name)) return errorResult(MAIL_BINDING_REQUIRED);
+            if (!options.managed && (call.name.startsWith("GMAIL_") || call.name.startsWith("OUTLOOK_")) && namespacedPolicy(call.name, call.arguments ?? {}) === "blocked") return errorResult("This mail tool is outside the reviewed mail boundary. Connect the managed mailbox and prepare a supported direct mail action.");
             // A shared office mailbox without the owner's full-access grant is held
             // to the three bounded reads by the gateway; say so before any card.
             if (options.managed && !options.localTransport && managedMailboxAccess(options.key, options.mailbox) === "read_only" && gmailBeyondReads(call)) return errorResult(SHARED_MAILBOX_READ_ONLY);
             const mailKeys = mailProviders(call).map(provider => `${mailIdentity}:${provider}`);
             if (mailKeys.some(key => mailbox(key).hold)) return errorResult(MAIL_HELD);
             const reviewProtocol = typeof req.headers["mcp-protocol-version"] === "string" ? req.headers["mcp-protocol-version"] : undefined;
-            const reviewRead = (name: string, args: Record<string, unknown>) =>
-              upstreamRead(name, args, reviewProtocol, AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]));
+            const isMailSend = Boolean(options.managed && !options.localTransport && MAIL_SENDS.has(call.name));
+            if (isMailSend) {
+              if (!session && !await refreshSession(session, reviewProtocol, controller.signal)) return errorResult(MAIL_BINDING_REQUIRED);
+              const provider = call.name.startsWith("GMAIL_") ? "gmail" : "outlook";
+              reviewedBinding = mailBindings.find(row => row.provider === provider);
+              if (!reviewedBinding) return errorResult(MAIL_BINDING_REQUIRED);
+              if (!reviewedBinding.companyId) return errorResult('The managed gateway cannot verify this mailbox company/tenant. Update/check the managed connection before sending; older metadata still permits reads.');
+              if (!verifiedMailAddress(reviewedBinding.emailAddress)) return errorResult('The connected mailbox has no verified sending address. Check/reconnect the managed Gmail account and its fixed profile read. Outlook sends remain held until its fixed account profile is verified. Reads remain available.');
+              if (!connectedMailSenderArgsAllowed(call.arguments)) return errorResult("A sending user, mailbox or From override is not covered by this account approval. Remove the override and use the connected account's own mailbox; aliases need separate provider-bound verification.");
+            }
+            const reviewRead = async (name: string, args: Record<string, unknown>) => {
+              const result = await upstreamRead(name, args, reviewProtocol, AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]));
+              if (!bindingCurrent() || controller.signal.aborted || !options.isActive()) throw new Error(MAIL_BINDING_CHANGED);
+              managedService.assertCapability("connected-tools"); return result;
+            };
             /** Set for a saved-draft send: re-reads the draft for the final comparison. */
             let recheckDraft: (() => Promise<string>) | undefined;
             let recheckDraftDigest: string | undefined;
+            let mailIdentityFields: { accountDigest: string; realmDigest: string; bindingDigest: string; effectDigest: string; reviewDigest: string; workspaceDigest: string; repeatOf?: string } | undefined;
+            let originalMailReview: ConnectedMailReview | undefined;
+            const mailApprovalId = isMailSend ? randomBytes(16).toString("hex") : undefined;
             const receipt = { threadId: options.threadId, toolName: call.name, toolSlugs: call.name === "COMPOSIO_MULTI_EXECUTE_TOOL"
               ? (call.arguments!.tools as { tool_slug: string }[]).map(row => row.tool_slug) : [] };
             // Approval settings (Workspace → Approvals) after the boundary's own
@@ -306,6 +339,11 @@ export async function startConnectedAppsBroker(options: {
               card = { remote: options.managed && !options.localTransport && MAIL_SENDS.has(call.name) ? "send" : verdict.remote,
                 ...(verdict.offer ? { readOffer: { ...verdict.offer, always: await approvalsEditableHere() } } : {}) };
             }
+            reviewedOperation = review || policy === "review";
+            if (reviewedOperation && !isMailSend) {
+              const unresolved = operations.list().find(row => row.toolName === call.name && ["started", "unknown"].includes(row.status));
+              if (unresolved) return errorResult(`A previous reviewed ${call.name} operation has an unresolved outcome (${unresolved.id}). Check it in the app before continuing. Account-bound GUI recovery is available only for supported managed mail; this tool remains held rather than replaying uncertain work.`);
+            }
             if (review) {
               const safe = redactSecrets(call) as Call;
               const hide = (text: string) => redactSecretsInText(text.replaceAll(options.key, "[private app key]"));
@@ -314,16 +352,35 @@ export async function startConnectedAppsBroker(options: {
               // A phone approves only what it shows in full: a shortened or redacted card stays on this computer.
               if ((card.remote === "read" || card.remote === "write") && (!shown.complete || summary !== shown.text || JSON.stringify(safe) !== JSON.stringify(call))) card = { ...card, remote: "desktop-only" };
               let detail = hide(JSON.stringify(safe, null, 2));
-              if (options.managed && !options.localTransport && MAIL_SENDS.has(call.name)) {
+              if (isMailSend) {
                 // A message is approved only as the person will see it sent:
                 // every recipient, the subject, the body and the attachments.
                 const review = await prepareMailReview(call, reviewRead, office).catch(() => null);
                 if (!review || typeof review === "string") return errorResult(typeof review === "string" ? review : MAIL_UNREADABLE);
                 if ([review.card, review.exact].some(text => text.includes(options.key) || redactSecretsInText(text) !== text)) return errorResult("This message contains what looks like a password, key or token, so Bud will not send it. Remove it and prepare the message again.");
-                summary = review.card; detail = review.exact;
+                const account = reviewedBinding!;
+                const gatewayOrigin = connectedMailGatewayOrigin(upstream!);
+                if (review.sender) {
+                  const sender = /<([^<>]+)>$/.exec(review.sender.trim())?.[1] ?? review.sender.trim();
+                  if (!verifiedMailAddress(sender) || sender.toLowerCase() !== account.emailAddress!.toLowerCase()) return errorResult('The saved draft uses a different or unverified From address. Open the exact account and use its verified sending address; aliases need separate provider-bound verification. Nothing was sent.');
+                }
+                summary = `Verified sending account: ${visibleMailText(account.emailAddress!)} (${account.provider}, account ${account.accountId}).\nCompany: ${visibleMailText(account.companyId!)}; managed gateway: ${gatewayOrigin}.\n\n${review.card}`;
+                detail = review.exact;
+                const accountDigest = mailAccountDigest(account, gatewayOrigin);
+                const realmDigest = mailRealmDigest(account, gatewayOrigin);
+                const effectDigest = mailDigest({ workspaceDigest: operations.workspaceDigest, accountDigest, message: review.effect });
+                let prior;
+                try { prior = operations.priorMailEffect(effectDigest, realmDigest); }
+                catch (error) { return errorResult(error instanceof Error ? error.message : "This mail outcome needs recovery before sending again."); }
+                if (prior) summary = `INTENTIONAL REPEAT: this exact message was already sent or manually confirmed sent (operation ${prior.id}). Allowing this separate card sends it again once to the same verified account and recipients.\n\n${summary}`;
+                mailIdentityFields = { accountDigest, realmDigest, bindingDigest: account.generation, effectDigest, reviewDigest: mailDigest({ summary, detail, approvalId: mailApprovalId }), workspaceDigest: operations.workspaceDigest, ...(prior ? { repeatOf: prior.id } : {}) };
                 if (review.recheck) { recheckDraft = review.recheck; recheckDraftDigest = review.digest; }
               }
               if (unchecked) summary = `${summary}\n${OFFICE_UNCHECKED}`;
+              if (mailIdentityFields) {
+                if (summary.includes(options.key) || redactSecretsInText(summary) !== summary) return errorResult(MAIL_BINDING_REQUIRED);
+                mailIdentityFields.reviewDigest = mailDigest({ summary, detail, approvalId: mailApprovalId });
+              }
               // The review id rides on the card and is read back after the answer so the receipt names a phone answer.
               const reviewId = randomBytes(6).toString("hex");
               openReviews.set(reviewId, { threadId: options.threadId });
@@ -335,6 +392,8 @@ export async function startConnectedAppsBroker(options: {
               const refused = (text: string) => { operations.deny({ ...receipt, ...(approval ? { approval } : {}) }); return errorResult(text); };
               if (!answer.allowed) return refused(answer.resolution === "timeout" ? APPROVAL_TIMED_OUT : answer.resolution === "stopped" ? "Bud stopped this action before it started."
                 : `${APPROVAL_DENIED} Do not retry without a new user request.`);
+              if (mailIdentityFields) originalMailReview = { version: 1, gatewayOrigin: connectedMailGatewayOrigin(upstream!), workspaceDigest: mailIdentityFields.workspaceDigest, accountDigest: mailIdentityFields.accountDigest,
+                bindingDigest: mailIdentityFields.bindingDigest, reviewDigest: mailIdentityFields.reviewDigest, binding: { ...reviewedBinding! }, card: summary, exact: detail, approvedAt: Date.now(), approvalId: mailApprovalId! };
               // A Don't use saved while the card waited still refuses it.
               if (rows.length) {
                 let now: ApprovalSettings[];
@@ -348,6 +407,7 @@ export async function startConnectedAppsBroker(options: {
               operations.deny(receipt);
               return errorResult("Bud stopped this action before it started.");
             }
+            if (!bindingCurrent()) { operations.deny(receipt); return errorResult(MAIL_BINDING_CHANGED); }
             if (mailKeys.some(key => mailbox(key).hold)) { operations.deny(receipt); return errorResult(MAIL_HELD); }
             if (recheckDraft) {
               // The saved draft must still be exactly the message the person
@@ -360,6 +420,7 @@ export async function startConnectedAppsBroker(options: {
               const now = await recheckDraft().catch(() => null);
               if (!now || now !== recheckDraftDigest) { operations.deny(receipt); return errorResult("The saved draft changed or could not be read again after you reviewed it, so it was not sent. Ask Bud to show it again before sending."); }
               if (controller.signal.aborted || closed || !options.isActive()) { operations.deny(receipt); return errorResult("Bud stopped this action before it started."); }
+              if (!bindingCurrent()) { operations.deny(receipt); return errorResult(MAIL_BINDING_CHANGED); }
             } else {
               // Counted from here (no await before dispatch) until it settles,
               // so a draft send waits for it before its final read.
@@ -368,11 +429,30 @@ export async function startConnectedAppsBroker(options: {
             // Approval may remain open past expiry or a grant change. A
             // person approving the action cannot extend service authority.
             managedService.assertCapability("connected-tools");
+            if (originalMailReview) {
+              const artifacts = options.reviewArtifacts ?? hostMailReviewArtifacts;
+              if (!artifacts) { operations.deny(receipt); return errorResult("The protected original mail review could not be saved. Nothing was sent. Recover this private workspace's encrypted review storage before preparing the message again."); }
+              try { await artifacts.write(originalMailReview); }
+              catch { operations.deny(receipt); return errorResult("The protected original mail review could not be saved. Nothing was sent. Check private storage and disk access before preparing the message again."); }
+              if (!bindingCurrent() || controller.signal.aborted || !options.isActive()) { operations.deny(receipt); return errorResult(MAIL_BINDING_CHANGED); }
+              // The artifact write and source reread crossed await boundaries.
+              // Recheck effective policy immediately before the durable start.
+              let now: ApprovalSettings[];
+              try { now = await settingsAfterCard(readSettings); } catch { operations.deny(receipt); return errorResult(APPROVALS_RECOVERY); }
+              if (now.some(item => item.unchecked) || appVerdict(rows, now, how).decision === 'refuse') { operations.deny(receipt); return errorResult("Approval settings changed while saving the review. Nothing was sent; prepare a new action under the current policy."); }
+              if (!bindingCurrent() || controller.signal.aborted || !options.isActive()) { operations.deny(receipt); return errorResult(MAIL_BINDING_CHANGED); }
+              managedService.assertCapability("connected-tools");
+            }
             // The durable receipt must exist before any tool is dispatched.
-            operationId = operations.start({ ...receipt, ...(approval ? { approval } : {}) }).id;
+            try { operationId = operations.start({ ...receipt, ...mailIdentityFields, ...(approval ? { approval } : {}) }).id; }
+            catch (error) { return errorResult(`${error instanceof Error ? error.message : "This app outcome needs recovery before dispatch."} It was not sent.`); }
+            if (reviewedBinding) dispatchBody = JSON.stringify({ ...msg, params: { name: call.name, arguments: call.arguments, _meta: { realbudReviewedMailBinding: reviewedBinding } } });
           }
           // Recheck after waiting for a person: a cancelled/stale turn cannot act.
-          if (controller.signal.aborted || closed || !options.isActive()) return errorResult("Bud stopped this action before it started.");
+          if (controller.signal.aborted || closed || !options.isActive() || !bindingCurrent()) {
+            if (operationId) operations.cancelBeforeDispatch(operationId);
+            return errorResult(bindingCurrent() ? "Bud stopped this action before it started." : MAIL_BINDING_CHANGED);
+          }
           dispatched = true;
           const upstreamSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
           let result: Record<string, unknown>;
@@ -385,6 +465,8 @@ export async function startConnectedAppsBroker(options: {
           } else {
             const protocolVersion = typeof req.headers["mcp-protocol-version"] === "string" ? req.headers["mcp-protocol-version"] : undefined;
             const post = async () => {
+              managedService.assertCapability("connected-tools");
+              if (controller.signal.aborted || !options.isActive() || !bindingCurrent()) throw new Error(MAIL_BINDING_CHANGED);
               headers = {
                 "content-type": "application/json", accept: "application/json, text/event-stream",
                 ...upstreamAuth,
@@ -396,15 +478,22 @@ export async function startConnectedAppsBroker(options: {
             if (msg.method === "initialize") initializeParams = msg.params;
             const sessionUsed = session;
             let upstreamResponse = await post();
-            // The managed gateway expires a session when the device's binding
-            // changes (e.g. after reconnecting Gmail). It raises this code at
-            // session lookup, before any adapter or tool is dispatched, so the
-            // same reviewed call is re-sent once on a fresh session under the
-            // same receipt. `connector_binding_changed` can be raised after an
-            // upstream call started and is never retried.
+            // Session expiry is a documented pre-adapter refusal. Reviewed
+            // operations never reinitialize/replay an old approval. Only safe
+            // unapproved reads may transparently refresh the session.
             if (options.managed && upstreamResponse.status === 409 && msg.method !== "initialize" &&
-              await gatewayErrorCode(upstreamResponse) === "connector_session_expired" &&
-              await refreshSession(sessionUsed, protocolVersion, upstreamSignal)) upstreamResponse = await post();
+              await gatewayErrorCode(upstreamResponse) === "connector_session_expired") {
+              if (reviewedOperation) {
+                // Even an unchanged account needs a fresh, separately reviewed
+                // action after an expired-session refusal. Only unapproved
+                // reads refresh transparently.
+                session = null; mailBindings = [];
+                if (operationId) operations.cancelBeforeDispatch(operationId);
+                operationId = undefined;
+                return errorResult("The app connection expired after review. This request was refused before dispatch and was not replayed. Prepare a new action for a fresh approval.");
+              }
+              if (await refreshSession(sessionUsed, protocolVersion, upstreamSignal)) upstreamResponse = await post();
+            }
             if (!upstreamResponse.ok) {
               await upstreamResponse.body?.cancel().catch(() => {});
               finish("unknown");
@@ -412,6 +501,7 @@ export async function startConnectedAppsBroker(options: {
             }
             if (upstreamResponse.headers.has("mcp-session-id")) session = upstreamResponse.headers.get("mcp-session-id");
             result = await readMcpRpcResponse(upstreamResponse, id, upstreamSignal);
+            if (msg.method === "initialize" && options.managed) acceptBindings(result);
           }
           if (operationId) {
             const outcome = connectedAppResultStatus(result);
@@ -422,6 +512,7 @@ export async function startConnectedAppsBroker(options: {
             // Only tools are brokered; no upstream sampling, prompts or resources.
             result.capabilities = { tools: {} };
             result.serverInfo = { name: "Bud connected apps", version: "1.0.0" };
+            delete result.realbudMailBindings;
             // Complete the upstream handshake without permitting arbitrary notifications.
             if (upstream) {
               const initialized = await fetch(upstream, { method: "POST", headers: { ...headers, ...(session ? { "mcp-session-id": session } : {}) },
@@ -521,6 +612,7 @@ type AppVerdict = { decision: "refuse"; reason: string; label: string }
  * can name keeps today's answer. What a row actually does (pays, sends,
  * deletes, uploads…) never changes run or card; a locked Don't use on it refuses. */
 export function appVerdict(rows: AppRow[], settings: readonly ApprovalSettings[], how: { direct: boolean; local?: boolean }): AppVerdict {
+  if (rows.some(row => unsupportedConnectedMailTool(row.slug))) return { decision: 'refuse', label: 'Mail', reason: 'This mail tool has no complete reviewed message/account contract. Use a supported direct mail tool.' };
   const list = settings.length ? settings : [defaultApprovalSettings()];
   const calls = rows.map(row => {
     const policy: Policy = how.direct ? (classifyAppToolCall(row.slug, row.args) === "read" ? "read" : "review") : namespacedPolicy(row.slug, row.args);
@@ -672,6 +764,17 @@ export function connectedAppResultStatus(result: unknown): { status: "succeeded"
 
 const MAIL_HELD = "Bud is sending a reviewed message from this mailbox. Wait for it to finish, then try this mail action again.";
 const MAIL_UNREADABLE = "Bud could not show the full message for review, so nothing was sent. Send it with GMAIL_SEND_EMAIL or OUTLOOK_SEND_EMAIL (or GMAIL_REPLY_TO_THREAD) and spell out every recipient, the subject and the body.";
+const MAIL_BINDING_REQUIRED = "Bud could not verify the sending account and connection generation. Nothing was sent. Check Connected apps and update the managed connector before preparing this message again.";
+const MAIL_BINDING_CHANGED = "The verified sending account or connection changed after this message was prepared. Nothing new was sent. Check Connected apps and prepare a new message for review.";
+const mailDigest = (value: unknown): string => createHash("sha256").update(connectedAppCanonical(value)).digest("hex");
+export const mailRealmDigest = (binding: ConnectedMailBinding, gatewayOrigin: string): string => {
+  if (!binding.companyId || connectedMailGatewayOrigin(gatewayOrigin) !== gatewayOrigin) throw new Error(MAIL_BINDING_REQUIRED);
+  return mailDigest({ companyId: binding.companyId, gatewayOrigin });
+};
+export const mailAccountDigest = (binding: ConnectedMailBinding, gatewayOrigin: string): string => {
+  mailRealmDigest(binding, gatewayOrigin);
+  return mailDigest({ provider: binding.provider, accountId: binding.accountId, companyId: binding.companyId, gatewayOrigin });
+};
 const MAIL_PREFIX = /^(GMAIL|OUTLOOK)_/;
 const SHARED_MAILBOX_READ_ONLY = "This is the office's shared Gmail, and the office owner has not turned on full access, so Bud can only read recent mail there. Nothing was drafted, changed or sent. Ask the office owner to turn on full access for shared Gmail in the RealBud account settings.";
 /** A Gmail tool, directly or in a batch, other than the three bounded reads. */
@@ -867,11 +970,12 @@ export const visibleMailText = (value: string): string => value.replace(/[\u0000
 
 /** Saved drafts and Outlook replies name their recipients only by reference:
  * those are read through the same session before the card is shown. */
-async function prepareMailReview(call: Call, read: MailRead, office?: string): Promise<{ card: string; exact: string; digest?: string; recheck?: () => Promise<string> } | string> {
+async function prepareMailReview(call: Call, read: MailRead, office?: string): Promise<{ card: string; exact: string; effect: unknown; sender?: string; digest?: string; recheck?: () => Promise<string> } | string> {
   const a: Obj = call.arguments ?? {};
   const mailbox = a.user_id ?? a.userId;
   if (mailbox !== undefined && mailbox !== "me") return "Bud sends only from the connected account's own mailbox (user_id \"me\"). Nothing was sent.";
   let view: MailView, notes: string[] = [], action: string;
+  let original: MailView | undefined;
   let recheck: (() => Promise<string>) | undefined;
   if (call.name === "GMAIL_SEND_DRAFT" || call.name === "OUTLOOK_SEND_DRAFT") {
     const id = call.name === "GMAIL_SEND_DRAFT" ? a.draft_id : a.message_id;
@@ -883,6 +987,19 @@ async function prepareMailReview(call: Call, read: MailRead, office?: string): P
     recheck = async () => JSON.stringify(await load());
     action = `Send saved draft ${JSON.stringify(id)} exactly as it is now`;
     notes.push("This is the draft as Bud read it just now. If it changes before sending, Bud will not send it.");
+  } else if (call.name === "GMAIL_FORWARD_MESSAGE" || call.name === "OUTLOOK_FORWARD_MESSAGE") {
+    const id = text(a.message_id, 512);
+    if (!id || !/^[A-Za-z0-9_=+/-]{1,512}$/.test(id)) return MAIL_UNREADABLE;
+    const load = async (): Promise<MailView> => call.name === "GMAIL_FORWARD_MESSAGE"
+      ? gmailMessage(identified(resultData(await read("GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID", { message_id: id, format: "full" })), id))
+      : outlookMessage(read, id, false).then(({ replyTo: _replyTo, ...rest }) => rest);
+    original = await load();
+    ({ view } = explicitView(call.name, a));
+    view.subject = `Fwd: ${original.subject ?? ""}`;
+    view.attachments = original.attachments;
+    recheck = async () => connectedAppCanonical(await load());
+    notes.push("The original message below and every listed original attachment will be forwarded. If the original changes or cannot be read again after approval, Bud will not forward it.");
+    action = `Forward message ${JSON.stringify(id)}`;
   } else if (call.name === "OUTLOOK_REPLY_EMAIL") {
     const id = text(a.message_id, 512);
     if (!id) return MAIL_UNREADABLE;
@@ -907,6 +1024,13 @@ async function prepareMailReview(call: Call, read: MailRead, office?: string): P
     }
     sections.push(["HTML source", view.html]);
   } else sections.push(["Message (plain text)", view.plain ?? ""]);
+  if (original) {
+    if (original.plain !== undefined) sections.push(["Original message (plain text)", original.plain]);
+    if (original.html !== undefined) {
+      sections.push(["Original message HTML as text (links in brackets)", mailHtmlText(original.html)]);
+      sections.push(["Original message HTML source", original.html]);
+    }
+  }
   const shown = (attachment: MailAttachment) => JSON.stringify(attachment.name) +
     (attachment.type || attachment.size !== undefined ? ` (${[attachment.type, attachment.size !== undefined ? `${attachment.size} bytes` : undefined].filter(Boolean).join(", ")})` : "");
   const card = [
@@ -919,6 +1043,8 @@ async function prepareMailReview(call: Call, read: MailRead, office?: string): P
     `Bcc: ${quote(view.bcc)}`,
     `Subject: ${view.subject === undefined ? "none" : JSON.stringify(view.subject)}`,
     `Attachments: ${view.attachments.length ? view.attachments.map(shown).join(", ") : "none"}`,
+    ...(original ? [`Original From: ${original.from ? JSON.stringify(original.from) : "none"}`, `Original To: ${quote(original.to)}`,
+      `Original Cc: ${quote(original.cc)}`, `Original Bcc: ${quote(original.bcc)}`, `Original subject: ${original.subject === undefined ? "none" : JSON.stringify(original.subject)}`] : []),
     ...notes,
     ...sections.flatMap(([title, body]) => {
       const lines = body.replace(/\r\n?/g, "\n").split("\n");
@@ -927,5 +1053,11 @@ async function prepareMailReview(call: Call, read: MailRead, office?: string): P
   ].join("\n");
   // The exact request goes under the card's "Exact request" disclosure.
   const exact = visibleMailText(JSON.stringify(call, null, 2));
-  return recheck ? { card: visibleMailText(card), exact, digest: JSON.stringify(view), recheck } : { card: visibleMailText(card), exact };
+  // Effect identity follows the delivery represented on the card, so changing
+  // an ignored argument, protocol metadata or key order cannot replay it.
+  const effectView = (message: MailView) => ({ ...message, version: undefined,
+    to: [...message.to].sort(), cc: [...message.cc].sort(), bcc: [...message.bcc].sort(), attachments: [...message.attachments].sort((a, b) => connectedAppCanonical(a).localeCompare(connectedAppCanonical(b))) });
+  const effect = { message: effectView(view), ...(original ? { original: effectView(original) } : {}),
+    ...(call.name.includes("REPLY") ? { replyTo: a.thread_id ?? a.message_id ?? null } : {}) };
+  return { card: visibleMailText(card), exact, effect, ...(call.name.endsWith("SEND_DRAFT") && view.from ? { sender: view.from } : {}), ...(recheck ? { digest: original ? connectedAppCanonical(original) : JSON.stringify(view), recheck } : {}) };
 }

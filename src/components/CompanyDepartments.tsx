@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { departmentConfigurationDrafts, departmentDraftScope, verifyDepartmentDraftActor, type DepartmentDraftActor, type DepartmentDraftContext, type EndedDepartmentDraftReview } from '@/lib/department-configuration-draft-journal';
+import { api } from '@/state/store';
 import type { CompanyDepartment, DepartmentAccess, DepartmentAccessPage, DepartmentPage, DepartmentLifecycleInput } from '@shared/company-api';
 import { companyApi, departmentMutationUncertain } from '@/lib/company-api';
 import { departmentOperationTitle, type DepartmentOutboxState } from '@shared/company-department-outbox';
@@ -9,12 +11,17 @@ const button = 'min-h-11 rounded-lg border border-line px-3 py-2 text-[14px] tex
 const input = 'min-h-11 w-full rounded-lg border border-line bg-sheet px-3 py-2 text-[14px] text-ink focus-visible:outline-2 focus-visible:outline-agency';
 const accessLabels = { none: 'No access', read: 'Read only', write: 'Read and edit' };
 
-export function CompanyDepartments() {
+export function CompanyDepartments({ draftActor }: { draftActor: DepartmentDraftActor }) {
+  useSyncExternalStore(departmentConfigurationDrafts.subscribe, departmentConfigurationDrafts.snapshot, departmentConfigurationDrafts.snapshot);
+  const ended = departmentConfigurationDrafts.reviewEnded(companyApi.sessionVersion());
+  const [endedReview, setEndedReview] = useState<EndedDepartmentDraftReview | null>(null);
+  const earlier = departmentConfigurationDrafts.reviewEarlierSaves(draftActor);
+  const [recoveryContexts, setRecoveryContexts] = useState<DepartmentDraftContext[]>([]);
   const [outbox, setOutbox] = useState<DepartmentOutboxState | null>(null), [caseRefresh, setCaseRefresh] = useState(0);
   const [data, setData] = useState<DepartmentPage | null>(null);
   const [access, setAccess] = useState<DepartmentAccessPage | null>(null);
-  const [selected, setSelected] = useState('');
-  const [configurationDirty, setConfigurationDirty] = useState(false);
+  const [selected, setSelected] = useState(() => departmentConfigurationDrafts.lastDepartment(draftActor));
+  const [configurationDirty, setConfigurationDirty] = useState(() => !!departmentConfigurationDrafts.lastDepartment(draftActor));
   const [workDepartment, setWorkDepartment] = useState('');
   const [offset, setOffset] = useState(0);
   const [memberOffset, setMemberOffset] = useState(0);
@@ -30,6 +37,17 @@ export function CompanyDepartments() {
   const [notice, setNotice] = useState('');
   const alive = useRef(true), pending = useRef(false), generation = useRef(0);
   const creation = useRef<{ id: string; name: string } | null>(null);
+  const reviewEarlierSaves = async () => {
+    if (pending.current || companyApi.sessionVersion() !== draftActor.sessionVersion) return;
+    const review = departmentConfigurationDrafts.reviewEarlierSaves(draftActor);
+    pending.current = true; setBusy(true); setError('');
+    try {
+      await verifyDepartmentDraftActor(draftActor, { status: companyApi.status, localState: () => api('/api/company/local-state'), sessionVersion: companyApi.sessionVersion });
+      if (!alive.current || companyApi.sessionVersion() !== draftActor.sessionVersion) return;
+      setRecoveryContexts(departmentConfigurationDrafts.readEarlierSaves(review, draftActor).map(entry => entry.context));
+    } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : 'The original save identity could not be checked. No request was sent.'); }
+    finally { pending.current = false; if (alive.current) setBusy(false); }
+  };
   const load = async () => {
     const version = ++generation.current, epoch = companyApi.sessionVersion();
     setLoading(true); setError('');
@@ -124,11 +142,18 @@ export function CompanyDepartments() {
     void run(() => companyApi.setDepartmentAccess(change), 'Department access saved and checked.');
   };
   const operationBlocked = !outbox || Boolean(outbox.pending) || outbox.otherOfficePending;
-  return <details className="rounded-lg border border-line p-3 max-[719px]:border-0 max-[719px]:p-0">
+  return <details open={!!selected || ended.endedCount > 0} className="rounded-lg border border-line p-3 max-[719px]:border-0 max-[719px]:p-0">
     <summary className="min-h-11 cursor-pointer content-center text-[14px] font-medium text-ink">Departments and access</summary>
     <div className="mt-2 space-y-4 text-[14px]" aria-busy={busy || loading}>
       <p className="text-ink-secondary">Departments organise access to shared office records. Each person keeps their own Bud, browser sign-ins and private work on their computer.</p>
       <p className="text-ink-secondary">Joining a department does not move private Desk items or start work on another computer. Reviewed handoffs remain under Shared work on Desk.</p>
+      {ended.endedCount > 0 && <section aria-label="Ended-session department typing" className="space-y-2">
+        <p>{ended.endedCount} unsaved department draft{ended.endedCount === 1 ? ' is' : 's are'} kept from ended sign-in sessions. Their private text is hidden. {ended.heldCount > 0 ? `${ended.heldCount} original save request(s) remain held and cannot be discarded here.` : ''}</p>
+        {ended.discardableCount > 0 && <button type="button" className={button} onClick={() => { setError(''); setEndedReview(departmentConfigurationDrafts.reviewEnded(companyApi.sessionVersion())); }}>Review clearing ended-session department typing</button>}
+        {endedReview && <div role="group" aria-label="Confirm permanent removal of ended-session department typing" className="space-y-2"><p>Permanently remove unsaved typing from {endedReview.discardableCount} ended-session department draft(s) in this window? Current drafts and original save requests are kept. This cannot be undone.</p><button type="button" className={button} onClick={() => { try { const count = departmentConfigurationDrafts.discardEnded(endedReview, companyApi.sessionVersion); setEndedReview(null); setNotice(`${count} ended-session draft(s) permanently removed from this window’s memory.`); } catch (cause) { setEndedReview(null); setError(cause instanceof Error ? cause.message : 'No draft was removed. Review again.'); } }}>Permanently remove ended-session department typing</button><button type="button" className={button} onClick={() => setEndedReview(null)}>Keep ended-session department typing</button></div>}
+      </section>}
+      {earlier.count > 0 && <section aria-label="Earlier workflow saves" className="space-y-2"><p>{earlier.count} original workflow save(s) from an earlier sign-in may need confirmation for this same owner and private workspace. Reviewing them does not send a request or replace your current draft.</p><button type="button" className={button} disabled={busy || loading} onClick={() => void reviewEarlierSaves()}>Review original workflow saves from earlier sign-ins</button></section>}
+      {recoveryContexts.filter(context => !!departmentConfigurationDrafts.read(context)).map(context => <CompanyDepartmentConfiguration key={`recovery:${departmentDraftScope(context)}`} departmentId={context.departmentId} draftActor={draftActor} recoveryContext={context} operationBlocked />)}
       {outbox?.pending && <section aria-label="Saved department change" className="rounded-lg border border-hold p-3 space-y-2">
         <h4 className="font-medium">A saved department change needs your attention</h4>
         <p className="break-words">{departmentOperationTitle(outbox.pending)}</p>
@@ -161,7 +186,7 @@ export function CompanyDepartments() {
       </>}
       {data?.departments.filter(item => item.id === workDepartment).map(item => <CompanyDepartmentCases key={`${item.id}:${item.revision}:${caseRefresh}`} departmentId={item.id} operationBlocked={operationBlocked} onChanged={() => void load()} onOperationChange={() => void load()} />)}
       {configurationDirty && <p role="status">You have an unsaved workflow draft. Save it or choose Discard unsaved workflow draft before switching departments.</p>}
-      {selected && <CompanyDepartmentConfiguration key={selected} departmentId={selected} operationBlocked={operationBlocked || busy} onDirtyChange={setConfigurationDirty} />}
+      {selected && <CompanyDepartmentConfiguration key={selected} departmentId={selected} draftActor={draftActor} operationBlocked={operationBlocked || busy} onDirtyChange={setConfigurationDirty} />}
       {access && !operationBlocked && !uncertainRetirement && <section aria-label={`${access.department.name} member access`} className="border-t border-line pt-3 space-y-3">
         <h4 className="font-medium">Who can use {access.department.name}</h4>
         <p className="text-ink-secondary">{access.department.retiredAt ? 'This department is retired. Existing access only permits viewing history. You can reduce or remove access here; reopen the department before granting more access.' : 'Read only lets a person view shared department records. Read and edit also lets them update those records. Office owners always manage department access.'}</p>

@@ -13,6 +13,7 @@ import { canonical, id, integer, nano, requireThat, type PortalPrincipal } from 
 import { digest, UsageLedger } from './ledger.ts';
 import { cents, gstCents, periodAt } from './money.ts';
 import { CommercialTermsStore, includedMonth } from './commercial-terms.ts';
+import { requireOfficeResalePolicies } from './office-ai-terms.ts';
 import { queueInvoiceEmail } from './invoice-email.ts';
 
 export interface InvoiceLine { description:string; amountNanoAud:string; amountCents:string; gstCents:string; creditId?:string; sourceInvoice?:string;
@@ -106,7 +107,7 @@ export class BillingService {
    * The care amount and agreement reference come from the
    * terms the office's billing owner accepted for this exact month; nothing is
    * inferred, prorated or read from usage. */
-  finalizeCommercialInvoice(companyId:string,period:string,termsVersion:string,ai?:{invoices:AiInvoiceInput[];deferredPeriods?:string[];modelviaCustomerId?:string;usedBy?:string;chargeDetail?:'all_in'|'itemized'},report?:{existing?:boolean}):Invoice {
+  finalizeCommercialInvoice(companyId:string,period:string,termsVersion:string,ai?:{invoices:AiInvoiceInput[];deferredPeriods?:string[];modelviaCustomerId?:string;usedBy?:string;chargeDetail?:'all_in'|'itemized'},report?:{existing?:boolean;onCreated?:(invoice:Invoice)=>void}):Invoice {
     requireThat(this.commercialTerms,'commercial_terms_unavailable',503);
     [companyId,termsVersion].forEach(id);
     requireThat(!this.internalCompanyId || companyId!==this.internalCompanyId,'internal_usage_not_billable',403);
@@ -121,6 +122,7 @@ export class BillingService {
       requireThat(entry.lines.reduce((n,l)=>n+BigInt(l.amountCents),0n).toString()===entry.totalCents && entry.lines.reduce((n,l)=>n+BigInt(l.gstCents),0n).toString()===entry.gstCents,'modelvia_invoice_lines_mismatch',409);
     }
     requireThat(!ai?.modelviaCustomerId || /^[A-Za-z0-9][A-Za-z0-9_.-]{0,159}$/.test(ai.modelviaCustomerId),'invalid_ai_invoice',409);
+    if(ai?.deferredPeriods) requireThat(ai.deferredPeriods.length<=240 && new Set(ai.deferredPeriods).size===ai.deferredPeriods.length && ai.deferredPeriods.every(p=>/^\d{4}-(0[1-9]|1[0-2])$/.test(p) && p<=period),'invalid_ai_invoice',409);
     if(ai) ensureAiConsolidationTable(this.ledger);
     ensureAiAbsorptionTable(this.ledger);
     return this.ledger.db.transaction(()=>{
@@ -131,6 +133,14 @@ export class BillingService {
       const existing=this.ledger.db.get<{body:string}>('SELECT body FROM invoices WHERE tenant=? AND period=?',companyId,period);
       if(existing) { const invoice:Invoice=JSON.parse(existing.body); requireThat(invoice.commercialTerms?.version===termsVersion,'invoice_close_conflict',409); if(report) report.existing=true; return invoice; }
       requireThat(period>=periodAt(tenant.goLiveAt),'period_before_go_live',409);
+      if(terms.aiUsage && ai) {
+        this.ledger.db.run('CREATE TABLE IF NOT EXISTS office_modelvia_customer (tenant TEXT PRIMARY KEY, customer TEXT NOT NULL UNIQUE)');
+        const bound=this.ledger.db.get<{customer:string}>('SELECT customer FROM office_modelvia_customer WHERE tenant=?',companyId)?.customer;
+        requireThat(bound && (!ai.modelviaCustomerId || ai.modelviaCustomerId===bound),'office_modelvia_customer_mismatch',409);
+      }
+      // A care-only deferral contains no AI data or amount. Everything else must
+      // still prove exact pricing after any provider await.
+      if(terms.aiUsage && !(ai && aiInvoices.length===0 && ai.deferredPeriods?.includes(period))) requireOfficeResalePolicies(this.commercialTerms!,this.ledger,companyId,[period,...aiInvoices.map(entry=>entry.period),...(ai?.deferredPeriods??[])],ai?.modelviaCustomerId);
       // AI resale only under terms that carry it, and each Modelvia invoice at most once, ever.
       requireThat(!ai || terms.aiUsage,'ai_usage_not_accepted',409);
       for(const entry of aiInvoices) requireThat(!this.ledger.db.get('SELECT modelvia_invoice FROM office_ai_consolidations WHERE modelvia_invoice=?',entry.id),'modelvia_invoice_already_consolidated',409);
@@ -193,6 +203,10 @@ export class BillingService {
       this.commercialTerms!.bindInvoice(invoice);
       queueInvoiceEmail(this.ledger,invoice,terms.customer.billingEmail,accepted.digest);
       this.ledger.db.append(companyId,'local_invoice_closed',null,this.ledger.now(),{invoiceId:invoice.id,totalCents:invoice.totalCents,digest:digest(invoice)});
+      // Host-only provenance joins the invoice/outbox commit. Never run this
+      // hook for a historical invoice or permit an asynchronous partial commit.
+      const createdResult:unknown=report?.onCreated?.(invoice);
+      requireThat(createdResult===undefined,'async_invoice_created_hook_forbidden',500);
       return invoice;
     });
   }
@@ -228,8 +242,10 @@ export class BillingService {
     const now=this.ledger.now();
     return this.invoices(actor).map(inv=>{
       const standing=invoiceStanding(this.ledger,inv,now,this.invoiceTermsDays);
+      const recorded=manualPayments(this.ledger,inv.id);
       return {id:inv.id,kind:inv.kind,period:inv.period,currency:inv.currency,gstInclusive:inv.gstInclusive,totalCents:inv.totalCents,gstCents:inv.gstCents,paid:paid.has(inv.id),aiUsageCsv:!!inv.aiUsage?.modelviaInvoices.length,
-        dueAt:standing.dueAt,status:standing.status,overdue:standing.overdue,paidCents:standing.paidCents,outstandingCents:standing.outstandingCents};
+        dueAt:standing.dueAt,status:standing.status,overdue:standing.overdue,paidCents:standing.paidCents,outstandingCents:standing.outstandingCents,
+        receiptKind:paid.has(inv.id)?'square':recorded.length?'recorded':null};
     });
   }
   async checkout(actor:PortalPrincipal,invoiceId:string):Promise<HostedCheckout> {
@@ -291,7 +307,14 @@ export class BillingService {
     });
   }
   receipt(actor:PortalPrincipal,invoiceId:string) {
-    this.invoice(actor,invoiceId); const row=this.ledger.db.get<{id:string;body:string}>('SELECT id,body FROM payments WHERE invoice=?',invoiceId); requireThat(row,'payment_not_settled',409);
+    const invoice=this.invoice(actor,invoiceId); const row=this.ledger.db.get<{id:string;body:string}>('SELECT id,body FROM payments WHERE invoice=?',invoiceId);
+    if(!row) {
+      ensureManualPaymentTables(this.ledger);
+      const payments=manualPayments(this.ledger,invoiceId); requireThat(payments.length>0,'payment_not_settled',409);
+      const standing=invoiceStanding(this.ledger,invoice,this.ledger.now(),this.invoiceTermsDays);
+      return {mode:'operator_recorded' as const,source:'operator_recorded' as const,invoiceId,receiptId:`recorded-payments-${invoiceId}`,currency:'AUD' as const,amountCents:standing.paidCents,
+        outstandingCents:standing.outstandingCents,status:standing.status,asOf:this.ledger.now(),payments:payments.map(p=>({id:p.id,method:p.method,amountCents:p.amountCents,receivedOn:p.receivedOn,reference:p.reference,recordedAt:p.recordedAt,reversedAt:p.reversed?.at??null}))};
+    }
     const p:VerifiedPayment=JSON.parse(row.body);
     const refunded=this.ledger.db.all<{body:string}>('SELECT body FROM refunds WHERE payment=?',row.id).reduce((sum,r)=>sum+BigInt(JSON.parse(r.body).amountCents),0n);
     const provider=row.id.slice(0,row.id.indexOf(':'));

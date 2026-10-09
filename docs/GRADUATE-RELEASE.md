@@ -1,5 +1,7 @@
 # Graduate release — production path
 
+**Current repair-candidate gate, 9 October 2026:** [System resolution](SYSTEM-RESOLUTION-2026-10-09.md) supersedes the Windows promotion procedure below. Autonomous workers are held on Windows/Linux until an admitted OS boundary exists. `scripts/windows-candidate.mjs` permits explicitly qualified rehearsal/signed installed-CI evidence and refuses `stable-public`; neither artifact updates a public tag/feed. Do not publish this candidate's Windows installer or `latest.yml` using the historical manual steps. Native isolation, upgrade/restore and required device proof must be qualified first. This source policy has not changed existing published installers.
+
 Date: 2026-08-31  
 Canonical constraints: `docs/GOAL-PROMPT.md` wins.  
 Pilot fields: `docs/PILOT-CONTRACT.md`. Pickup: `docs/NEXT-WAVE.md`.

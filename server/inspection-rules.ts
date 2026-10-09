@@ -77,6 +77,12 @@ export function createInspectionRulesStore(options: { file?: string; now?: () =>
   };
   return {
     read: () => serial(load),
+    /** A local plan commit holds its current rules through the entire file write.
+     * Queue order is rules → bookings. Never call another rules action or wait
+     * for history, date/provider reads inside this lease. */
+    withSnapshot<T>(work: (state: InspectionRulesState) => Promise<T>): Promise<T> {
+      return serial(async () => work(await load()));
+    },
     /** Replaces the rules; the replaced version goes to the front of `history`. */
     save: (input: { rules: unknown; expectedRevision: unknown }) => serial(async () => {
       const rules = validateInspectionRules(input.rules);
