@@ -40,7 +40,8 @@
  * `askWorker`), `hermes-hands.ts` and `import-inspect.ts` all reason through
  * this relay; only assigned department cases use their own relay
  * (`department-worker.ts`). Each lease also counts the Modelvia requests its
- * exchanges made (`RunUsage`), so a run can show what it cost.
+ * exchanges made (`RunUsage`), so a run can show what it cost, and how long
+ * they took (`RunUsage.timing`), for the Ask turn's operational log line.
  *
  * The overlay folder is outside the worker's Hermes home and workroom but, on
  * one OS account, nothing a same-user process cannot write. Hermes rereads it
@@ -68,7 +69,7 @@ import { MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER_ENTRY, managedModelProfil
 import { MANAGED_ACCESS_RELAY_DOWN, managedModelLaunchRefusal, normalizedGatewayUrl, onWorkerModelAccessChange, workerModelAccessSnapshot } from "./hermes-runtime-env.ts";
 import { MANAGED_VISION_CHOICE, managedModelChoice } from "../shared/managed-model-choices.ts";
 import { noteModelKeyAnswer } from "./office-link.ts";
-import { emptyRunUsage, noteModelviaReply, noteModelviaRequest, recordJevUsage, type JevCall } from "./run-cost.ts";
+import { emptyRunUsage, noteModelExchange, noteModelviaReply, noteModelviaRequest, recordJevUsage, type JevCall } from "./run-cost.ts";
 import type { RunUsage } from "../shared/contracts.ts";
 
 /** Office copy when an Ask launch finds no running relay in this process.
@@ -417,6 +418,8 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
     const timer = setTimeout(() => forwarding.abort(), timeoutMs);
     timer.unref();
     let idleTimer: NodeJS.Timeout | undefined, streaming = false;
+    // A chat exchange sent upstream: when, how long to its headers, its status (the run's `timing`).
+    let exchange: { start: number; headersMs?: number; status?: number } | undefined;
     const stillArriving = () => {
       clearTimeout(idleTimer);
       idleTimer = setTimeout(() => forwarding.abort(IDLE), idleTimeoutMs);
@@ -496,6 +499,7 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
 
       const accept = typeof request.headers.accept === "string" && request.headers.accept.length <= 200 ? request.headers.accept
         : body.stream === true ? "text/event-stream" : "application/json";
+      exchange = { start: Date.now() };
       const upstream = await fetch(`${normalizedGatewayUrl(grant.baseUrl)}${CHAT_PATH}`, {
         method: "POST",
         headers: { "content-type": "application/json", accept, authorization: `Bearer ${key}`, "idempotency-key": idempotencyKey },
@@ -503,6 +507,8 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
         redirect: "error",
         signal: forwarding.signal,
       });
+      exchange.headersMs = Date.now() - exchange.start;
+      exchange.status = upstream.status;
       noteModelviaRequest(capability.scope.usage, upstream.headers.get("x-request-id"));
       // A refused image call says nothing about the office key: the plan may
       // just not include the image model. Bud gets one plain sentence for that.
@@ -554,6 +560,8 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
         response.end(`data: ${JSON.stringify({ error: { message: STALLED, type: "realbud_relay_refused" } })}\n\n`);
       } else response.destroy();
     } finally {
+      // Answered, refused, failed or stopped: its time lands on the lease's current run.
+      if (exchange && capability) noteModelExchange(capability.scope.usage, { ms: Date.now() - exchange.start, headersMs: exchange.headersMs, status: exchange.status });
       clearTimeout(timer);
       clearTimeout(idleTimer);
       inflight.delete(forwarding);
