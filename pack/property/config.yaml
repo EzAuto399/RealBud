@@ -162,9 +162,17 @@ curator:
 # through the Nous tool gateway) stay off in both 0.21.3 and 0.21.5
 # (tools/*/gateway/config.py ConnectorConfig); RealBud's connected apps are
 # its own host broker. Install and Repair own only tools.connectors.enabled.
+# Tool search stays off (10 Oct 2026): 0.21.3 and 0.21.5 defer every MCP tool,
+# which includes each of RealBud's per-turn brokers, behind tool_search/
+# tool_describe/tool_call (tools/tool_search.py `is_deferrable_tool_name`), so
+# each tool family cost an extra model call per turn. "off" is the only switch
+# (`should_activate`; model_tools.py skips assembly), and broker tools must be
+# directly visible. Install, Repair and startup own tools.tool_search.enabled.
 tools:
   connectors:
     enabled: false
+  tool_search:
+    enabled: "off"
 # Hermes 0.21.5 turns on a detected 1Password or Bitwarden CLI as a login source
 # unless the profile says false (agent/vault_backends/base.py `is_enabled`; 0.21.3
 # reads the same way, with false defaults). Credentials never pass through Bud.
@@ -182,8 +190,9 @@ web:
   keyless_fallback: false
 # Install and Repair also own tools.tool_search.defer (server/hermes-pack.ts
 # WORKER_DEFERRED_TOOLS): upstream's default minus todo_list, session_search and
-# process_manage, so those three stay directly visible. Other tool_search
-# settings stay the office's.
+# process_manage. It defers nothing while tool search is off and is kept so
+# turning it back on restores the earlier set. Other tool_search settings stay
+# the office's.
 terminal:
   backend: local
   home_mode: profile

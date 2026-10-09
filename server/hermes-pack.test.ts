@@ -300,6 +300,9 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
       [["delegation", "child_timeout_seconds"], 1800],
       [["tools", "tool_search", "defer"], [...WORKER_DEFERRED_TOOLS, "todo_list"]],
       [["tools", "tool_search", "defer"], WORKER_DEFERRED_TOOLS.filter(name => name !== "cronjob_manage")],
+      [["tools", "tool_search", "enabled"], "auto"],
+      [["tools", "tool_search", "enabled"], "on"],
+      [["tools", "tool_search", "enabled"], true],
     ];
     for (const [at, value] of edits) {
       const doc = parseDocument(baseline, { version: "1.1" }); doc.setIn(at, value);
@@ -312,6 +315,8 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     tighter.setIn(["compression", "proactive_prune_tokens"], 48000);
     tighter.setIn(["delegation", "child_timeout_seconds"], 300);
     tighter.setIn(["compression", "min_tail_user_messages"], 5);
+    // Hermes reads a YAML false here as off too (tools/tool_search.py `_tri_state`).
+    tighter.setIn(["tools", "tool_search", "enabled"], false);
     writeFileSync(path, tighter.toString());
     expect(workerLimitsReady(home)).toBe(true);
   });
@@ -341,7 +346,7 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
       compression: { min_tail_user_messages: 3, proactive_prune_tokens: 64000 },
       delegation: { child_timeout_seconds: 900 },
       curator: { enabled: false },
-      tools: { tool_search: { defer: [...WORKER_DEFERRED_TOOLS] } },
+      tools: { tool_search: { enabled: "off", defer: [...WORKER_DEFERRED_TOOLS] } },
     };
     expect(parse(fresh, { version: "1.1" })).toMatchObject(expected);
     expect(fresh).not.toContain("!!omap");
@@ -359,13 +364,16 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     old.set("tools", old.createNode({ connectors: { enabled: false }, tool_search: { listing: "off" } }));
     const before = old.toString();
     writeFileSync(path, before);
-    // Needs Repair, not unsafe: approvals stay manual and startup does not rewrite it.
+    // Needs Repair, not unsafe: approvals stay manual and startup sets only the tool-search switch.
     expect(approvalsAreManual(home)).toBe(true);
     expect(learningPolicyReady(home)).toBe(false);
     expect(workerLimitsReady(home)).toBe(false);
     expect(propertyWorkroomReady(home)).toBe(false);
-    expect(ensurePropertyPack(home).wrote).toEqual([]);
-    expect(readFileSync(path, "utf8")).toBe(before);
+    expect(ensurePropertyPack(home).wrote).toEqual(["config.yaml"]);
+    expect(parse(readFileSync(path, "utf8"), { version: "1.1" })).toEqual({
+      ...parse(before, { version: "1.1" }), tools: { connectors: { enabled: false }, tool_search: { listing: "off", enabled: "off" } },
+    });
+    expect(workerLimitsReady(home)).toBe(false);
 
     applyPropertyPack(home);
     const saved = readFileSync(path, "utf8");
@@ -374,7 +382,7 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     expect(repaired).toMatchObject(expected);
     expect(repaired.compression).toEqual({ threshold: 0.6, min_tail_user_messages: 3, tail_mode: "legacy", proactive_prune_tokens: 64000 });
     expect(repaired.curator).toEqual({ interval_hours: 48, enabled: false });
-    expect(repaired.tools).toEqual({ connectors: { enabled: false }, tool_search: { listing: "off", defer: [...WORKER_DEFERRED_TOOLS] } });
+    expect(repaired.tools).toEqual({ connectors: { enabled: false }, tool_search: { listing: "off", enabled: "off", defer: [...WORKER_DEFERRED_TOOLS] } });
     expect(learningPolicyReady(home)).toBe(true);
     expect(workerLimitsReady(home)).toBe(true);
     expect(propertyWorkroomReady(home)).toBe(true);
@@ -387,14 +395,52 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     expect(learningPolicyReady(home)).toBe(true);
   });
 
-  it("defers every upstream default except the tools Bud uses directly, and keeps a tool-search switch the office turned off", () => {
+  it("turns tool search off in a 0.1.48 profile at startup, before any readiness read, changing nothing else", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-tool-search-upgrade-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    const fresh = readFileSync(path, "utf8");
+    expect(parse(fresh, { version: "1.1" }).tools.tool_search).toEqual({ enabled: "off", defer: [...WORKER_DEFERRED_TOOLS] });
+    expect(workerLimitsReady(home)).toBe(true);
+
+    // What 0.1.48's Install and Repair wrote: the deferral list and no switch.
+    const old = parseDocument(fresh, { version: "1.1" }); old.deleteIn(["tools", "tool_search", "enabled"]);
+    const before = old.toString();
+    writeFileSync(path, before);
+    expect(workerLimitsReady(home)).toBe(false);
+
+    expect(ensurePropertyPack(home).wrote).toEqual(["config.yaml"]);
+    const after = readFileSync(path, "utf8");
+    expect(after.split("\n").filter(line => line !== "    enabled: \"off\"")).toEqual(before.split("\n"));
+    expect(parse(after, { version: "1.1" })).toEqual(parse(fresh, { version: "1.1" }));
+    expect(workerLimitsReady(home)).toBe(true);
+    expect(propertyWorkroomReady(home)).toBe(true);
+    // Once set, a restart writes nothing.
+    expect(ensurePropertyPack(home).wrote).toEqual([]);
+    expect(readFileSync(path, "utf8")).toBe(after);
+
+    // An office that switched it back on gets it off again at the next start.
+    for (const value of ["auto", "on", true]) {
+      const on = parseDocument(after, { version: "1.1" }); on.setIn(["tools", "tool_search", "enabled"], value);
+      writeFileSync(path, on.toString());
+      expect(workerLimitsReady(home), String(value)).toBe(false);
+      expect(ensurePropertyPack(home).wrote).toEqual(["config.yaml"]);
+      expect(parse(readFileSync(path, "utf8"), { version: "1.1" }).tools.tool_search).toEqual({ enabled: "off", defer: [...WORKER_DEFERRED_TOOLS] });
+      expect(workerLimitsReady(home)).toBe(true);
+    }
+  });
+
+  it("keeps the deferral list for rollback and turns tool search off whatever the office had", () => {
     expect(WORKER_DIRECT_TOOLS).toEqual(["todo_list", "session_search", "process_manage"]);
     for (const name of WORKER_DIRECT_TOOLS) expect(WORKER_DEFERRED_TOOLS).not.toContain(name as never);
     const pack = readFileSync(join(PACK_DIR, "config.yaml"), "utf8");
-    // Upstream reads a bare `false` as `enabled: off`; Repair must not turn the bridge back on.
-    const merged = parse(mergePropertyPolicy("tools:\n  tool_search: false\n", pack), { version: "1.1" });
-    expect(merged.tools.tool_search).toEqual({ enabled: "off", defer: [...WORKER_DEFERRED_TOOLS] });
-    expect(parse(mergePropertyPolicy("tools:\n  tool_search: true\n", pack), { version: "1.1" }).tools.tool_search).toEqual({ defer: [...WORKER_DEFERRED_TOOLS] });
+    expect(parse(pack, { version: "1.1" }).tools.tool_search).toEqual({ enabled: "off" });
+    // Upstream's legacy bare true/false and every map form: Install and Repair leave the bridge off.
+    for (const office of ["tool_search: false", "tool_search: true", "tool_search:\n    enabled: auto", "tool_search:\n    enabled: \"on\"", "tool_search:\n    enabled: true"]) {
+      expect(parse(mergePropertyPolicy(`tools:\n  ${office}\n`, pack), { version: "1.1" }).tools.tool_search, office).toEqual({ enabled: "off", defer: [...WORKER_DEFERRED_TOOLS] });
+    }
+    // The office's other tool-search settings stay.
+    expect(parse(mergePropertyPolicy("tools:\n  tool_search:\n    enabled: on\n    listing_max_tokens: 2000\n", pack), { version: "1.1" }).tools.tool_search)
+      .toEqual({ enabled: "off", listing_max_tokens: 2000, defer: [...WORKER_DEFERRED_TOOLS] });
     for (const office of ["compression: 3\n", "curator: off\n", "tools: [tool_search]\n"]) {
       expect(() => mergePropertyPolicy(office, pack)).toThrow(/kept/);
     }
@@ -658,7 +704,7 @@ describe("Ask tool policy (Hermes 0.21.5 reads it; harmless on 0.21.3)", () => {
     expect(shipped.auxiliary).not.toHaveProperty("vision");
     expect(shipped.auth).toEqual({ adopt_external_logins: false });
     expect(shipped.agent.auto_recovery_cycles).toBe(1);
-    expect(shipped.tools).toEqual({ connectors: { enabled: false } });
+    expect(shipped.tools).toEqual({ connectors: { enabled: false }, tool_search: { enabled: "off" } });
   });
 
   it("never adopts the setup role, Hermes Connectors, plugins or the Hermes browser", () => {
