@@ -581,7 +581,7 @@ function StreamingBubble({ text }: { text: string }) {
 /** The only Ask subtree subscribed to token frames. Keeping this subscription
  * out of ChatView means the header, transcript, actions, and composer do not
  * re-render for every streamed chunk. */
-function ChatStreamTail({
+export function ChatStreamTail({
   threadId,
   busy,
   productAsk,
@@ -597,8 +597,9 @@ function ChatStreamTail({
   const stream = useStreaming();
   const streaming = stream.streaming[threadId];
   const reasoning = stream.reasoning[threadId];
+  const step = stream.step?.[threadId];
 
-  useEffect(() => onGrowth(), [busy, onGrowth, reasoning, streaming]);
+  useEffect(() => onGrowth(), [busy, onGrowth, reasoning, streaming, step]);
 
   return (
     <>
@@ -614,7 +615,7 @@ function ChatStreamTail({
                 <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:150ms] motion-reduce:animate-none" />
                 <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:300ms] motion-reduce:animate-none" />
               </span>
-              <WorkingTimer since={since} />
+              <WorkingTimer since={since} step={step} />
             </div>
           </div>
         )
@@ -623,19 +624,28 @@ function ChatStreamTail({
   );
 }
 
-/** "Working for 12s" that ticks by mutating textContent on an interval —
- * no React commit per second while a turn streams (upstream trick). */
-function WorkingTimer({ since }: { since: number }) {
+/** "Working for 12s", or the current step ("Reading the bank feed… · 12s"),
+ * ticking by mutating textContent on an interval — no React commit per second
+ * while a turn streams (upstream trick). The conversation log is a polite live
+ * region: the step (or "Working") is announced when it changes, while the
+ * ticking seconds are hidden from assistive tech so nothing repeats each second. */
+function WorkingTimer({ since, step }: { since: number; step?: string }) {
   const ref = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     const tick = () => {
-      if (ref.current) ref.current.textContent = `Working for ${Math.max(0, Math.round((Date.now() - since) / 1000))}s`;
+      const seconds = Math.max(0, Math.round((Date.now() - since) / 1000));
+      if (ref.current) ref.current.textContent = step ? ` · ${seconds}s` : `Working for ${seconds}s`;
     };
     tick();
     const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
-  }, [since]);
-  return <span ref={ref} className="text-[12.5px] text-ink-secondary" />;
+  }, [since, step]);
+  return (
+    <span className="text-[12.5px] text-ink-secondary">
+      {step ?? <span className="sr-only">Working</span>}
+      <span ref={ref} aria-hidden="true" />
+    </span>
+  );
 }
 
 /** The settled transcript, memoized as one unit: during streaming every
