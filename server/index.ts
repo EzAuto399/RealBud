@@ -211,7 +211,7 @@ import type { HandoffTask, HumanHandoff } from "./human-handoffs.ts";
 import type { WorkflowRecord } from "./workflow-database.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN, type BrowserTaskGrant } from "../shared/browser-task.ts";
 import { browserApprovalCardFrom, stopBrowserApprovalCards } from "./browser-approval-card.ts";
-import { applyPropertyPack, ensurePropertyPack, MANAGED_MODEL_KEY_ENV, propertyProfileDir, shippedProfileDigests } from "./hermes-pack.ts";
+import { applyPropertyPack, ensurePropertyPack, ensureStartupConfig, MANAGED_MODEL_KEY_ENV, packInstalled, propertyProfileDir, shippedProfileDigests } from "./hermes-pack.ts";
 import { importLegacyProfileFacts, keepAsideForRepair, MEMORY_HELD_MESSAGE, memoryHeldForLaunch, projectProfileFacts, retireRepairedArtifacts, workerFactsHeld, workerScope } from "./worker-state.ts";
 import { legacyProposalContextIdentity } from "./hermes-memory-review.ts";
 import { ensureWorkspaceMemorySigning } from "./hermes-memory-signing.ts";
@@ -6304,6 +6304,13 @@ bindSlackBridge({
 const workspaceIdentity = await companyHost.workspaceIdentity();
 const onboarding = createOnboardingHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, memberKey: () => desk.memberKeyForWorker() });
 desk.setMemberKey(workspaceIdentity.workerMemberKey ?? '');
+// The boot pack step above touched the base profile only; a seat's own worker
+// profile takes the same startup-owned config change, so an upgraded seat does
+// not read as needing Repair.
+if (desk.memberKeyForWorker()) {
+  try { withWorkerProfile(desk.memberKeyForWorker(), () => { if (packInstalled()) ensureStartupConfig(); }); }
+  catch { oplog("boot", "A seat's Bud settings could not take up the startup change; Repair Bud finishes it."); }
+}
 // Bud's memory, learning and office edits live in RealBud (D/worker-state); the
 // worker profile is a projection, so deleting or replacing the worker loses nothing.
 /** Every path that resets SOUL.md to the pack (Repair, Install, apply-pack,

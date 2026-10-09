@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { applyManagedModelProfile, applyPropertyPack, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelConfig, managedModelProfile, mergePropertyPolicy, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS, propertyProfileDir, RETIRED_PACK_SKILLS, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, WORKER_ACP_TOOLSETS, WORKER_BROWSER_POLICY, WORKER_DEFERRED_TOOLS, WORKER_DIRECT_TOOLS, WORKER_DISABLED_TOOLSETS, WORKER_DISABLED_VAULTS, WORKER_DENIED_COMMANDS, MEMORY_SCHEMA_READY_COMMITS, shippedProfileDigests, yamlBlock } from "./hermes-pack.ts";
+import { applyManagedModelProfile, applyPropertyPack, MANAGED_MODEL_KEY_ENV, MANAGED_MODEL_PROVIDER, managedModelConfig, managedModelProfile, mergePropertyPolicy, ensurePropertyPack, ensureStartupConfig, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, PREVIOUSLY_OFF_SCOPE_BUNDLED_SKILLS, propertyProfileDir, RETIRED_PACK_SKILLS, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, WORKER_ACP_TOOLSETS, WORKER_BROWSER_POLICY, WORKER_DEFERRED_TOOLS, WORKER_DIRECT_TOOLS, WORKER_DISABLED_TOOLSETS, WORKER_DISABLED_VAULTS, WORKER_DENIED_COMMANDS, MEMORY_SCHEMA_READY_COMMITS, shippedProfileDigests, yamlBlock } from "./hermes-pack.ts";
 import { MANAGED_MODEL_CHOICES } from "../shared/managed-model-choices.ts";
 import { HERMES_RECOMMENDED } from "./hermes-releases.ts";
 import { releaseHome, resetRuntimeSelectionForTests, saveRuntimeSelection, selectedHermesCli } from "./hermes-runtime-selection.ts";
@@ -12,6 +12,7 @@ import { runtimeCli } from "./hermes-paths.ts";
 import { dirname } from "node:path";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { parse, parseDocument } from "yaml";
+import { withWorkerProfile } from "./hermes-profile.ts";
 
 import { privateFixtureDirectory, privateFixtureRoot, writePrivateFixtureFile as writeFileSync, WINDOWS_PROFILE_TEST_OPTIONS } from "./testing/private-profile-fixture.ts";
 
@@ -427,6 +428,21 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
       expect(parse(readFileSync(path, "utf8"), { version: "1.1" }).tools.tool_search).toEqual({ enabled: "off", defer: [...WORKER_DEFERRED_TOOLS] });
       expect(workerLimitsReady(home)).toBe(true);
     }
+  });
+
+  it("turns tool search off in a seat's own profile, which the base boot step does not touch", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-tool-search-seat-")); dirs.push(home);
+    const member = "8f14e45f-ceea-467a-9b36-1c5a2b9e0d11";
+    const seat = <T,>(work: () => T) => withWorkerProfile(member, work);
+    const { dir } = seat(() => applyPropertyPack(home)); const path = join(dir, "config.yaml");
+    const old = parseDocument(readFileSync(path, "utf8"), { version: "1.1" }); old.deleteIn(["tools", "tool_search", "enabled"]);
+    writeFileSync(path, old.toString());
+    expect(seat(() => workerLimitsReady(home))).toBe(false);
+    ensurePropertyPack(home);
+    expect(seat(() => workerLimitsReady(home))).toBe(false);
+    expect(seat(() => ensureStartupConfig(home))).toBe(true);
+    expect(seat(() => workerLimitsReady(home))).toBe(true);
+    expect(seat(() => ensureStartupConfig(home))).toBe(false);
   });
 
   it("keeps the deferral list for rollback and turns tool search off whatever the office had", () => {

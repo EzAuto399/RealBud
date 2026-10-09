@@ -560,14 +560,15 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
         response.end(`data: ${JSON.stringify({ error: { message: STALLED, type: "realbud_relay_refused" } })}\n\n`);
       } else response.destroy();
     } finally {
-      // Answered, refused, failed or stopped: its time lands on the lease's current run.
-      if (exchange && capability) noteModelExchange(capability.scope.usage, { ms: Date.now() - exchange.start, headersMs: exchange.headersMs, status: exchange.status });
       clearTimeout(timer);
       clearTimeout(idleTimer);
       inflight.delete(forwarding);
       admittedUnder.delete(forwarding);
       capability?.inflight.delete(forwarding);
       response.off("close", abandon);
+      // Answered, refused, failed or stopped: its time lands on the lease's
+      // current run. Last, so a bookkeeping fault cannot leave the exchange in flight.
+      if (exchange && capability) noteModelExchange(capability.scope.usage, { ms: Date.now() - exchange.start, headersMs: exchange.headersMs, status: exchange.status });
     }
   }
 

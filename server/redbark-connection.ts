@@ -131,8 +131,8 @@ export function createRedbarkConnection(options: McpConnectorOptions) {
         const rows = new Map<string, BankTransaction>(), seen = new Set<string>();
         let page: string | null = null, pages = 0, truncated = false;
         do {
-          if (++pages > MAX_PAGES) throw new McpToolError('invalid');
           stage = 'transactions';
+          if (++pages > MAX_PAGES) throw new McpToolError('invalid');
           // Only the documented MCP arguments (redbark.com/docs/mcp/tools).
           // `include_pending` belongs to the REST API; pending rows are dropped
           // below either way.

@@ -10,6 +10,7 @@ import { Document, isMap, isScalar, isSeq, parseDocument, visit, YAMLMap } from 
 
 import { ensureProfileDirectories, ensureProfileDirectory, readProfileFile, readProfileFiles, writeProfileFile, writeProfileFiles, type ProfileFileWrite } from "./hermes-profile-storage.ts";
 import { HERMES_PIN } from "./hermes-pin.ts";
+import { oplog } from "./oplog.ts";
 import { HERMES_RELEASES } from "./hermes-releases.ts";
 import { hermesHome, runtimeCli } from "./hermes-paths.ts";
 import { readRuntimeSelection, releaseHome, runtimeCommit, selectedHermesCli } from "./hermes-runtime-selection.ts";
@@ -233,9 +234,11 @@ export function ensurePropertyPack(root?: string): { dir: string; wrote: string[
   if (!packInstalled(root)) return { ...applyPropertyPack(root), kept: [] };
   const { dir, config, record } = prepareProfile(root);
   ensurePrivateRootAuth(root);
-  const next = startupConfig(config);
-  if (next !== null) writeProfileFile(join(dir, "config.yaml"), next, true, config);
-  const configWrote = next !== null ? ["config.yaml"] : [];
+  // A refused write must not cost this boot its SOUL/skills sync; readiness
+  // still asks for Repair while the key is missing.
+  let configWrote: string[] = [];
+  try { configWrote = writeStartupConfig(dir, config) ? ["config.yaml"] : []; }
+  catch { oplog("boot", "Bud's settings could not take up the startup change; Repair Bud finishes it."); }
   const shipped = shippedPack(root);
   if (readShippedRecord(record).pack === shipped.digest) return { dir, wrote: configWrote, kept: [] };
   const { soul, record: recordBytes, skills } = prepareProfile(root, shipped.plan);
@@ -243,6 +246,20 @@ export function ensurePropertyPack(root?: string): { dir: string; wrote: string[
   writeProfileFiles([...sync.writes, sync.record]);
   if (sync.kept.length) console.info(`[pack] kept ${sync.kept.length} office-edited Bud file(s): ${sync.kept.join(", ")}`);
   return { dir, wrote: [...configWrote, ...sync.wrote], kept: sync.kept };
+}
+
+/** The startup-owned config change for the current worker profile (the base
+ * profile, or a seat's under withWorkerProfile). Returns whether it wrote. */
+export function ensureStartupConfig(root?: string): boolean {
+  const dir = propertyProfileDir(root);
+  return writeStartupConfig(dir, readProfileFile(join(dir, "config.yaml")));
+}
+
+function writeStartupConfig(dir: string, config: Buffer | null): boolean {
+  const next = startupConfig(config);
+  if (next === null) return false;
+  writeProfileFile(join(dir, "config.yaml"), next, true, config);
+  return true;
 }
 
 /** An existing profile with tool search not yet off (one written by RealBud
