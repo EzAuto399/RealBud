@@ -128,21 +128,25 @@ export async function mkdirPrivate(path: string, mode = 0o700): Promise<boolean>
 /** Privacy refusals (links, foreign owner, too-open file, Windows ACL) throw
  * first; only a file that passes them and is past `maxBytes` is marked as
  * damaged content, which a last-good restore may replace. */
-async function readPrivateText(path: string, maxBytes: number): Promise<string | undefined> {
+async function readPrivateText(path: string, maxBytes: number, repair = true): Promise<string | undefined> {
   try {
     const stat = await lstat(path);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error('Private state file needs recovery.');
     await tightenOwnerOnly(path, stat, 'file', 'A RealBud storage file');
     // Unlike a too-open POSIX file, a file that only inherits grants of this
-    // account, SYSTEM and Administrators was never open to anyone else.
-    await admitPrivateObject(path, 'file', 'A RealBud storage file');
+    // account, SYSTEM and Administrators was never open to anyone else. A file
+    // RealBud does not own (an operator's download) is only checked.
+    if (repair) await admitPrivateObject(path, 'file', 'A RealBud storage file');
+    else await windowsFilePrivacy(path, 'file');
     if (stat.size > maxBytes) throw Object.assign(new Error('Private state file needs recovery.'), { damaged: true });
     return await readFile(path, 'utf8');
   } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
 }
 
-export async function readPrivateJson(path: string, maxBytes = 64_000): Promise<unknown | undefined> {
-  const text = await readPrivateText(path, maxBytes);
+/** `repair: false` for a file outside RealBud's storage: its Windows
+ * permissions are checked, never changed. */
+export async function readPrivateJson(path: string, maxBytes = 64_000, options: { repair?: boolean } = {}): Promise<unknown | undefined> {
+  const text = await readPrivateText(path, maxBytes, options.repair ?? true);
   return text === undefined ? undefined : JSON.parse(text) as unknown;
 }
 

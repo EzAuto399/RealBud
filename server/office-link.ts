@@ -29,7 +29,7 @@ const PREFLIGHT_STORES: Record<PreflightStep, string> = {
 };
 /** Why Windows refused a store, for the ACL refusals a person can act on. */
 const WINDOWS_ACL_REASONS: Record<string, string> = {
-  "grant-not-allowed": "another account on this computer can open it",
+  "grant-not-allowed": "another account or group on this computer can open it",
   "deny-rule-present": "a Windows rule blocks access to it",
   "owner-not-allowed": "it belongs to another account",
   "target-full-control-missing": "your Windows account can't fully control it",
@@ -67,6 +67,7 @@ export function preflightRefusal(error: unknown): { message: string; log: { step
     const store = step ? PREFLIGHT_STORES[step] : "RealBud's private storage on this computer";
     const reason = category ? WINDOWS_ACL_REASONS[category] : undefined;
     const said = reason ? `${store[0]!.toUpperCase()}${store.slice(1)} has Windows permissions RealBud can't use: ${reason}.`
+      : category === "acl-apply-failed" ? `Windows couldn't update the permissions on ${store}.`
       : `Windows couldn't check the permissions on ${store}.`;
     return { message: `${said} Your work is kept. ${CONTACT_SUPPORT} before trying office setup again.`, log };
   }

@@ -114,7 +114,7 @@ export function officeLinkRecoveryMessage(status: OfficeLinkStatus | null): stri
   }
   // A Windows permission refusal names the store and the reason in fixed
   // server copy (server/office-link.ts preflightRefusal); keep only that shape.
-  const windowsAcl = /^((?:[A-Z][^.]{0,100} has Windows permissions RealBud can't use: [^.]{1,80}|Windows couldn't check the permissions on [^.]{1,100})\.) Your work is kept\./.exec(error);
+  const windowsAcl = /^((?:[A-Z][^.]{0,100} has Windows permissions RealBud can't use: [^.]{1,80}|Windows couldn't (?:check|update) the permissions on [^.]{1,100})\.) Your work is kept\./.exec(error);
   if (windowsAcl) return `${windowsAcl[1]} Your work is kept. ${CONTACT_SUPPORT} before trying office setup again.`;
   if (/^This computer[’']s saved settings or private service storage need recovery\b/i.test(error)) {
     return `This computer’s saved settings or private service storage need recovery. Your work is kept. ${CONTACT_SUPPORT} before trying office setup again.`;

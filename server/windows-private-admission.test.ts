@@ -8,7 +8,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { windowsFilePrivacyBatch, windowsFilePrivacyBatchSync, type WindowsFilePrivacyOperation } from './windows-file-privacy.ts';
 import { admitPrivateObject, admitPrivateObjects, admitPrivateObjectsSync } from './windows-private-admission.ts';
-import { admitPrivateDirectorySync, writePrivateJson } from './private-json.ts';
+import { admitPrivateDirectorySync, readPrivateJson, writePrivateJson } from './private-json.ts';
+import { writeNewPrivateFile } from './private-file.ts';
+import { windowsFilePrivacy } from './windows-file-privacy.ts';
 import { setOpLogPath } from './oplog.ts';
 
 vi.mock('./windows-file-privacy.ts', () => ({
@@ -130,5 +132,28 @@ describe('private JSON admission of an older data folder', () => {
     expect(logLines().map(line => line.detail)).toEqual([expect.stringContaining("RealBud's data folder")]);
     expect(readFileSync(log, 'utf8')).not.toContain(data);
     batch.mockReset();
+  });
+});
+
+describe('files and folders RealBud does not own, and the install lock', () => {
+  it('only checks a file read with repair off, such as an operator-chosen bundle', async () => {
+    const bundle = join(root, 'fictional-bundle.json');
+    writeFileSync(bundle, '{"version":1}', { mode: 0o600 });
+    const verify = vi.mocked(windowsFilePrivacy);
+    verify.mockClear();
+    verify.mockRejectedValueOnce(refusal('inheritance-not-protected'));
+    await expect(readPrivateJson(bundle, 64_000, { repair: false })).rejects.toMatchObject({ category: 'inheritance-not-protected' });
+    expect(verify).toHaveBeenCalledWith(bundle, 'file');
+    expect(batch).not.toHaveBeenCalled();
+    expect(logLines()).toEqual([]);
+  });
+
+  it('repairs the install lock folder before creating the lock', async () => {
+    const folder = join(root, 'fictional-data');
+    mkdirSync(folder, { mode: 0o700 });
+    batch.mockRejectedValueOnce(refusal('inheritance-not-protected'));
+    await writeNewPrivateFile(join(folder, '.fictional.lock'), '{}');
+    expect(actions(batch.mock.calls)).toEqual([[`verify:${folder}`], [`repair:${folder}`]]);
+    expect(readFileSync(join(folder, '.fictional.lock'), 'utf8')).toBe('{}');
   });
 });

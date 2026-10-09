@@ -23,7 +23,7 @@ afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 describe("preflightRefusal", () => {
   it("names the store and the Windows reason for an ACL refusal, and logs only step, names and token", () => {
     const { message, log } = preflightRefusal(wrapped(aclRefusal("grant-not-allowed"), "data folder"));
-    expect(message).toBe("RealBud's data folder on this computer has Windows permissions RealBud can't use: another account on this computer can open it. Your work is kept. "
+    expect(message).toBe("RealBud's data folder on this computer has Windows permissions RealBud can't use: another account or group on this computer can open it. Your work is kept. "
       + "Contact RealBud support at hello@realbud.app with a support file (Workspace → Settings & help → Save support file) before trying office setup again.");
     expect(log).toEqual({ step: "data folder", errors: "Error<-WindowsFilePrivacyError", acl: "[windows-acl:grant-not-allowed]" });
   });
@@ -32,6 +32,11 @@ describe("preflightRefusal", () => {
     const { message, log } = preflightRefusal(wrapped(aclRefusal("powershell-not-found"), "profile file"));
     expect(message).toMatch(/^Windows couldn't check the permissions on a file in Bud's private profile on this computer\. Your work is kept\. Contact RealBud support at hello@realbud\.app/);
     expect(log.acl).toBe("[windows-acl:powershell-not-found]");
+  });
+
+  it("says Windows could not update when a repair could not be applied", () => {
+    const { message } = preflightRefusal(wrapped(aclRefusal("acl-apply-failed"), "data folder"));
+    expect(message).toMatch(/^Windows couldn't update the permissions on RealBud's data folder on this computer\. Your work is kept\./);
   });
 
   it("passes a nested private-storage refusal through and keeps the generic text for anything else", () => {

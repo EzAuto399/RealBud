@@ -1,10 +1,11 @@
 import { open, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
+import { admitPrivateObject } from './windows-private-admission.ts';
 
 /** Create only a new file, and establish its private ACL before writing content. */
 export async function writeNewPrivateFile(path: string, content: string): Promise<void> {
-  await windowsFilePrivacy(dirname(path), 'directory');
+  await admitPrivateObject(dirname(path), 'directory', 'A RealBud storage folder');
   const file = await open(path, 'wx', 0o600);
   let complete = false;
   try {

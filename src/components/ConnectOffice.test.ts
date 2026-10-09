@@ -106,8 +106,8 @@ describe("connect this computer to your office", () => {
     expect(preflight).toContain("Save support file) before trying office setup again");
     expect(preflight).not.toMatch(/Update status|next update|Keep RealBud open/);
     const windows = view({ state: "linked", agencyLabel: "Fictional Harbour Agency", provisioned: false,
-      error: "RealBud's data folder on this computer has Windows permissions RealBud can't use: another account on this computer can open it. Your work is kept. Contact RealBud support at hello@realbud.app with a support file (Workspace → Settings & help → Save support file) before trying office setup again." });
-    expect(windows).toContain("RealBud&#x27;s data folder on this computer has Windows permissions RealBud can&#x27;t use: another account on this computer can open it. Your work is kept.");
+      error: "RealBud's data folder on this computer has Windows permissions RealBud can't use: another account or group on this computer can open it. Your work is kept. Contact RealBud support at hello@realbud.app with a support file (Workspace → Settings & help → Save support file) before trying office setup again." });
+    expect(windows).toContain("RealBud&#x27;s data folder on this computer has Windows permissions RealBud can&#x27;t use: another account or group on this computer can open it. Your work is kept.");
     expect(windows).toContain("Save support file) before trying office setup again");
   });
 

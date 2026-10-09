@@ -7,6 +7,7 @@ import { join } from "node:path";
 
 import { mkdirNewSync, mkdirPrivateSync, restrictNewSync, writeFileAtomic } from "./atomic.ts";
 import { admitPrivateDirectorySync, PrivateStorageError } from "./private-json.ts";
+import { admitPrivateObject } from "./windows-private-admission.ts";
 import type { InstanceConfigMap } from "./contracts.ts";
 
 export interface AppConfig {
@@ -86,6 +87,14 @@ export function ensureDirs() {
   // same plain reason, by the private stores that need it.
   try { admitPrivateDirectorySync(DATA_DIR, "RealBud's data folder"); }
   catch (error) { console.error(`[storage] ${error instanceof PrivateStorageError ? error.message : "RealBud's data folder could not be checked."}`); }
+  // Windows: older installs made the data folder with inherited permissions
+  // (0.1.46, 9 Oct). Repair one whose inherited grants are already private, in
+  // the background so launch never waits on PowerShell; every private store
+  // still checks it again before use.
+  if (process.platform === "win32") {
+    void admitPrivateObject(DATA_DIR, "directory", "RealBud's data folder")
+      .catch(() => console.error("[storage] RealBud's data folder has Windows permissions RealBud can't use."));
+  }
 }
 
 export class ConfigRecoveryError extends Error {
