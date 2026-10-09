@@ -549,13 +549,29 @@ type SyncFailure = { category: string; nativeExitCode: number | null; operationI
 let syncHost: SyncHost | null = null;
 const SYNC_HOST_MARKER = 'realbudWindowsPrivacySyncHost';
 
+/** The parent's Node flags minus the ones that name the parent's own entry
+ * (`-e`/`--eval`, `-p`/`--print`, `--input-type`). A Worker given those refuses
+ * to start, and the caller then waits out HOST_TIMEOUT_MS in Atomics.wait with
+ * no answer (a `node --input-type=module -e` child, 9 Oct). */
+export function syncHostExecArgv(parent: readonly string[]): string[] {
+  const kept: string[] = [];
+  for (let index = 0; index < parent.length; index++) {
+    const arg = parent[index]!;
+    if (/^(-e|--eval|-p|--print|--input-type)$/.test(arg)) { index++; continue; }
+    if (/^(--eval|--print|--input-type)=/.test(arg)) continue;
+    kept.push(arg);
+  }
+  return kept;
+}
+
 function startSyncHost(): SyncHost {
   const signal = new Int32Array(new SharedArrayBuffer(4));
   const { port1, port2 } = new MessageChannel();
-  // Source mode runs this .ts under strip-types (the worker inherits execArgv);
+  // Source mode runs this .ts under strip-types (the worker keeps that flag);
   // the packaged build runs the compiled .js beside it.
   const worker = new Worker(new URL(import.meta.url), {
     workerData: { [SYNC_HOST_MARKER]: true, port: port2, signal }, transferList: [port2],
+    execArgv: syncHostExecArgv(process.execArgv),
   });
   const started: SyncHost = { worker, port: port1, signal, nextId: 1 };
   const forget = () => { if (syncHost === started) syncHost = null; };
