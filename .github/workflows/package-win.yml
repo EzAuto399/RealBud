@@ -80,6 +80,11 @@ jobs:
           pnpm exec vitest run server/one-shot-process.test.ts server/worker-supervisor.native.test.ts server/procs.test.ts electron/cua-launcher.test.mjs electron/cua-windows-host.test.mjs electron/cua-lifecycle.test.mjs electron/speech-helper-win.test.mjs
       - name: Windows packaging fixtures
         run: pnpm exec vitest run electron/package-files.test.mjs electron/perm-settings.test.mjs electron/service-smoke.test.mjs
+      # Private storage ACLs only behave on real win32. 0.1.46 shipped a data
+      # folder with inherited permissions that office setup refused (9 Oct), so
+      # every Windows build proves admission and repair before it packages.
+      - name: Windows private storage
+        run: pnpm exec vitest run server/windows-private-admission-windows.test.ts server/windows-file-privacy.test.ts server/hermes-profile-windows.test.ts server/ask-attach.test.ts server/service-entitlement-install.test.ts
       # the packaged app ships compiled JS, so a stale dist/ or dist-server/
       # would ride along unsigned-for and unsealed (the 0.1.15 "damaged"
       # incident) — a fresh checkout is clean, but be explicit
