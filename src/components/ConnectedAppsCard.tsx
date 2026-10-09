@@ -8,13 +8,14 @@ import { api, useStore } from "@/state/store";
 import { fmtDateTime } from "@/lib/au";
 import {
   activeConnectedAccounts, APP_OPERATION_LABELS, canPrepareConnectedEmail, connectedAppOperationContext,
-  connectedEmailContext, EARLIER_CONNECTION_CODE, EMAIL_APPS, needsEarlierConnectionCheck, needsOwnerCheck, operationsToShow, readConnectedAppOperations, selectedConnectedAccount,
+  connectedEmailContext, EARLIER_CONNECTION_CODE, EMAIL_APPS, needsAttention, needsEarlierConnectionCheck, needsOwnerCheck, operationsToShow, readConnectedAppOperations, selectedConnectedAccount,
   type ConnectedAppOperation, type EmailApp,
 } from "@/lib/connected-apps";
 import { resolveProductBudId } from "@/lib/product-bud";
 import { appConnectionPrompt, BANK_CSV_FALLBACK, connectedAppCatalog, filterConnectedAppCatalog, OFFICE_GMAIL_SLUG, REDBARK_APP_SLUG, type ConnectedAppCatalogEntry } from '@/lib/connected-app-catalog';
 import { useSetupState } from "@/lib/use-setup-state";
 import { OwnerRequestButton } from "./OwnerRequestButton";
+import { CopyButton } from "./CopyButton";
 import { SetupGateNote } from "./SetupGateNote";
 import { useHermiosConnection, type HermiosConnectionControls } from "@/lib/hermios-connection-api";
 import { useConnector, type ConnectorControls } from "@/lib/redbark-connection-api";
@@ -43,11 +44,26 @@ const control = "pm-control inline-flex items-center justify-center gap-1.5 roun
 
 const sendsMail = (operation: ConnectedAppOperation) => MAIL_SENDS.has(operation.toolName) || operation.toolSlugs.some(slug => MAIL_SENDS.has(slug));
 
+/** What staff copy for the owner when only the owner can mark a receipt checked. Nothing is sent. */
+export function ownerCheckRequest(operation: ConnectedAppOperation): string {
+  const what = operation.toolSlugs.join(", ") || operation.toolName || "an app action";
+  return `Hi, RealBud couldn't confirm whether ${sendsMail(operation) ? "a mail send" : "an app action"} from my computer happened (${what}, ${fmtDateTime(Date.parse(operation.startedAt))}). `
+    + `Could you check it in the app${sendsMail(operation) ? " (look in Sent)" : ""}, then mark it checked on my computer under Workspace → Apps → Recent activity? Thanks.`;
+}
+
 /** An unconfirmed receipt RealBud cannot check: one with no saved account
  *  details, or a send recorded under an earlier company or managed gateway. The
- *  owner checks the app and says so here. Nothing is sent or undone. */
-export function OwnerCheckNote({ operation, busy, onCheck, earlierConnection = false }: { operation: ConnectedAppOperation; busy: boolean; onCheck: () => void; earlierConnection?: boolean }) {
+ *  owner checks the app and says so here; staff copy a request for the owner,
+ *  because the service accepts the check from the owner only. Nothing is sent or undone. */
+export function OwnerCheckNote({ operation, busy, onCheck, canManage, earlierConnection = false }: { operation: ConnectedAppOperation; busy: boolean; onCheck: () => void; canManage: boolean; earlierConnection?: boolean }) {
   const what = operation.toolSlugs.join(", ") || operation.toolName || "this action";
+  if (!canManage) return (
+    <div className="mt-2 rounded-lg border border-line p-3">
+      <p className="text-ink">RealBud couldn’t confirm whether this happened{earlierConnection ? ", because it was recorded under an earlier office connection" : ""}. The office owner checks it in the app and marks it checked.</p>
+      <p className="mt-1 text-ink-secondary">{earlierConnection ? "Until then, Bud warns before sending the same message again." : sendsMail(operation) ? "Until then, Bud holds new mail sends." : "Until then, Bud holds this action."} Copy a request and pass it to your owner.</p>
+      <div className="mt-2"><CopyButton text={ownerCheckRequest(operation)} label="Copy request for your owner" className={control} /></div>
+    </div>
+  );
   return (
     <div className="mt-2 rounded-lg border border-line p-3">
       <p className="text-ink">{earlierConnection
@@ -263,7 +279,11 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
   const [appQuery, setAppQuery] = useState('');
   const [appFilter, setAppFilter] = useState<'all' | 'connected'>('all');
   const operationsRequest = useRef<AbortController | null>(null);
+  /** Recent activity opens itself while a receipt needs checking, and stays as the person leaves it. */
+  const [activityOpen, setActivityOpen] = useState(false);
   const id = useId();
+  // The service accepts "checked in the app" from the office owner or an administrator only (same authority as these connections).
+  const canManage = (bankFeed.view.state?.canManage ?? officeConnectors.state.view?.canManage) === true;
 
   const loadStatus = useCallback(async () => {
     setError("");
@@ -370,6 +390,7 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
   const gate = useSetupState().gates.connectApps;
   const budReady = state.hermes?.ready === true;
   const canConnect = !DESIGN_PREVIEW_REASON && configured && Boolean(budId) && gate.on && budReady && !budBusy && state.connected && !loading && !settingsPending && !connecting;
+  const needsChecking = operations.filter(needsAttention).length;
   const customConnect = () => {
     if (askConnect(customApp)) setCustomApp('');
   };
@@ -517,8 +538,8 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
             </section>
           ) : null}
 
-          <details className="border-t border-line pt-3">
-            <summary className="cursor-pointer text-[13px] font-medium text-ink">Recent activity · {operations.length}</summary>
+          <details className="border-t border-line pt-3" open={activityOpen || needsChecking > 0} onToggle={event => setActivityOpen(event.currentTarget.open)}>
+            <summary className="cursor-pointer text-[13px] font-medium text-ink">Recent activity · {operations.length}{needsChecking ? <span className="text-hold"> · {needsChecking} {needsChecking === 1 ? "needs" : "need"} checking</span> : null}</summary>
             <div className="mt-2 flex items-center justify-between gap-2">
               <p className="text-[12px] text-ink-secondary">Receipts only — not permission to act.</p>
               <button type="button" className={control} disabled={operationsLoading || !state.connected} onClick={() => void loadOperations()}>
@@ -538,22 +559,19 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
                     </span>
                     <span className="text-[12px] text-ink-muted">{fmtDateTime(Date.parse(operation.startedAt))}</span>
                   </div>
-                  <p className="mt-1 break-words text-ink-secondary">{operation.toolSlugs.join(", ") || operation.toolName || "Connected app operation"}</p>
-                  <p className="mt-1 break-all text-ink-secondary">Operation {operation.id}</p>
-                  {operation.repeatOf ? <p className="mt-1 text-ink-secondary">Separately approved intentional repeat of {operation.repeatOf}.</p> : null}
+                  <p className="mt-1 break-words text-ink-secondary" title={`Operation ${operation.id}`}>{operation.toolSlugs.join(", ") || operation.toolName || "Connected app operation"}</p>
+                  {operation.repeatOf ? <p className="mt-1 text-ink-secondary">Separately approved intentional repeat of an earlier action.</p> : null}
                   {operation.reconciliation ? <p role="status" className="mt-2 text-ink-secondary">You recorded after inspecting the mail app: message {operation.reconciliation.outcome === 'sent' ? 'was sent' : 'was not sent'}. Manual evidence · {fmtDateTime(Date.parse(operation.reconciliation.at))}. The provider outcome remains {operation.status}. A new send still needs its own approval.</p> : null}
                   {operation.identified && MAIL_SENDS.has(operation.toolName) && (operation.status === 'unknown' || operation.status === 'failed') && !operation.reconciliation && !needsEarlierConnectionCheck(operation, earlierConnection) ? (
                     <button type="button" className={`${control} mt-2`} disabled={recoveryBusy || budBusy} onClick={() => void prepareMailRecovery(operation)}>Inspect and record mail outcome</button>
                   ) : null}
-                  {needsOwnerCheck(operation) ? <OwnerCheckNote operation={operation} busy={recoveryBusy} onCheck={() => void acknowledgeOperation(operation)} /> : null}
-                  {needsEarlierConnectionCheck(operation, earlierConnection) ? <OwnerCheckNote operation={operation} earlierConnection busy={recoveryBusy} onCheck={() => void acknowledgeOperation(operation)} /> : null}
+                  {needsOwnerCheck(operation) ? <OwnerCheckNote operation={operation} canManage={canManage} busy={recoveryBusy} onCheck={() => void acknowledgeOperation(operation)} /> : null}
+                  {needsEarlierConnectionCheck(operation, earlierConnection) ? <OwnerCheckNote operation={operation} canManage={canManage} earlierConnection busy={recoveryBusy} onCheck={() => void acknowledgeOperation(operation)} /> : null}
                   {operation.acknowledgement ? <p role="status" className="mt-2 text-ink-secondary">Marked checked in the app · {fmtDateTime(Date.parse(operation.acknowledgement.at))}. The recorded outcome stays {operation.status === 'failed' ? 'failed' : 'unknown'}; a new action still needs its own approval.</p> : null}
                   {!operation.identified && operation.status === 'failed' ? <p className="mt-2 text-ink-secondary">The app reported a failure. Check it in the app before asking Bud to try again.</p> : null}
                   {mailRecovery?.operationId === operation.id ? (
                     <div className="mt-3 rounded-lg border border-line p-3">
                       <p className="font-medium text-ink">Check {mailRecovery.account.label} in {mailRecovery.account.provider === 'gmail' ? 'Gmail' : 'Outlook'}</p>
-                      <p className="mt-1 break-all text-ink-secondary">Verified account {mailRecovery.account.accountId} · {mailRecovery.toolName} · operation {mailRecovery.operationId}</p>
-                      <p className="mt-1 break-all text-ink-secondary">Company {mailRecovery.account.companyId} · managed gateway {mailRecovery.account.gatewayOrigin}</p>
                       <p className="mt-1 text-ink-secondary">Original approval {fmtDateTime(mailRecovery.originalReview.approvedAt)} · dispatch recorded {fmtDateTime(mailRecovery.startedAt)}</p>
                       {mailRecovery.connectionChanged ? <p role="alert" className="mt-2 font-medium text-hold">The connection changed since the original approval. The account above is the same exact verified account. Inspect the original reviewed message below in that account before recording a manual outcome.</p> : null}
                       <details className="mt-3" open><summary className="cursor-pointer font-medium text-ink">Original approved message and recipients</summary><pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words text-ink-secondary">{mailRecovery.originalReview.card}</pre></details>

@@ -15,7 +15,7 @@ vi.mock('@/lib/use-setup-state', async () => {
 });
 vi.mock('@/lib/connected-apps-refresh', () => ({ officeSources: { refresh: vi.fn() }, useOfficeSources: () => ({ snapshot: fixture.snapshot, loading: false, error: '' }) }));
 vi.mock('./GmailReadOnlySetup', () => ({ connectedAppsMode: () => 'consumer', selectedConnectedAppsConfigured: () => fixture.configured, useConnectionSettingsPending: () => false, hasUnconfirmedGmailSettingsChange: () => false }));
-import { BankFeedConnect, BankFeedTile, ConnectedAppsCard, HermiosFeaturedTile, OwnerCheckNote } from './ConnectedAppsCard';
+import { BankFeedConnect, BankFeedTile, ConnectedAppsCard, HermiosFeaturedTile, OwnerCheckNote, ownerCheckRequest } from './ConnectedAppsCard';
 import type { ConnectorState } from '@shared/mcp-connector';
 import type { ConnectorView } from '@/lib/redbark-connection-api';
 import { REDBARK_APP_SLUG } from '@/lib/connected-app-catalog';
@@ -284,7 +284,7 @@ describe('bank feed tile', () => {
 describe('owner check for an unconfirmed receipt without account details', () => {
   const operation = { id: '11111111-1111-4111-8111-111111111111', threadId: 'thread', toolName: 'GMAIL_SEND_EMAIL', toolSlugs: [], status: 'unknown' as const, startedAt: new Date().toISOString(), revision: 1 };
   it('says what to check, that it only records the check, and offers the step in place', () => {
-    const markup = renderToStaticMarkup(createElement(OwnerCheckNote, { operation, busy: false, onCheck: vi.fn() }));
+    const markup = renderToStaticMarkup(createElement(OwnerCheckNote, { operation, canManage: true, busy: false, onCheck: vi.fn() }));
     expect(markup).toContain('no saved account details');
     expect(markup).toContain('look in Sent');
     expect(markup).toContain('Bud holds new mail sends until the office owner marks this checked');
@@ -293,7 +293,7 @@ describe('owner check for an unconfirmed receipt without account details', () =>
     expect(markup).not.toMatch(/delete|remove|\.lock|Hermes|MCP|broker/i);
   });
   it('words the same step for a send recorded under an earlier company or gateway', () => {
-    const markup = renderToStaticMarkup(createElement(OwnerCheckNote, { operation: { ...operation, status: 'failed', identified: true }, earlierConnection: true, busy: false, onCheck: vi.fn() })).replace(/&#x27;/g, "'");
+    const markup = renderToStaticMarkup(createElement(OwnerCheckNote, { operation: { ...operation, status: 'failed', identified: true }, earlierConnection: true, canManage: true, busy: false, onCheck: vi.fn() })).replace(/&#x27;/g, "'");
     expect(markup).toContain('recorded under an earlier company or managed gateway');
     expect(markup).toContain("look in Sent");
     expect(markup).toContain('Bud warns before sending the same message again');
@@ -303,8 +303,25 @@ describe('owner check for an unconfirmed receipt without account details', () =>
     expect(markup).not.toMatch(/delete|remove|\.lock|Hermes|MCP|broker/i);
   });
   it('words a non-mail hold for that action and disables the step while busy', () => {
-    const markup = renderToStaticMarkup(createElement(OwnerCheckNote, { operation: { ...operation, toolName: 'GOOGLECALENDAR_CREATE_EVENT' }, busy: true, onCheck: vi.fn() }));
+    const markup = renderToStaticMarkup(createElement(OwnerCheckNote, { operation: { ...operation, toolName: 'GOOGLECALENDAR_CREATE_EVENT' }, canManage: true, busy: true, onCheck: vi.fn() }));
     expect(markup).toContain('Bud holds this action until the office owner marks this checked');
     expect(markup).toMatch(/<button[^>]*disabled=""/);
+  });
+  it('gives staff the owner request instead of a check the service would refuse', () => {
+    for (const earlierConnection of [false, true]) {
+      const markup = renderToStaticMarkup(createElement(OwnerCheckNote, { operation, canManage: false, earlierConnection, busy: false, onCheck: vi.fn() })).replace(/&#x27;/g, "'");
+      expect(markup).not.toContain('I checked it in the app');
+      expect(markup).toContain('The office owner checks it in the app and marks it checked.');
+      expect(markup).toContain(earlierConnection ? 'Bud warns before sending the same message again' : 'Bud holds new mail sends');
+      expect(markup).toContain('aria-label="Copy request for your owner"');
+      expect(markup).not.toContain(operation.id);
+      expect(markup).not.toMatch(/Hermes|MCP|broker|gateway/i);
+    }
+    const request = ownerCheckRequest(operation);
+    expect(request).toContain('a mail send from my computer happened (GMAIL_SEND_EMAIL');
+    expect(request).toContain('look in Sent');
+    expect(request).toContain('Workspace → Apps → Recent activity');
+    expect(request).not.toContain(operation.id);
+    expect(ownerCheckRequest({ ...operation, toolName: 'GOOGLECALENDAR_CREATE_EVENT' })).toContain('an app action from my computer happened (GOOGLECALENDAR_CREATE_EVENT');
   });
 });

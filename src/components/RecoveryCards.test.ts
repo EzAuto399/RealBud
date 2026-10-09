@@ -29,6 +29,11 @@ describe('held browser step card', () => {
     expect(html).toContain('>It happened</button>');
     expect(html).toContain('>It didn&#x27;t happen</button>');
     expect(html).not.toContain('disabled=""');
+    // Neither answer is the default: both outcome buttons carry the same secondary style.
+    const outcome = [...html.matchAll(/<button [^>]*class="([^"]*)"[^>]*>It (?:happened|didn&#x27;t happen)<\/button>/g)].map(match => match[1]);
+    expect(outcome).toHaveLength(2);
+    expect(outcome[0]).toBe(outcome[1]);
+    expect(outcome[0]).not.toContain('bg-agency');
     expect(renderToStaticMarkup(createElement(HeldStepCard, { step, busy: true, onAnswer: answer })).match(/disabled=""/g)).toHaveLength(2);
   });
 

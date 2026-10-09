@@ -69,6 +69,8 @@ describe('maintenance review inputs', () => {
     const changed = maintenanceInvoices([forwarded], directory, 'Australia/Brisbane')[0]; expect(changed.senderMatch).toBe('unverified'); expect(changed.senderNote).toContain('could not be checked');
     forwarded.forwardedSenderReview.originalEnvelopeDigest = billSenderEnvelopeDigest(forwarded.forwardedSenderReview.originalSource);
     const qualified = maintenanceInvoices([forwarded], directory, 'Australia/Brisbane')[0]; expect(qualified.senderMatch).toBe('unverified'); expect(qualified.senderNote).toContain('authentication not available');
+    // A forwarded copy whose original simply has no mail authentication reads as not checked, never as a possible forgery.
+    expect(qualified.senderNote).toContain('Forwarded copy · original sender not checked (mail authentication not available for this message).'); expect(qualified.senderNote).not.toContain('Sender not verified');
   });
   it('reads the address from a From header', () => {
     expect(senderAddress('Fictional Plumbing <Accounts@Fictional-Plumbing.example>')).toBe('accounts@fictional-plumbing.example');
@@ -253,6 +255,28 @@ describe('maintenance review run', () => {
     expect(state.lastRun!.alerts).toBe(1);
     expect(third.quiet).toBe(false);
     expect(state.findings.filter(f => f.finding.kind === 'multiple-invoices')).toHaveLength(1);
+  });
+
+  it('words an office-forwarded copy as "original sender not checked" at read time, leaving the stored finding and forgery wording alone', async () => {
+    const { store, directory, deps, set } = await rig();
+    const forward = (b: BillInput) => { const row = bill({ from: 'Fictional Office <office@fictional-agency.example>', ref: 'FIC-PLUMB', ...b }); row.source = { ...row.source, message: { ...row.source.message, subject: `Fwd: Fictional invoice ${b.id}` } }; return row; };
+    const all = [
+      bill({ id: 'w0', number: 'INV-w', date: '2026-09-17' }), // the supplier's own copy: listed and confirmed
+      forward({ id: 'w1', number: 'INV-w', date: '2026-09-17' }), // forwarded copy of it, forwarder's mail confirmed
+      forward({ id: 'w2', number: 'INV-y', date: '2026-09-19', auth: 'mx.google.com; dkim=none; dmarc=fail header.from=fictional-agency.example' }), // forwarder's mail failed
+      bill({ id: 'w3', number: 'INV-x', date: '2026-09-18', auth: 'mx.google.com; dkim=none; dmarc=fail header.from=fictional-plumbing.example' }), // forged supplier mail
+    ];
+    set(all);
+    await runMaintenanceReview(run('r1'), deps);
+    const api = createMaintenanceReviewApi({ store, directory, recovery: () => false, propertyLabel: () => 'Fictional Oak Street', bill: id => all.find(row => row.id === id), loop: () => undefined });
+    const body = (await api(new URL('https://127.0.0.1/api/maintenance-review'), 'GET'))!.body as { findings: Array<{ finding: { kind: string; senderEmail?: string; reasons?: string[]; invoices: { invoiceNumber: string | null }[] }; forwardedCopy?: boolean }> };
+    expect(body.findings.filter(f => f.finding.kind === 'sender-verification').map(f => [f.finding.invoices[0]!.invoiceNumber, f.finding.senderEmail, f.finding.reasons, f.forwardedCopy ?? false]).sort()).toEqual([
+      ['INV-w', 'office@fictional-agency.example', ['unverified-sender'], true],
+      ['INV-x', 'accounts@fictional-plumbing.example', ['unverified-sender'], false],
+      ['INV-y', 'office@fictional-agency.example', ['unverified-sender'], false],
+    ]);
+    // Read-time wording only: nothing new is stored and the finding still asks to be checked.
+    expect((await store.read()).findings.some(row => 'forwardedCopy' in row)).toBe(false);
   });
 
   it('does not invent sender findings before the supplier list is imported', async () => {

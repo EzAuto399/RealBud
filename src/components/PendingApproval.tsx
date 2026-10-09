@@ -325,7 +325,7 @@ export function PendingApprovalActions({
               type="button"
               disabled={!memoryReviewAvailable}
               onClick={() => decide("allow", { scope: "once" })}
-              className={cn(base, productBud ? "border border-line text-ink hover:bg-raised" : "bg-agency font-medium text-white hover:bg-agency-hover")}
+              className={cn(base, "bg-agency font-medium text-white hover:bg-agency-hover")}
             >
               {isMemory ? "Allow this memory change once" : pending.tool === BROWSER_ACCOUNT_CONFIRM_TOOL ? "Continue in this account" : "Allow once"}
             </button>
@@ -337,7 +337,7 @@ export function PendingApprovalActions({
                 type="button"
                 onClick={() => decide("allow", { scope: "session" })}
                 title="Allow matching low-risk steps for this Bud task. Sensitive or consequential steps can still ask."
-                className={cn(base, "bg-agency font-medium text-white hover:bg-agency-hover")}
+                className={cn(base, "border border-line text-ink hover:bg-raised")}
               >
                 Allow for this task
               </button>

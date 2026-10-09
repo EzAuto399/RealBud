@@ -95,6 +95,13 @@ describe('native memory permission review', () => {
     expect(renderActions(value)).toContain('Allow for this task');
     expect(renderActions(value, false, bot('other'))).toContain('Always allow');
   });
+  it('makes the narrowest grant the filled primary: Allow once filled, task-wide secondary', () => {
+    const html = renderActions(pending({ tool: 'shell', approvalPolicy: undefined, memoryReview: undefined, allowKey: 'Bash:git' }));
+    const style = (label: string) => new RegExp(`<button [^>]*class="([^"]*)"[^>]*>${label}</button>`).exec(html)?.[1] ?? '';
+    expect(style('Allow once')).toContain('bg-agency');
+    expect(style('Allow for this task')).not.toContain('bg-agency');
+    expect(style('Allow for this task')).toContain('border-line');
+  });
 });
 
 describe('the account a browser task works in', () => {

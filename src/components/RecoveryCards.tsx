@@ -55,6 +55,8 @@ const ANSWERED: Record<Answer, string> = {
   "not-done": "Recorded as not done. You can ask Bud to try again; it will ask for your approval first.",
 };
 
+const OUTCOME_BUTTON = "pm-decision rounded border border-line px-4 text-[14px] text-ink hover:bg-selected disabled:cursor-not-allowed disabled:opacity-50";
+
 export function HeldStepCard({ step, busy, error, onAnswer }: { step: HeldStep; busy: boolean; error?: string; onAnswer: (answer: Answer) => void }) {
   const promptId = useId();
   return (
@@ -67,13 +69,12 @@ export function HeldStepCard({ step, busy, error, onAnswer }: { step: HeldStep; 
       <div className="flex flex-col gap-2 px-4 py-3">
         <p id={promptId} className="text-[13px] text-ink-muted">Bud won't repeat this until you tell it what happened.</p>
         {error ? <p role="alert" className="text-[13px] text-danger">{error}</p> : null}
+        {/* Equal weight, no default: the person reports what they saw on the site. */}
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" disabled={busy} aria-describedby={promptId} onClick={() => onAnswer("confirmed")}
-            className="pm-decision rounded bg-agency px-4 text-[14px] font-medium text-white hover:bg-agency-hover disabled:cursor-not-allowed disabled:opacity-50">
+          <button type="button" disabled={busy} aria-describedby={promptId} onClick={() => onAnswer("confirmed")} className={OUTCOME_BUTTON}>
             It happened
           </button>
-          <button type="button" disabled={busy} aria-describedby={promptId} onClick={() => onAnswer("not-done")}
-            className="pm-control rounded border border-line px-3.5 text-[14px] text-ink hover:bg-selected disabled:cursor-not-allowed disabled:opacity-50">
+          <button type="button" disabled={busy} aria-describedby={promptId} onClick={() => onAnswer("not-done")} className={OUTCOME_BUTTON}>
             It didn't happen
           </button>
         </div>

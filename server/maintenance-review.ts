@@ -196,7 +196,14 @@ export const INVOICE_RELAYS: ReadonlyMap<string, string> = new Map([['post.xero.
  * confirm the From domain (the relay's domain for a relayed invoice); otherwise
  * it is 'unverified' and still raises a sender finding. */
 export function maintenanceInvoices(bills: SourceBillOccurrence[], directory: SupplierDirectory, timeZone: string): MaintenanceInvoice[] {
-  const invoices: MaintenanceInvoice[] = [];
+  return senderRows(bills, directory, timeZone).map(row => row.invoice);
+}
+
+/** `forwardedNotChecked`: a forwarded copy whose original sender was simply
+ * not checked (no linked original, or no mail authentication on it), with no
+ * failed authentication. It stays 'unverified'; only its wording differs. */
+function senderRows(bills: SourceBillOccurrence[], directory: SupplierDirectory, timeZone: string): Array<{ invoice: MaintenanceInvoice; forwardedNotChecked: boolean }> {
+  const invoices: Array<{ invoice: MaintenanceInvoice; forwardedNotChecked: boolean }> = [];
   for (const bill of bills) {
     if (bill.state === 'cancelled') continue;
     let message = bill.source.message, originalNote = '', originalVerified = false;
@@ -213,9 +220,10 @@ export function maintenanceInvoices(bills: SourceBillOccurrence[], directory: Su
     const from = senderAddress(message.from), fromDomain = from.slice(from.lastIndexOf('@') + 1), relay = INVOICE_RELAYS.get(fromDomain);
     const email = relay ? senderAddress(message.replyTo ?? '') : from, match = matchSender(directory, email);
     const auth = parseMailAuth(message.authResults), confirmed = !!from && mailAuthConfirms(auth, fromDomain);
+    const forwardedNotChecked = (unresolvedForward || originalVerified) && (confirmed || !message.authResults);
     const notes = [originalNote, !relay ? '' : email ? `Sent via ${relay} for ${email}.` : `Sent via ${relay} with no single Reply-To address, so the supplier could not be checked.`];
     // An unlisted sender is already a finding; the verification note matters when a match would be trusted.
-    if (!confirmed && match.kind !== 'unlisted') notes.push(!message.authResults ? 'Sender not verified (mail authentication not available for this message).'
+    if (!confirmed && match.kind !== 'unlisted') notes.push(!message.authResults ? `${forwardedNotChecked ? 'Forwarded copy · original sender not checked' : 'Sender not verified'} (mail authentication not available for this message).`
       : relay ? `Claims to be sent via ${relay} but ${relay}'s signature was not confirmed (${mailAuthWords(auth)}).`
       : `Mail server did not confirm this sender, so it could be forged (${mailAuthWords(auth)}).`);
     const senderNote = notes.filter(Boolean).join(' ') || undefined;
@@ -226,12 +234,23 @@ export function maintenanceInvoices(bills: SourceBillOccurrence[], directory: Su
     if (match.kind === 'listed') { supplierRef = reviewed ?? match.supplierRef; senderMatch = reviewed && reviewed !== match.supplierRef ? 'conflict' : confirmed ? 'listed' : 'unverified'; }
     if (match.kind === 'conflict') { supplierRef = reviewed && match.supplierRefs.includes(reviewed) ? reviewed : null; senderMatch = 'conflict'; }
     if (unresolvedForward) { supplierRef = reviewed; senderMatch = 'unverified'; }
-    invoices.push({ senderEvidenceVersion: createHash('sha256').update(JSON.stringify([bill.source.digest, bill.forwardedSenderReview?.originalEnvelopeDigest ?? null, bill.facts.maintenanceClassification ?? 'unclassified'])).digest('hex'), ...(classificationNeeded ? { classificationNeeded: true } : {}), sourceId: bill.id, propertyId: bill.facts.propertyId, supplierRef, senderEmail: email || `unclear sender: ${redactSecretsInText(message.from).replace(/\s+/g, ' ').trim().slice(0, 200)}`, senderMatch, ...(senderNote ? { senderNote } : {}),
+    invoices.push({ forwardedNotChecked, invoice: { senderEvidenceVersion: createHash('sha256').update(JSON.stringify([bill.source.digest, bill.forwardedSenderReview?.originalEnvelopeDigest ?? null, bill.facts.maintenanceClassification ?? 'unclassified'])).digest('hex'), ...(classificationNeeded ? { classificationNeeded: true } : {}), sourceId: bill.id, propertyId: bill.facts.propertyId, supplierRef, senderEmail: email || `unclear sender: ${redactSecretsInText(message.from).replace(/\s+/g, ' ').trim().slice(0, 200)}`, senderMatch, ...(senderNote ? { senderNote } : {}),
       invoiceNumber: bill.facts.invoiceNumber ?? null, invoiceVersion: bill.facts.invoiceVersion ?? null, invoiceDate: bill.facts.invoiceDate,
       receivedDate: billDateInZone(message.at, timeZone), amountCents: bill.facts.amountCents,
-      description: (bill.facts.workDescription?.trim() || bill.facts.note.trim() || bill.facts.kind).slice(0, 500) });
+      description: (bill.facts.workDescription?.trim() || bill.facts.note.trim() || bill.facts.kind).slice(0, 500) } });
   }
   return invoices;
+}
+
+/** True when every record behind an unverified-sender finding is a forwarded
+ * copy whose original sender was not checked, so the panel can say so instead
+ * of "Sender not verified". Read-time wording only: the stored finding, its
+ * reasons and its alerts are unchanged. */
+function forwardedCopyFinding(finding: MaintenanceFinding, rows: ReadonlyMap<string, { invoice: MaintenanceInvoice; forwardedNotChecked: boolean }>): boolean {
+  if (finding.kind !== 'sender-verification' || !finding.reasons.length || !finding.reasons.every(reason => reason === 'unverified-sender')) return false;
+  const mine = finding.invoices.flatMap(invoice => invoice.sourceIds).map(id => rows.get(id))
+    .filter(row => row !== undefined && row.invoice.senderMatch === 'unverified' && row.invoice.senderEmail.trim().toLowerCase() === finding.senderEmail);
+  return mine.length > 0 && mine.every(row => row!.forwardedNotChecked);
 }
 
 const monthStart = (date: string, back: number) => { const [y, m] = date.split('-').map(Number); return new Date(Date.UTC(y, m - 1 - back, 1)).toISOString().slice(0, 10); };
@@ -311,15 +330,21 @@ export function createMaintenanceReviewApi(host: MaintenanceApiHost) {
       const shown = state.findings.filter(f => f.active);
       const properties: Record<string, string> = {}, suppliers: Record<string, string> = {};
       const sources: Record<string, { subject: string; from: string; receivedAt: number }> = {};
+      const bills: SourceBillOccurrence[] = [];
       for (const { finding } of shown) {
         properties[finding.propertyId] ??= host.propertyLabel(finding.propertyId) ?? finding.propertyId;
         if (finding.supplierRef) suppliers[finding.supplierRef] ??= directory.suppliers.find(s => s.reference === finding.supplierRef)?.description ?? '';
         for (const id of finding.invoices.flatMap(i => i.sourceIds)) {
           const bill = sources[id] ? undefined : host.bill(id);
-          if (bill) sources[id] = { subject: bill.source.message.subject.slice(0, 200), from: bill.source.message.from.slice(0, 200), receivedAt: bill.source.message.at };
+          if (bill) { bills.push(bill); sources[id] = { subject: bill.source.message.subject.slice(0, 200), from: bill.source.message.from.slice(0, 200), receivedAt: bill.source.message.at }; }
         }
       }
-      return { status: 200, body: { revision: state.revision, rule: state.rule, ruleRevision: state.ruleRevision ?? 0, ruleHistory: state.ruleHistory ?? [], lastRun: state.lastRun, findings: shown, properties, suppliers, sources,
+      // The time zone only sets received dates, which this wording check does not read. If a saved
+      // bill cannot be read here, the findings still load with the plain "Sender not verified" wording.
+      let rows: ReadonlyMap<string, { invoice: MaintenanceInvoice; forwardedNotChecked: boolean }> = new Map();
+      try { rows = new Map(senderRows(bills, directory, 'UTC').map(row => [row.invoice.sourceId, row])); } catch { /* keep the plain wording */ }
+      const findings = shown.map(saved => forwardedCopyFinding(saved.finding, rows) ? { ...saved, forwardedCopy: true } : saved);
+      return { status: 200, body: { revision: state.revision, rule: state.rule, ruleRevision: state.ruleRevision ?? 0, ruleHistory: state.ruleHistory ?? [], lastRun: state.lastRun, findings, properties, suppliers, sources,
         directory: { revision: directory.revision, suppliers: directory.suppliers.length, withoutEmail: directory.suppliers.filter(s => !s.emails.length).length,
           importedAt: directory.importedAt, conflicts: supplierEmailConflicts(directory) }, loop: host.loop() ?? null } };
     }

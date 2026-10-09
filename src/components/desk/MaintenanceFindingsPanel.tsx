@@ -8,7 +8,8 @@ interface Finding {
   id: string; kind: 'sender-verification' | 'multiple-invoices'; propertyId: string; supplierRef: string | null;
   senderEmail?: string; reasons?: string[]; windowKey?: string; windowStart?: string; windowEnd?: string; invoices: FindingInvoice[]; notes: string[];
 }
-interface Saved { finding: Finding; state: 'new' | 'seen' | 'dismissed' }
+/** `forwardedCopy`: set by the server when the finding's only cause is a forwarded copy whose original sender was not checked. */
+interface Saved { finding: Finding; state: 'new' | 'seen' | 'dismissed'; forwardedCopy?: boolean }
 interface Review {
   revision: number; findings: Saved[];
   lastRun: { finishedAt: number; checkedBills: number; coverage: { from: string; to: string; complete: boolean }; gaps: string[] } | null;
@@ -37,18 +38,20 @@ function readReview(v: unknown): Review {
   return r;
 }
 
-// A listed sender Gmail did not confirm (possible forgery) reads differently from an unknown one.
-const reason = (f: Finding) => f.kind === 'sender-verification' && f.reasons?.includes('classification-needed') ? 'Maintenance classification needed' : f.kind === 'sender-verification' ? (f.reasons?.length && f.reasons.every(r => r === 'unverified-sender') ? 'Sender not verified' : 'Sender needs checking')
+// A listed sender Gmail did not confirm (possible forgery) reads differently from an unknown one,
+// and an office-forwarded copy whose original sender was not checked reads as just that.
+export const findingHeading = ({ finding: f, forwardedCopy }: Pick<Saved, 'finding' | 'forwardedCopy'>) => f.kind === 'sender-verification' && f.reasons?.includes('classification-needed') ? 'Maintenance classification needed'
+  : f.kind === 'sender-verification' ? (f.reasons?.length && f.reasons.every(r => r === 'unverified-sender') ? (forwardedCopy === true ? 'Forwarded copy · original sender not checked' : 'Sender not verified') : 'Sender needs checking')
   : f.windowKey?.includes('rolling30') ? 'Several invoices within 30 days' : 'Several invoices this month';
 
 function FindingCard({ saved, review, busy, onDecide }: { saved: Saved; review: Review; busy: boolean; onDecide: (action: 'seen' | 'dismissed' | 'new') => void }) {
   const f = saved.finding, property = review.properties[f.propertyId] ?? f.propertyId;
   const supplier = f.supplierRef ? `${f.supplierRef}${review.suppliers[f.supplierRef] ? ` · ${review.suppliers[f.supplierRef]}` : ''}` : 'Supplier not matched yet';
-  const name = `${reason(f)} · ${property}`;
+  const name = `${findingHeading(saved)} · ${property}`;
   return <li data-finding-id={f.id} aria-label={name} className="space-y-2 py-3">
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0 flex-1">
-        <p className="font-medium break-words">{reason(f)}{saved.state === 'new' ? <span className="ml-2 rounded bg-hold/10 px-1.5 py-0.5 text-[11px] text-hold">New</span> : null}</p>
+        <p className="font-medium break-words">{findingHeading(saved)}{saved.state === 'new' ? <span className="ml-2 rounded bg-hold/10 px-1.5 py-0.5 text-[11px] text-hold">New</span> : null}</p>
         <p className="text-ink-secondary break-words">{property} · {supplier}{f.senderEmail ? ` · Sent from ${f.senderEmail}` : ''}{f.windowStart ? ` · ${f.windowStart} to ${f.windowEnd}` : ''}</p>
       </div>
       <div className="flex shrink-0 flex-wrap gap-2">

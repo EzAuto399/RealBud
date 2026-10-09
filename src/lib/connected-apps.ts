@@ -135,7 +135,7 @@ export function readConnectedAppOperations(value: unknown): ConnectedAppOperatio
 export const needsOwnerCheck = (operation: ConnectedAppOperation): boolean => operation.status === 'unknown' && !operation.identified && !operation.acknowledgement;
 /** Held receipts the owner can resolve here: the check above, or an
  * identified mail outcome not yet recorded or marked checked. */
-const needsAttention = (operation: ConnectedAppOperation): boolean => needsOwnerCheck(operation) ||
+export const needsAttention = (operation: ConnectedAppOperation): boolean => needsOwnerCheck(operation) ||
   (operation.identified === true && (operation.status === 'unknown' || operation.status === 'failed') && !operation.reconciliation && !operation.acknowledgement);
 /** The server's code when Inspect finds a receipt recorded under an earlier
  * company or managed gateway (server/connected-app-recovery.ts). */

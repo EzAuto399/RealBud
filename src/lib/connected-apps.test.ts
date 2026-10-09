@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  activeConnectedAccounts, canPrepareConnectedEmail, connectedAppOperationContext, connectedEmailContext, needsEarlierConnectionCheck, needsOwnerCheck, operationsToShow,
+  activeConnectedAccounts, canPrepareConnectedEmail, connectedAppOperationContext, connectedEmailContext, needsAttention, needsEarlierConnectionCheck, needsOwnerCheck, operationsToShow,
   readConnectedAppOperations, readConnectedAppsStatus, selectedConnectedAccount, type ConnectedAppsStatus,
 } from "./connected-apps";
 import { fileAttachment } from "./composer-attachments";
@@ -61,6 +61,8 @@ describe("connected email setup and account choice", () => {
     expect(parsed.find(row => row.id === 'identified')).toMatchObject({ identified: true });
     expect(parsed.find(row => row.id === 'identified')).not.toHaveProperty('effectDigest');
     expect(parsed.filter(needsOwnerCheck).map(row => row.id)).toEqual(['older']);
+    // The Recent activity summary counts both as needing checking.
+    expect(parsed.filter(needsAttention).map(row => row.id)).toEqual(['identified', 'older']);
     // Held receipts come first, ahead of newer activity, however old they are.
     expect(operationsToShow(parsed).map(row => row.id)).toEqual(['identified', 'older', 'recent-0', 'recent-1', 'recent-2', 'recent-3', 'recent-4']);
     const checked = readConnectedAppOperations({ operations: [{ ...legacy, revision: 2, acknowledgement: { at: NOW, source: 'owner-checked-app' } }] })[0];
