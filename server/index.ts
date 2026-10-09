@@ -5805,10 +5805,16 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     // installation's service that happens to serve the same API on the same
     // port. `instanceId` is a hash of this installation's data directory, so it
     // matches for this office only and discloses no path.
+    //
+    // `runtimeVersion` holds the same value as `version`; its presence says the
+    // version is the one this process started with. Services before 0.1.49
+    // re-read it from disk, so after a manual install they reported the new
+    // version while running the old code. The app adopts only a service that
+    // sends `runtimeVersion` (electron/update-service-handoff.mjs).
     if (method === "GET" && path === "/api/health") {
       if (!localSessionPublished) return json(res, 503, { error: "starting" });
       return json(res, 200, { app: "realbud", pid: process.pid, static: Boolean(STATIC_DIR), instanceId: SERVICE_INSTANCE_ID, controlId: SERVICE_CONTROL.id, version: appVersion(),
-        busy: serviceBusy() });
+        runtimeVersion: appVersion(), busy: serviceBusy() });
     }
 
     // ── provider instances (model picker) ──

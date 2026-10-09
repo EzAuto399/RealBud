@@ -388,6 +388,9 @@ describe("harness HTTP API", () => {
     expect(body.app).toBe("realbud");
     expect(typeof body.pid).toBe("number");
     expect(body.static).toBe(true);
+    // The app adopts only a service that sends the version it started with.
+    expect(body.runtimeVersion).toBe(body.version);
+    expect(body.runtimeVersion).toMatch(/^\d+\.\d+\.\d+/);
   });
 
   it("serves packaged UI assets and preserves API 404s", async () => {
