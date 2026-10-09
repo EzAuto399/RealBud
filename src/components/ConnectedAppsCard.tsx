@@ -8,7 +8,7 @@ import { api, useStore } from "@/state/store";
 import { fmtDateTime } from "@/lib/au";
 import {
   activeConnectedAccounts, APP_OPERATION_LABELS, canPrepareConnectedEmail, connectedAppOperationContext,
-  connectedEmailContext, EMAIL_APPS, readConnectedAppOperations, selectedConnectedAccount,
+  connectedEmailContext, EMAIL_APPS, needsOwnerCheck, operationsToShow, readConnectedAppOperations, selectedConnectedAccount,
   type ConnectedAppOperation, type EmailApp,
 } from "@/lib/connected-apps";
 import { resolveProductBudId } from "@/lib/product-bud";
@@ -40,6 +40,24 @@ function mailRecoveryView(value: unknown): MailRecoveryView {
 }
 
 const control = "pm-control inline-flex items-center justify-center gap-1.5 rounded-lg border border-line bg-sheet px-3 py-1.5 text-[12.5px] text-ink hover:bg-raised disabled:cursor-not-allowed disabled:opacity-50";
+
+const sendsMail = (operation: ConnectedAppOperation) => MAIL_SENDS.has(operation.toolName) || operation.toolSlugs.some(slug => MAIL_SENDS.has(slug));
+
+/** An unconfirmed receipt with no saved account details: RealBud cannot check
+ *  it, so the owner checks the app and says so here. Nothing is sent or undone. */
+export function OwnerCheckNote({ operation, busy, onCheck }: { operation: ConnectedAppOperation; busy: boolean; onCheck: () => void }) {
+  const what = operation.toolSlugs.join(", ") || operation.toolName || "this action";
+  return (
+    <div className="mt-2 rounded-lg border border-line p-3">
+      <p className="text-ink">This older action has no saved account details, so RealBud can’t check it for you.</p>
+      <p className="mt-1 text-ink-secondary">{sendsMail(operation)
+        ? "Open the mailbox and look in Sent to see whether it went. Bud holds new mail sends until the office owner marks this checked."
+        : "Open the app and see whether it happened. Bud holds this action until the office owner marks this checked."}
+        {" "}Marking it checked only records that you looked. It does not send, repeat or undo anything.</p>
+      <button type="button" className={`${control} mt-2`} disabled={busy} aria-label={`I checked it in the app: ${what}`} onClick={onCheck}>I checked it in the app</button>
+    </div>
+  );
+}
 
 const APP_MARK: Record<string, { letter: string; tone: string }> = {
   gmail: { letter: "G", tone: "bg-[#ea4335] text-white" },
@@ -283,6 +301,16 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
     finally { setRecoveryBusy(false); }
   };
 
+  const acknowledgeOperation = async (operation: ConnectedAppOperation) => {
+    if (recoveryBusy) return;
+    setRecoveryBusy(true); setOperationsError('');
+    try {
+      await api(`/api/connected-apps/operations/${operation.id}/acknowledge`, { method: 'POST', headers: companyApi.memberSessionHeaders(), body: JSON.stringify({ expectedRevision: operation.revision ?? 0 }) });
+      await loadOperations();
+    } catch (error) { setOperationsError(error instanceof Error ? error.message : 'This could not be marked checked. Refresh recent activity and try again.'); }
+    finally { setRecoveryBusy(false); }
+  };
+
   useEffect(() => {
     setSelected({});
     void loadStatus();
@@ -491,7 +519,7 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
               <p role="status" className="mt-2 text-[12.5px] text-ink-secondary">{operationsLoading ? "Loading…" : "No activity yet."}</p>
             ) : null}
             <ul className="mt-2 divide-y divide-line">
-              {operations.slice(0, 5).map((operation) => (
+              {operationsToShow(operations).map((operation) => (
                 <li key={operation.id} className="py-3 text-[12.5px]">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <span className={operation.status === "failed" || operation.status === "unknown" ? "font-medium text-hold" : "font-medium text-ink"}>
@@ -503,10 +531,12 @@ export function ConnectedAppsCard({ onAsk, onBrowser, onOpenDesk }: { onAsk?: ()
                   <p className="mt-1 break-all text-ink-secondary">Operation {operation.id}</p>
                   {operation.repeatOf ? <p className="mt-1 text-ink-secondary">Separately approved intentional repeat of {operation.repeatOf}.</p> : null}
                   {operation.reconciliation ? <p role="status" className="mt-2 text-ink-secondary">You recorded after inspecting the mail app: message {operation.reconciliation.outcome === 'sent' ? 'was sent' : 'was not sent'}. Manual evidence · {fmtDateTime(Date.parse(operation.reconciliation.at))}. The provider outcome remains {operation.status}. A new send still needs its own approval.</p> : null}
-                  {MAIL_SENDS.has(operation.toolName) && (operation.status === 'unknown' || operation.status === 'failed') && !operation.reconciliation ? (
+                  {operation.identified && MAIL_SENDS.has(operation.toolName) && (operation.status === 'unknown' || operation.status === 'failed') && !operation.reconciliation ? (
                     <button type="button" className={`${control} mt-2`} disabled={recoveryBusy || budBusy} onClick={() => void prepareMailRecovery(operation)}>Inspect and record mail outcome</button>
                   ) : null}
-                  {!MAIL_SENDS.has(operation.toolName) && (operation.status === 'unknown' || operation.status === 'failed') ? <p className="mt-2 text-ink-secondary">Inspect this outcome in its app. Exact-account recovery is currently available for supported managed mail; this operation remains held and may need service support.</p> : null}
+                  {needsOwnerCheck(operation) ? <OwnerCheckNote operation={operation} busy={recoveryBusy} onCheck={() => void acknowledgeOperation(operation)} /> : null}
+                  {operation.acknowledgement ? <p role="status" className="mt-2 text-ink-secondary">Marked checked in the app · {fmtDateTime(Date.parse(operation.acknowledgement.at))}. The recorded outcome stays unknown; a new action still needs its own approval.</p> : null}
+                  {!operation.identified && operation.status === 'failed' ? <p className="mt-2 text-ink-secondary">The app reported a failure. Check it in the app before asking Bud to try again.</p> : null}
                   {mailRecovery?.operationId === operation.id ? (
                     <div className="mt-3 rounded-lg border border-line p-3">
                       <p className="font-medium text-ink">Check {mailRecovery.account.label} in {mailRecovery.account.provider === 'gmail' ? 'Gmail' : 'Outlook'}</p>

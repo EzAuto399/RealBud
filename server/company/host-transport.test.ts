@@ -222,8 +222,9 @@ describe('company host transport', () => {
       });
       expect(allowed.status).toBe(200);
       expect(handle).toHaveBeenCalledTimes(1);
+      // A wire-supplied marker is dropped; only the scoped authority headers pass.
       expect(handle.mock.calls[0][2].headers).toEqual({ 'x-realbud-member-session': 'member-secret',
-        'x-realbud-company-id': '11111111-1111-4111-8111-111111111111', 'x-realbud-company-precondition': 'required' });
+        'x-realbud-company-id': '11111111-1111-4111-8111-111111111111' });
       const browser = await rawHttps(port, '/api/company/me', 'GET', {
         origin: 'https://evil.example',
         'x-realbud-member-session': 'member-secret',

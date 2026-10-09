@@ -53,13 +53,11 @@ describe.skipIf(!url)('host identity and current owner commit authority', () => 
     expect(await host.handle('/api/company/' + path, 'POST', request(foreign), body)).toMatchObject({ status: 409, body: { code: 'host_identity_mismatch' } });
     expect(await state()).toEqual(before);
   });
-  it('holds a LAN enrollment without an expected office and admits exact matching join/sign-in/recovery', async () => {
+  it('admits an older member that names no office (compatibility window) and exact matching join/sign-in/recovery', async () => {
     const invitation = await kernel.issueInvitation(owner.sessionToken, { displayName: 'Fictional invited member' });
     const body = { invitationToken: invitation.invitationToken, credential: { loginName: 'fixture-member', password } };
-    const before = await state();
-    expect(await host.handle('/api/company/join', 'POST', { headers: { 'x-realbud-company-precondition': 'required' } }, body))
-      .toMatchObject({ status: 409, body: { code: 'host_identity_mismatch' } });
-    expect(await state()).toEqual(before);
+    const older = await kernel.issueInvitation(owner.sessionToken, { displayName: 'Fictional older member' });
+    expect((await host.handle('/api/company/join', 'POST', { headers: {} }, { invitationToken: older.invitationToken, credential: { loginName: 'fixture-older', password } })).status).toBe(201);
     const joined = await host.handle('/api/company/join', 'POST', request(owner.companyId), body);
     expect(joined.status).toBe(201);
     const key = (joined.body as { recoveryKey: string }).recoveryKey;

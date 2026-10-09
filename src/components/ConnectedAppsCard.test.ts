@@ -15,7 +15,7 @@ vi.mock('@/lib/use-setup-state', async () => {
 });
 vi.mock('@/lib/connected-apps-refresh', () => ({ officeSources: { refresh: vi.fn() }, useOfficeSources: () => ({ snapshot: fixture.snapshot, loading: false, error: '' }) }));
 vi.mock('./GmailReadOnlySetup', () => ({ connectedAppsMode: () => 'consumer', selectedConnectedAppsConfigured: () => fixture.configured, useConnectionSettingsPending: () => false, hasUnconfirmedGmailSettingsChange: () => false }));
-import { BankFeedConnect, BankFeedTile, ConnectedAppsCard, HermiosFeaturedTile } from './ConnectedAppsCard';
+import { BankFeedConnect, BankFeedTile, ConnectedAppsCard, HermiosFeaturedTile, OwnerCheckNote } from './ConnectedAppsCard';
 import type { ConnectorState } from '@shared/mcp-connector';
 import type { ConnectorView } from '@/lib/redbark-connection-api';
 import { REDBARK_APP_SLUG } from '@/lib/connected-app-catalog';
@@ -278,5 +278,23 @@ describe('bank feed tile', () => {
     (disconnectButton.props.onClick as () => void)();
     expect(controls.disconnect).not.toHaveBeenCalled();
     expect(buttons(tile(feed('connected')).markup)).not.toContain('Confirm disconnect for the bank feed');
+  });
+});
+
+describe('owner check for an unconfirmed receipt without account details', () => {
+  const operation = { id: '11111111-1111-4111-8111-111111111111', threadId: 'thread', toolName: 'GMAIL_SEND_EMAIL', toolSlugs: [], status: 'unknown' as const, startedAt: new Date().toISOString(), revision: 1 };
+  it('says what to check, that it only records the check, and offers the step in place', () => {
+    const markup = renderToStaticMarkup(createElement(OwnerCheckNote, { operation, busy: false, onCheck: vi.fn() }));
+    expect(markup).toContain('no saved account details');
+    expect(markup).toContain('look in Sent');
+    expect(markup).toContain('Bud holds new mail sends until the office owner marks this checked');
+    expect(markup).toContain('It does not send, repeat or undo anything');
+    expect(markup).toContain('aria-label="I checked it in the app: GMAIL_SEND_EMAIL"');
+    expect(markup).not.toMatch(/delete|remove|\.lock|Hermes|MCP|broker/i);
+  });
+  it('words a non-mail hold for that action and disables the step while busy', () => {
+    const markup = renderToStaticMarkup(createElement(OwnerCheckNote, { operation: { ...operation, toolName: 'GOOGLECALENDAR_CREATE_EVENT' }, busy: true, onCheck: vi.fn() }));
+    expect(markup).toContain('Bud holds this action until the office owner marks this checked');
+    expect(markup).toMatch(/<button[^>]*disabled=""/);
   });
 });

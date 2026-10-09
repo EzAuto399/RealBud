@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  activeConnectedAccounts, canPrepareConnectedEmail, connectedAppOperationContext, connectedEmailContext,
+  activeConnectedAccounts, canPrepareConnectedEmail, connectedAppOperationContext, connectedEmailContext, needsOwnerCheck, operationsToShow,
   readConnectedAppOperations, readConnectedAppsStatus, selectedConnectedAccount, type ConnectedAppsStatus,
 } from "./connected-apps";
 import { fileAttachment } from "./composer-attachments";
@@ -51,6 +51,22 @@ describe("connected email setup and account choice", () => {
     expect(() => readConnectedAppOperations({ operations: [{ ...row, status: 'succeeded' }] })).toThrow();
     expect(() => readConnectedAppOperations({ operations: [{ ...row, reconciliation: { ...row.reconciliation, source: 'provider-confirmed' } }] })).toThrow();
     expect(() => readConnectedAppOperations({ operations: [{ ...row, revision: -1 }] })).toThrow();
+  });
+  it('reads the owner check on a receipt without account details and keeps every held receipt visible', () => {
+    const at = (offset: number) => new Date(NOW - offset).toISOString();
+    const legacy = { id: 'older', threadId: 'thread', toolName: 'GMAIL_SEND_EMAIL', toolSlugs: [], status: 'unknown', startedAt: at(86_400_000), revision: 1 };
+    const identified = { ...legacy, id: 'identified', startedAt: at(10), effectDigest: 'c'.repeat(64) };
+    const recent = Array.from({ length: 6 }, (_, index) => ({ ...legacy, id: `recent-${index}`, status: 'succeeded', finishedAt: at(index), startedAt: at(index) }));
+    const parsed = readConnectedAppOperations({ operations: [legacy, identified, ...recent] });
+    expect(parsed.find(row => row.id === 'identified')).toMatchObject({ identified: true });
+    expect(parsed.find(row => row.id === 'identified')).not.toHaveProperty('effectDigest');
+    expect(parsed.filter(needsOwnerCheck).map(row => row.id)).toEqual(['older']);
+    // Held receipts come first, ahead of newer activity, however old they are.
+    expect(operationsToShow(parsed).map(row => row.id)).toEqual(['identified', 'older', 'recent-0', 'recent-1', 'recent-2', 'recent-3', 'recent-4']);
+    const checked = readConnectedAppOperations({ operations: [{ ...legacy, revision: 2, acknowledgement: { at: NOW, source: 'owner-checked-app' } }] })[0];
+    expect(checked.acknowledgement).toEqual({ at: new Date(NOW).toISOString() }); expect(needsOwnerCheck(checked)).toBe(false);
+    for (const bad of [{ status: 'failed' }, { effectDigest: 'c'.repeat(64) }, { acknowledgement: { at: NOW, source: 'model' } }])
+      expect(() => readConnectedAppOperations({ operations: [{ ...legacy, acknowledgement: { at: NOW, source: 'owner-checked-app' }, ...bad }] })).toThrow();
   });
   it("expires access at the action boundary and rejects future or invalid clocks", () => {
     expect(canPrepareConnectedEmail(status(), "gmail", "", NOW + 300_000)).toBe(true);

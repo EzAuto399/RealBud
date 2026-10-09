@@ -83,21 +83,31 @@ describe('office identity before session adoption', () => {
     expect(await app.seatIdentity()).toBeNull();
     expect(onSeatIdentity).not.toHaveBeenCalled();
   });
-  it.each(['missing', 'foreign'] as const)('holds a %s host precondition without saving the peer', async kind => {
+  it.each([['missing', 'host_update_required', /update RealBud on the host computer/], ['foreign', 'host_identity_mismatch', /different office/]] as const)('holds a %s host precondition without saving the peer', async (kind, code, copy) => {
     const { app, root } = await fixture(false);
     vi.mocked(requestCompanyHost).mockResolvedValue({ status: 200, body: { configured: true,
       ...(kind === 'foreign' ? { hostCompany: { version: 1, companyId: otherCompanyId } } : {}) } });
-    expect(await app.handle('/api/company/connect-host', 'POST', { headers: {} }, { hostCode })).toMatchObject({ status: 409, body: { code: 'host_identity_mismatch' } });
+    expect(await app.handle('/api/company/connect-host', 'POST', { headers: {} }, { hostCode })).toMatchObject({ status: 409, body: { code, error: expect.stringMatching(copy) } });
     await expect(readFile(join(root, 'company-installation/peer.json'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
-  it('holds an old saved host before any remote enrollment operation or journal', async () => {
+  it('asks for a host update before enrollment on an older host, but keeps its status polls working', async () => {
     const { app, root } = await fixture();
     vi.mocked(requestCompanyHost).mockResolvedValue({ status: 200, body: { configured: true } });
     expect(await app.handle('/api/company/join', 'POST', { headers: {} }, { invitationToken: 'fictional', credential: { loginName: 'fixture', password: 'Synthetic-password' } }))
-      .toMatchObject({ status: 409, body: { code: 'host_identity_mismatch' } });
+      .toMatchObject({ status: 409, body: { code: 'host_update_required' } });
     expect(vi.mocked(requestCompanyHost).mock.calls.map(([args]) => args.path)).toEqual(['/api/company/status']);
     await expect(readFile(join(root, 'company-installation/enrollment.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    // An older host omits hostCompany on status; a poll must still answer.
+    expect(await app.handle('/api/company/status', 'GET', { headers: {} })).toMatchObject({ status: 200, body: { configured: true, remoteHost: true, transport: 'encrypted-company' } });
+    // A host that does name an office must name the saved one.
+    vi.mocked(requestCompanyHost).mockResolvedValue({ status: 200, body: { configured: true, hostCompany: { version: 1, companyId: otherCompanyId } } });
     expect(await app.handle('/api/company/status', 'GET', { headers: {} })).toMatchObject({ status: 409, body: { code: 'host_identity_mismatch' } });
+  });
+  it('sends the saved office as the expected company on enrollment and status', async () => {
+    const { app } = await fixture();
+    vi.mocked(requestCompanyHost).mockResolvedValue(response());
+    expect((await app.handle('/api/company/sign-in', 'POST', { headers: {} }, { loginName: 'fixture', password: 'Synthetic-password' })).status).toBe(200);
+    expect(vi.mocked(requestCompanyHost).mock.calls.map(([args]) => [args.path, args.companyId])).toEqual([['/api/company/status', companyId], ['/api/company/sign-in', companyId]]);
   });
 });
 

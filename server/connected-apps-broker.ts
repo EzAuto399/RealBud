@@ -155,7 +155,17 @@ export async function startConnectedAppsBroker(options: {
   let closed = false;
   let session: string | null = null;
   let mailBindings: ConnectedMailBinding[] = [];
+  // A gateway that advertises the reviewed-binding capability or reports mail
+  // bindings at initialize (an empty list included) gets the reviewed binding
+  // on every send, and a send without a usable binding is refused. A gateway
+  // from before that contract has neither and keeps the earlier managed send:
+  // same card and durable receipt, without account identity. Unknown (no
+  // initialize yet) is treated as enforcing.
+  let legacyGateway = false;
   const acceptBindings = (result: Record<string, unknown>) => {
+    const capabilities = result.capabilities && typeof result.capabilities === "object" ? result.capabilities as Record<string, unknown> : {};
+    const experimental = capabilities.experimental && typeof capabilities.experimental === "object" ? capabilities.experimental as Record<string, unknown> : {};
+    legacyGateway = experimental[MAIL_BINDING_CAPABILITY] === undefined && result.realbudMailBindings === undefined;
     mailBindings = result.realbudMailBindings === undefined ? [] : parseConnectedMailBindings(result.realbudMailBindings);
   };
   // The worker's own handshake, replayed if the gateway expires the session.
@@ -298,11 +308,13 @@ export async function startConnectedAppsBroker(options: {
             const isMailSend = Boolean(options.managed && !options.localTransport && MAIL_SENDS.has(call.name));
             if (isMailSend) {
               if (!session && !await refreshSession(session, reviewProtocol, controller.signal)) return errorResult(MAIL_BINDING_REQUIRED);
-              const provider = call.name.startsWith("GMAIL_") ? "gmail" : "outlook";
-              reviewedBinding = mailBindings.find(row => row.provider === provider);
-              if (!reviewedBinding) return errorResult(MAIL_BINDING_REQUIRED);
-              if (!reviewedBinding.companyId) return errorResult('The managed gateway cannot verify this mailbox company/tenant. Update/check the managed connection before sending; older metadata still permits reads.');
-              if (!verifiedMailAddress(reviewedBinding.emailAddress)) return errorResult('The connected mailbox has no verified sending address. Check/reconnect the managed Gmail account and its fixed profile read. Outlook sends remain held until its fixed account profile is verified. Reads remain available.');
+              if (!legacyGateway) {
+                const provider = call.name.startsWith("GMAIL_") ? "gmail" : "outlook";
+                reviewedBinding = mailBindings.find(row => row.provider === provider);
+                if (!reviewedBinding) return errorResult(MAIL_BINDING_REQUIRED);
+                if (!reviewedBinding.companyId) return errorResult('The managed gateway cannot verify this mailbox company/tenant. Update/check the managed connection before sending; older metadata still permits reads.');
+                if (!verifiedMailAddress(reviewedBinding.emailAddress)) return errorResult(`The connected ${provider === "gmail" ? "Gmail" : "Outlook"} mailbox has no verified sending address yet, so nothing was sent. Check or reconnect that account in Connected apps. Reads remain available.`);
+              }
               if (!connectedMailSenderArgsAllowed(call.arguments)) return errorResult("A sending user, mailbox or From override is not covered by this account approval. Remove the override and use the connected account's own mailbox; aliases need separate provider-bound verification.");
             }
             const reviewRead = async (name: string, args: Record<string, unknown>) => {
@@ -341,8 +353,8 @@ export async function startConnectedAppsBroker(options: {
             }
             reviewedOperation = review || policy === "review";
             if (reviewedOperation && !isMailSend) {
-              const unresolved = operations.list().find(row => row.toolName === call.name && ["started", "unknown"].includes(row.status));
-              if (unresolved) return errorResult(`A previous reviewed ${call.name} operation has an unresolved outcome (${unresolved.id}). Check it in the app before continuing. Account-bound GUI recovery is available only for supported managed mail; this tool remains held rather than replaying uncertain work.`);
+              const unresolved = operations.list().find(row => row.toolName === call.name && ["started", "unknown"].includes(row.status) && !row.acknowledgement);
+              if (unresolved) return errorResult(`A previous reviewed ${call.name} operation has an unresolved outcome (${unresolved.id}). Check it in the app; the office owner can then mark it checked in Connected apps. Account-bound GUI recovery is available only for supported managed mail; this tool remains held rather than replaying uncertain work.`);
             }
             if (review) {
               const safe = redactSecrets(call) as Call;
@@ -358,23 +370,32 @@ export async function startConnectedAppsBroker(options: {
                 const review = await prepareMailReview(call, reviewRead, office).catch(() => null);
                 if (!review || typeof review === "string") return errorResult(typeof review === "string" ? review : MAIL_UNREADABLE);
                 if ([review.card, review.exact].some(text => text.includes(options.key) || redactSecretsInText(text) !== text)) return errorResult("This message contains what looks like a password, key or token, so Bud will not send it. Remove it and prepare the message again.");
-                const account = reviewedBinding!;
-                const gatewayOrigin = connectedMailGatewayOrigin(upstream!);
-                if (review.sender) {
-                  const sender = /<([^<>]+)>$/.exec(review.sender.trim())?.[1] ?? review.sender.trim();
-                  if (!verifiedMailAddress(sender) || sender.toLowerCase() !== account.emailAddress!.toLowerCase()) return errorResult('The saved draft uses a different or unverified From address. Open the exact account and use its verified sending address; aliases need separate provider-bound verification. Nothing was sent.');
+                if (legacyGateway) {
+                  // Older gateway: the earlier managed send, with no account
+                  // identity to bind. Unchecked older outcomes still hold it.
+                  try { operations.assertNoHeldLegacyMail(); }
+                  catch (error) { return errorResult(error instanceof Error ? error.message : "This mail outcome needs recovery before sending again."); }
+                  summary = `${LEGACY_GATEWAY_ACCOUNT}\n\n${review.card}`; detail = review.exact;
+                  if (review.recheck) { recheckDraft = review.recheck; recheckDraftDigest = review.digest; }
+                } else {
+                  const account = reviewedBinding!;
+                  const gatewayOrigin = connectedMailGatewayOrigin(upstream!);
+                  if (review.sender) {
+                    const sender = /<([^<>]+)>$/.exec(review.sender.trim())?.[1] ?? review.sender.trim();
+                    if (!verifiedMailAddress(sender) || sender.toLowerCase() !== account.emailAddress!.toLowerCase()) return errorResult('The saved draft uses a different or unverified From address. Open the exact account and use its verified sending address; aliases need separate provider-bound verification. Nothing was sent.');
+                  }
+                  summary = `Verified sending account: ${visibleMailText(account.emailAddress!)} (${account.provider}, account ${account.accountId}).\nCompany: ${visibleMailText(account.companyId!)}; managed gateway: ${gatewayOrigin}.\n\n${review.card}`;
+                  detail = review.exact;
+                  const accountDigest = mailAccountDigest(account, gatewayOrigin);
+                  const realmDigest = mailRealmDigest(account, gatewayOrigin);
+                  const effectDigest = mailDigest({ workspaceDigest: operations.workspaceDigest, accountDigest, message: review.effect });
+                  let prior;
+                  try { prior = operations.priorMailEffect(effectDigest, realmDigest); }
+                  catch (error) { return errorResult(error instanceof Error ? error.message : "This mail outcome needs recovery before sending again."); }
+                  if (prior) summary = `INTENTIONAL REPEAT: this exact message was already sent or manually confirmed sent (operation ${prior.id}). Allowing this separate card sends it again once to the same verified account and recipients.\n\n${summary}`;
+                  mailIdentityFields = { accountDigest, realmDigest, bindingDigest: account.generation, effectDigest, reviewDigest: mailDigest({ summary, detail, approvalId: mailApprovalId }), workspaceDigest: operations.workspaceDigest, ...(prior ? { repeatOf: prior.id } : {}) };
+                  if (review.recheck) { recheckDraft = review.recheck; recheckDraftDigest = review.digest; }
                 }
-                summary = `Verified sending account: ${visibleMailText(account.emailAddress!)} (${account.provider}, account ${account.accountId}).\nCompany: ${visibleMailText(account.companyId!)}; managed gateway: ${gatewayOrigin}.\n\n${review.card}`;
-                detail = review.exact;
-                const accountDigest = mailAccountDigest(account, gatewayOrigin);
-                const realmDigest = mailRealmDigest(account, gatewayOrigin);
-                const effectDigest = mailDigest({ workspaceDigest: operations.workspaceDigest, accountDigest, message: review.effect });
-                let prior;
-                try { prior = operations.priorMailEffect(effectDigest, realmDigest); }
-                catch (error) { return errorResult(error instanceof Error ? error.message : "This mail outcome needs recovery before sending again."); }
-                if (prior) summary = `INTENTIONAL REPEAT: this exact message was already sent or manually confirmed sent (operation ${prior.id}). Allowing this separate card sends it again once to the same verified account and recipients.\n\n${summary}`;
-                mailIdentityFields = { accountDigest, realmDigest, bindingDigest: account.generation, effectDigest, reviewDigest: mailDigest({ summary, detail, approvalId: mailApprovalId }), workspaceDigest: operations.workspaceDigest, ...(prior ? { repeatOf: prior.id } : {}) };
-                if (review.recheck) { recheckDraft = review.recheck; recheckDraftDigest = review.digest; }
               }
               if (unchecked) summary = `${summary}\n${OFFICE_UNCHECKED}`;
               if (mailIdentityFields) {
@@ -766,6 +787,11 @@ const MAIL_HELD = "Bud is sending a reviewed message from this mailbox. Wait for
 const MAIL_UNREADABLE = "Bud could not show the full message for review, so nothing was sent. Send it with GMAIL_SEND_EMAIL or OUTLOOK_SEND_EMAIL (or GMAIL_REPLY_TO_THREAD) and spell out every recipient, the subject and the body.";
 const MAIL_BINDING_REQUIRED = "Bud could not verify the sending account and connection generation. Nothing was sent. Check Connected apps and update the managed connector before preparing this message again.";
 const MAIL_BINDING_CHANGED = "The verified sending account or connection changed after this message was prepared. Nothing new was sent. Check Connected apps and prepare a new message for review.";
+/** Same literal as managed-gateway/connectors.ts MAIL_BINDING_CAPABILITY (a
+ * separate deployable, so not imported). */
+const MAIL_BINDING_CAPABILITY = "realbud/reviewed-mail-binding";
+/** First line of a send card through a gateway that does not report the account. */
+const LEGACY_GATEWAY_ACCOUNT = "Sending account: the mailbox connected in Connected apps. The office connection service has not confirmed the exact account for this message.";
 const mailDigest = (value: unknown): string => createHash("sha256").update(connectedAppCanonical(value)).digest("hex");
 export const mailRealmDigest = (binding: ConnectedMailBinding, gatewayOrigin: string): string => {
   if (!binding.companyId || connectedMailGatewayOrigin(gatewayOrigin) !== gatewayOrigin) throw new Error(MAIL_BINDING_REQUIRED);

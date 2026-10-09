@@ -144,9 +144,9 @@ function isBrowserAttempt(headers: IncomingHttpHeaders): boolean {
 function companyAuthorityHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
   const value = headers[MEMBER_HEADER];
   const execution = headers[EXECUTION_HEADER];
-  // Internal transport marker is authored here, never forwarded from the wire.
-  // LAN enrollment requires an exact expected office; old callers must refresh.
-  const result: IncomingHttpHeaders = { 'x-realbud-company-precondition': 'required' };
+  // A current member names the office it expects; the host refuses enrollment
+  // for any other. Older members omit it (see expectedHostCompany).
+  const result: IncomingHttpHeaders = {};
   const companyId = headers['x-realbud-company-id'];
   if (typeof companyId === 'string') result['x-realbud-company-id'] = companyId;
   if (typeof value === 'string' && value.length > 0 && value.length <= 4096 && !/[\0\r\n]/.test(value)) result[MEMBER_HEADER] = value;

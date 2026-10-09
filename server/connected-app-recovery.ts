@@ -60,6 +60,7 @@ export class ConnectedAppRecovery {
   private row(id: string): ConnectedAppOperation {
     const row = this.options.store.list().find(item => item.id === id);
     if (!row) return refuse('No such app operation.', 404);
+    if (!row.effectDigest && row.status === 'unknown') return refuse('This older receipt has no saved account details, so RealBud cannot check it against the mail account. Check its sent mail in the app, then use "I checked it in the app" in Connected apps.');
     if (!['unknown', 'failed'].includes(row.status) || !row.realmDigest || !row.effectDigest || !row.accountDigest || !row.bindingDigest || row.workspaceDigest !== this.options.store.workspaceDigest)
       return refuse('This receipt cannot be safely reconciled here. Older receipts without a verified account/payload identity remain held; restore their matching workspace and original connection history.');
     return row;

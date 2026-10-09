@@ -116,6 +116,6 @@ describe('connected mail paired evidence survives private backup and restore', (
     expect(isPrivateBackupPath(`company-installation/private/mail-review-${'a'.repeat(64)}.json`)).toBe(true);
     for (const path of ['company-installation/private/mail-review-anything.json', 'company-installation/private/mail-review-../secret.json', 'company-installation/private/development-key.json']) expect(isPrivateBackupPath(path)).toBe(false);
     const { c } = await captured(f); expect(c.getFile('connected-app-operations.json')).toBeDefined();
-    expect(() => f.store.priorMailEffect('a'.repeat(64))).toThrow(/older/);
+    expect(() => f.store.priorMailEffect('a'.repeat(64))).toThrow(/unconfirmed outcome and no saved account details/);
   });
 });

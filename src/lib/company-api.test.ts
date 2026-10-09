@@ -15,6 +15,7 @@ function memoryStorage() {
 describe("company member session transport", () => {
   it.each([
     ["host_identity_mismatch", "different office"],
+    ["host_update_required", "update RealBud on the host computer"],
     ["seat_identity_conflict", "another member"],
   ])("explains %s without suggesting a username change or exposing backend details", async (code, message) => {
     const storage = memoryStorage();

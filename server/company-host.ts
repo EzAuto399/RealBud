@@ -28,10 +28,12 @@ export function companyExecutionToken(request: Request): string {
 
 function expectedHostCompany(request: Request, currentCompanyId: string): string {
   const expected = request.headers['x-realbud-company-id'];
-  if (expected === undefined) {
-    if (request.headers['x-realbud-company-precondition'] === 'required') throw new CompanyError('host_identity_mismatch');
-    return currentCompanyId; // Trusted local/legacy host call, absent LAN marker.
-  }
+  // Compatibility window: a member computer from before this precondition sends
+  // no expected office. Its join/sign-in/recovery keeps the earlier behaviour
+  // (its TLS-pinned pairing and the after-the-fact company check on the member
+  // side), checked against this host's own single company. Close the window by
+  // answering an update-required refusal here once older members are retired.
+  if (expected === undefined) return currentCompanyId;
   if (typeof expected !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(expected)) throw new CompanyError('invalid_input');
   return expected;
 }

@@ -2,7 +2,8 @@
 // card answered from a paired phone, who answered it and where. Tool arguments,
 // provider results, account details and credentials stay out.
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, unlinkSync } from "node:fs";
+import { closeSync, constants, fstatSync, linkSync, lstatSync, openSync, readSync, renameSync, unlinkSync, writeSync, type Stats } from "node:fs";
+import { uptime } from "node:os";
 import { dirname, join } from "node:path";
 import { assertOwnPrivate, mkdirPrivateSync, openPrivateFileSync, restrictNewSync, writeFileAtomic } from "./atomic.ts";
 import { windowsFilePrivacySync } from "./windows-file-privacy.ts";
@@ -32,6 +33,9 @@ export interface ConnectedAppOperation {
   repeatOf?: string;
   revision?: number;
   reconciliation?: { outcome: "sent" | "not-sent"; at: number; source: "manual-app-inspection"; recoveryBindingDigest: string };
+  /** Owner checked an unconfirmed outcome that has no saved account identity
+   * (older history or an older gateway). Releases the hold; proves nothing. */
+  acknowledgement?: { at: number; source: "owner-checked-app" };
 }
 type OperationInput = Pick<ConnectedAppOperation, "threadId" | "toolName" | "toolSlugs" | "approval" | "accountDigest" | "realmDigest" | "bindingDigest" | "effectDigest" | "reviewDigest" | "workspaceDigest" | "repeatOf">;
 const MAX_OPERATIONS = 1_000;
@@ -45,13 +49,24 @@ const DETAILS = {
   partial: "Some app operations failed; others may have succeeded. Check the app before retrying.",
 } as const;
 const RECOVERY = "Connected-app history needs recovery. App actions are paused. Check disk space and file access, then restore the saved history if needed and restart RealBud.";
+const LOCK_BUSY = "Connected-app history is being updated by another RealBud process. Nothing new was sent. Try again in a moment.";
+/** An unreadable lock this old cannot belong to a live writer, which records its
+ * owner immediately after creating the file. */
+const LOCK_GRACE_MS = 5_000;
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
+const sendsMail = (row: Pick<ConnectedAppOperation, "toolName" | "toolSlugs">) => MAIL_SENDS.has(row.toolName) || row.toolSlugs.some(slug => MAIL_SENDS.has(slug));
+/** A mail send with no saved account identity whose outcome nobody has checked.
+ * A provider-reported failure is terminal and an in-flight start settles itself;
+ * restart turns an interrupted start into unknown. */
+export const heldWithoutIdentity = (row: ConnectedAppOperation): boolean => !row.effectDigest && row.status === "unknown" && !row.acknowledgement;
+const legacyHeld = (id: string) => `An earlier mail action has an unconfirmed outcome and no saved account details (operation ${id}). Check that mailbox's sent mail, then the office owner marks it checked in Connected apps. Nothing new was sent.`;
 export const validAppToolName = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z][A-Za-z0-9_.:-]{0,149}$/.test(value);
 export const validAppToolSlug = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z][A-Za-z0-9_]{0,149}$/.test(value);
 const validThread = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_-]{1,200}$/.test(value);
 const validApproval = (value: unknown): boolean => value === undefined || (typeof value === "string" && /^[^\r\n]{1,300}$/.test(value));
 const timestamp = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 8_640_000_000_000_000;
-const clone = (row: ConnectedAppOperation): ConnectedAppOperation => ({ ...row, toolSlugs: [...row.toolSlugs], ...(row.reconciliation ? { reconciliation: { ...row.reconciliation } } : {}) });
+const clone = (row: ConnectedAppOperation): ConnectedAppOperation => ({ ...row, toolSlugs: [...row.toolSlugs], ...(row.reconciliation ? { reconciliation: { ...row.reconciliation } } : {}),
+  ...(row.acknowledgement ? { acknowledgement: { ...row.acknowledgement } } : {}) });
 const failure = () => Object.assign(new Error(RECOVERY), { status: 503 });
 const uuid = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
 const identities = (row: { realmDigest?: unknown; accountDigest?: unknown; bindingDigest?: unknown; effectDigest?: unknown; reviewDigest?: unknown; workspaceDigest?: unknown }) => {
@@ -99,7 +114,9 @@ function validateOperationSnapshot(rows: unknown[]): ConnectedAppOperation[] {
           (row.reconciliation !== undefined && (!record(row.reconciliation) || !["sent", "not-sent"].includes(String(row.reconciliation.outcome)) ||
             !timestamp(row.reconciliation.at) || row.reconciliation.at < row.startedAt || row.reconciliation.source !== "manual-app-inspection" ||
             !opaqueDigest(row.reconciliation.recoveryBindingDigest) || Object.keys(row.reconciliation).some(key => !["outcome", "at", "source", "recoveryBindingDigest"].includes(key)) || !row.effectDigest || !["unknown", "failed"].includes(row.status))) ||
-          Object.keys(row).some(key => !["id", "threadId", "toolName", "toolSlugs", "status", "startedAt", "finishedAt", "detail", "approval", "accountDigest", "realmDigest", "bindingDigest", "effectDigest", "reviewDigest", "workspaceDigest", "repeatOf", "revision", "reconciliation"].includes(key))) throw failure();
+          (row.acknowledgement !== undefined && (!record(row.acknowledgement) || Object.keys(row.acknowledgement).sort().join(",") !== "at,source" || row.acknowledgement.source !== "owner-checked-app" ||
+            !timestamp(row.acknowledgement.at) || row.acknowledgement.at < row.startedAt || row.effectDigest !== undefined || row.status !== "unknown")) ||
+          Object.keys(row).some(key => !["id", "threadId", "toolName", "toolSlugs", "status", "startedAt", "finishedAt", "detail", "approval", "accountDigest", "realmDigest", "bindingDigest", "effectDigest", "reviewDigest", "workspaceDigest", "repeatOf", "revision", "reconciliation", "acknowledgement"].includes(key))) throw failure();
         ids.add(row.id);
         return clone(row as unknown as ConnectedAppOperation);
   });
@@ -117,6 +134,67 @@ export function interruptConnectedAppOperationsForRestore(value: unknown, at: nu
   const saved = validateConnectedAppOperationsSnapshot(value);
   return { version: 1, operations: saved.operations.map(row => row.status === 'started' ? { ...row, status: 'unknown' as const, revision: (row.revision ?? 0) + 1,
     finishedAt: Math.max(row.startedAt, at), detail: DETAILS.unknown } : row) };
+}
+
+/** A process that exists but is not ours (EPERM) cannot own a lock inside this
+ * account's private folder, so its pid was reused. */
+function processGone(pid: number): boolean {
+  try { process.kill(pid, 0); return false; }
+  catch (error) { const code = (error as NodeJS.ErrnoException)?.code; return code === "ESRCH" || code === "EPERM"; }
+}
+function staleOwner(text: string, stat: Stats): boolean {
+  let owner: unknown;
+  try { owner = JSON.parse(text); } catch { owner = undefined; }
+  if (!record(owner) || owner.version !== 1 || !Number.isSafeInteger(owner.pid) || Number(owner.pid) <= 0 || typeof owner.bootUptime !== "number" || !Number.isFinite(owner.bootUptime) || owner.bootUptime < 0)
+    return Date.now() - stat.mtimeMs > LOCK_GRACE_MS;
+  // Every section is synchronous and never nested, so a lock naming this
+  // process is left over; uptime smaller than at creation means a reboot since.
+  return owner.pid === process.pid || owner.bootUptime > uptime() + 1 || processGone(Number(owner.pid));
+}
+function acquireLock(lock: string): number {
+  for (let attempt = 0; ; attempt++) {
+    try { return openSync(lock, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw failure();
+      const verdict = attempt === 0 ? reclaimStaleLock(lock) : "busy";
+      if (verdict === "unsafe") throw failure();
+      if (verdict === "busy") throw conflict(LOCK_BUSY);
+    }
+  }
+}
+/** Moves aside exactly the stale lock it inspected; a lock created in between
+ * is put back and treated as busy. */
+function reclaimStaleLock(lock: string): "reclaimed" | "busy" | "unsafe" {
+  let seen: Stats, text = "";
+  try {
+    const descriptor = openPrivateFileSync(lock);
+    try {
+      seen = fstatSync(descriptor); // openPrivateFileSync admitted one plain file owned by this account
+      if (seen.size <= 4_096) { const bytes = Buffer.alloc(seen.size); text = bytes.subarray(0, readSync(descriptor, bytes, 0, bytes.length, 0)).toString("utf8"); }
+    } finally { closeSync(descriptor); }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    return code === "ENOENT" ? "reclaimed" : code === "EUNSAFE" || code === "ELOOP" ? "unsafe" : "busy";
+  }
+  if (!staleOwner(text, seen)) return "busy";
+  const aside = `${lock}.stale-${randomUUID()}`;
+  try { renameSync(lock, aside); } catch (error) { return (error as NodeJS.ErrnoException)?.code === "ENOENT" ? "reclaimed" : "busy"; }
+  let moved: Stats | undefined;
+  try { moved = lstatSync(aside); } catch { /* removed by its owner */ }
+  if (moved && (moved.ino !== seen.ino || moved.dev !== seen.dev)) {
+    try { linkSync(aside, lock); } catch { /* a newer owner already holds the name */ }
+    try { unlinkSync(aside); } catch { /* best effort */ }
+    return "busy";
+  }
+  try { unlinkSync(aside); } catch { /* best effort */ }
+  return "reclaimed";
+}
+/** Removes the lock only while the name is still this descriptor's file. */
+function releaseLock(lock: string, descriptor: number): void {
+  let ours = false;
+  try { const mine = fstatSync(descriptor), named = lstatSync(lock); ours = mine.ino === named.ino && mine.dev === named.dev; } catch { /* already gone */ }
+  closeSync(descriptor);
+  if (ours) try { unlinkSync(lock); } catch { /* a left-over lock naming this process is reclaimed next time */ }
 }
 
 // Only the module's default singleton delays IO until startup migration and
@@ -212,15 +290,40 @@ export class ConnectedAppOperationStore {
     this.assertAvailable(); this.reload();
     if (this.rows.some(row => row.effectDigest && row.status !== "denied" && row.workspaceDigest !== this.workspaceDigest))
       throw conflict("Connected-app receipts belong to another private workspace. Restore the matching workspace identity and history before sending mail. Nothing new was sent.");
-    if (this.rows.some(row => row.effectDigest && row.status !== 'denied' && (!row.realmDigest || (realmDigest !== undefined && row.realmDigest !== realmDigest))))
-      throw conflict('Retained mail receipts belong to an unverified or different company/gateway realm. Restore the exact source company and managed gateway evidence before sending more mail. Nothing new was sent.');
-    const legacy = this.rows.find(row => !row.effectDigest && ["started", "unknown", "failed"].includes(row.status) &&
-      (MAIL_SENDS.has(row.toolName) || row.toolSlugs.some(slug => MAIL_SENDS.has(slug))));
-    if (legacy) throw conflict("An older mail operation has an uncertain or failed outcome and no verified account/payload/original-review identity. Check that operation in the mail app and recover the original history before sending more mail. Nothing new was sent.");
+    this.holdLegacyMail();
     const rows = this.rows.filter(row => row.effectDigest === effectDigest && row.status !== "denied");
+    // The effect digest already binds account, company and gateway origin, so a
+    // receipt from another realm can never match it. Only this exact message's
+    // own receipts must carry the same realm evidence; a gateway or company move
+    // leaves older receipts in history without holding unrelated new mail.
+    if (rows.some(row => !row.realmDigest || (realmDigest !== undefined && row.realmDigest !== realmDigest)))
+      throw conflict('This exact message has a receipt without matching company and connection details. Check it in the mail app and restore the original history before sending it again. Nothing new was sent.');
     const unresolved = rows.find(row => row.status === "started" || ((row.status === "unknown" || row.status === "failed") && !row.reconciliation));
     if (unresolved) throw conflict(`This exact reviewed message already has an unresolved outcome (operation ${unresolved.id}). Inspect that account in the mail app and record its outcome in Connected apps before trying again. Nothing new was sent.`);
     return rows.reverse().find(row => row.status === "succeeded" || row.reconciliation?.outcome === "sent");
+  }
+  /** Older history and older gateways leave mail receipts without an account
+   * identity; any such unconfirmed send holds new mail until the owner checks it. */
+  assertNoHeldLegacyMail(): void { this.assertAvailable(); this.reload(); this.holdLegacyMail(); }
+  private holdLegacyMail(): void {
+    const held = this.rows.find(row => heldWithoutIdentity(row) && sendsMail(row));
+    if (held) throw conflict(legacyHeld(held.id));
+  }
+
+  /** Owner-only GUI step for a receipt with no account identity: the owner
+   * checked the app. It never changes the recorded provider outcome. */
+  acknowledge(id: string, expectedRevision: number): ConnectedAppOperation {
+    return this.locked(() => {
+      const row = this.rows.find(item => item.id === id);
+      if (!row) throw Object.assign(new Error("No such app operation."), { status: 404 });
+      if (row.effectDigest) throw conflict("This receipt has saved account details. Use Inspect and record mail outcome instead.");
+      if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw conflict("Invalid recovery decision.");
+      if (row.acknowledgement && (row.revision ?? 0) === expectedRevision + 1) return clone(row);
+      if (row.status !== "unknown" || row.acknowledgement || (row.revision ?? 0) !== expectedRevision)
+        throw conflict("This app operation changed. Refresh recent activity before marking it checked.");
+      const next: ConnectedAppOperation = { ...row, revision: expectedRevision + 1, acknowledgement: { at: Math.max(row.startedAt, this.now()), source: "owner-checked-app" } };
+      this.commit(this.rows.map(item => item.id === id ? next : item)); return clone(next);
+    });
   }
 
   reconcile(id: string, expectedRevision: number, outcome: "sent" | "not-sent", binding: { accountDigest: string; realmDigest: string; originalBindingDigest: string; recoveryBindingDigest: string; workspaceDigest: string }): ConnectedAppOperation {
@@ -249,7 +352,7 @@ export class ConnectedAppOperationStore {
     if (status === "started" && input.effectDigest) {
       const prior = this.priorMailEffect(input.effectDigest, input.realmDigest);
       if (prior ? input.repeatOf !== prior.id : input.repeatOf !== undefined) throw conflict("Sending this exact message again requires a separate intentional-repeat approval for its current receipt.");
-    }
+    } else if (status === "started" && sendsMail(input)) this.holdLegacyMail();
     const now = this.now();
     const row: ConnectedAppOperation = { id: randomUUID(), threadId: input.threadId, toolName: input.toolName,
       toolSlugs: [...new Set(input.toolSlugs)], status, startedAt: now,
@@ -259,7 +362,7 @@ export class ConnectedAppOperationStore {
     // Unresolved outcomes cannot disappear when routine successful reads churn.
     const next = [...this.rows];
     if (next.length >= MAX_OPERATIONS) {
-      const evict = next.findIndex(item => item.status !== "started" && item.status !== "unknown" && !item.effectDigest);
+      const evict = next.findIndex(item => item.status !== "started" && (item.status !== "unknown" || item.acknowledgement) && !item.effectDigest);
       if (evict < 0) throw Object.assign(new Error("Retained mail history reached its safety limit. Export/recover the retained history with service support before further app actions; no identified or uncertain outcomes were discarded."), { status: 503 });
       next.splice(evict, 1);
     }
@@ -279,14 +382,20 @@ export class ConnectedAppOperationStore {
       this.rows = validateOperationSnapshot(saved.operations);
     } catch (error) { if ((error as NodeJS.ErrnoException)?.code !== "ENOENT" || this.rows.length) { this.held = true; throw failure(); } }
   }
+  /** Cross-process exclusion only: every section below is synchronous, so two
+   * stores in one process never interleave. The lock names its owner (pid and
+   * OS uptime at creation); a crash leaves a lock whose process is gone or
+   * belongs to an earlier boot, and the next writer reclaims it. Reclaiming
+   * never settles an outcome: an interrupted start still becomes unknown. */
   private locked<T>(action: () => T): T {
     this.assertAvailable();
     privateDirectory(dirname(this.file));
-    let descriptor: number;
-    try { descriptor = openSync(`${this.file}.lock`, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600); }
-    catch { throw conflict("Connected-app history is in use or needs lock recovery. Nothing new was dispatched. Close RealBud; after confirming no RealBud process is running, remove only the connected-app history .lock file in this private workspace, then reopen. Inspect unresolved receipts in the app before retrying; removing a lock does not confirm an operation failed."); }
-    try { restrictNewSync([{ path: `${this.file}.lock`, kind: "file" }]); this.reload(); return action(); }
-    finally { closeSync(descriptor); unlinkSync(`${this.file}.lock`); }
+    const lock = `${this.file}.lock`, descriptor = acquireLock(lock);
+    try {
+      restrictNewSync([{ path: lock, kind: "file" }]);
+      writeSync(descriptor, JSON.stringify({ version: 1, pid: process.pid, bootUptime: uptime() }));
+      this.reload(); return action();
+    } finally { releaseLock(lock, descriptor); }
   }
   private commit(next: ConnectedAppOperation[]): void {
     const body = JSON.stringify({ version: 1, operations: next });

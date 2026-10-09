@@ -76,18 +76,26 @@ it('reconciliation as the first operation initializes retained identity and evid
     const binding={accountDigest:'a'.repeat(64),realmDigest:'f'.repeat(64),originalBindingDigest:'b'.repeat(64),recoveryBindingDigest:'e'.repeat(64),workspaceDigest:${JSON.stringify(workspaceDigest)}};
     const saved=store.reconcile(${JSON.stringify(row.id)},1,'not-sent',binding);assert.equal(saved.status,'unknown');assert.equal(saved.revision,2);assert.equal(saved.reconciliation.source,'manual-app-inspection');`);
 });
-for (const unsafe of ['corrupt', 'symlink', 'hardlink', 'crash-lock'] as const) {
+it('reclaims a crash lock from an exited process at startup, then turns the interrupted send into unknown without replay', windowsAdmissionTimeout(40), () => {
+  const f = fixture(); const { finishedAt: _finishedAt, ...unfinished } = row;
+  plant(f, { ...unfinished, status: 'started', revision: 0, detail: 'The app operation was recorded before dispatch. Its outcome is not yet confirmed.' });
+  const exited = spawnSync(process.execPath, ['-e', '']).pid;
+  plantPrivateFile(f.file + '.lock', JSON.stringify({ version: 1, pid: exited, bootUptime: 0 }));
+  run(f, `const {connectedAppOperations:store}=await import(opUrl);const {ensureDirs}=await import(configUrl);ensureDirs();
+    const recovered=store.list()[0];assert.equal(recovered.status,'unknown');assert.equal(recovered.revision,1);assert.equal(fs.existsSync(file+'.lock'),false);
+    assert.throws(()=>store.priorMailEffect('c'.repeat(64),'f'.repeat(64)),/unresolved outcome/);`);
+});
+for (const unsafe of ['corrupt', 'symlink', 'hardlink'] as const) {
   it(`default ${unsafe} initialization remains permanently held after fixture repair without changing original evidence`, windowsAdmissionTimeout(40), () => {
     const f = fixture(); plant(f);
     run(f, `const original=fs.readFileSync(file),target=data+'/synthetic-linked-target';
       const kind=${JSON.stringify(unsafe)};
       if(kind==='corrupt')fs.writeFileSync(file,'broken json');
       if(kind==='symlink'||kind==='hardlink'){fs.renameSync(file,target);kind==='symlink'?fs.symlinkSync(target,file):fs.linkSync(target,file);}
-      if(kind==='crash-lock'){const snapshot=JSON.parse(original);snapshot.operations[0].status='started';delete snapshot.operations[0].finishedAt;snapshot.operations[0].detail='The app operation was recorded before dispatch. Its outcome is not yet confirmed.';fs.writeFileSync(file,JSON.stringify(snapshot));fs.writeFileSync(file+'.lock','',{mode:0o600});}
       const before=fs.readFileSync(kind==='symlink'||kind==='hardlink'?target:file);
       const {connectedAppOperations:store}=await import(opUrl);const {ensureDirs}=await import(configUrl);ensureDirs();
       assert.throws(()=>store.list(),/history needs recovery/);assert.deepEqual(fs.readFileSync(kind==='symlink'||kind==='hardlink'?target:file),before);
-      if(kind==='symlink'||kind==='hardlink')fs.unlinkSync(file);if(kind==='crash-lock')fs.unlinkSync(file+'.lock');
+      if(kind==='symlink'||kind==='hardlink')fs.unlinkSync(file);
       fs.writeFileSync(file,original,{mode:0o600});assert.throws(()=>store.list(),/history needs recovery/);
       assert.throws(()=>store.deny({threadId:'synthetic-thread',toolName:'GMAIL_SEND_EMAIL',toolSlugs:[]}),/history needs recovery/);assert.deepEqual(fs.readFileSync(file),original);`);
   });

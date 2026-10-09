@@ -6019,6 +6019,22 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         ...(row.finishedAt === undefined ? {} : { finishedAt: new Date(row.finishedAt).toISOString() }),
       })) });
     }
+    const appAcknowledge = /^\/api\/connected-apps\/operations\/([a-f0-9-]{36})\/acknowledge$/.exec(path);
+    if (appAcknowledge && method === 'POST') {
+      // Owner control for a receipt with no saved account identity (older
+      // history or an older gateway): nothing can be checked against the
+      // account, so the owner records that they checked the app. It inherits
+      // the same session/same-origin barriers and is never a worker tool.
+      const body = await readBody(req);
+      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).join(',') !== 'expectedRevision' || !Number.isSafeInteger(body.expectedRevision) || body.expectedRevision < 0)
+        return json(res, 400, { error: 'Refresh recent activity, then mark the operation checked again.' });
+      const grant = await connectorAuthority(req);
+      if (grant.authority !== 'manage') return json(res, 403, { error: 'Only this office owner or service administrator can mark an unconfirmed app outcome as checked.' });
+      if (!await grant.stillManages()) return json(res, 403, { error: 'Owner permission changed. This outcome stays unconfirmed.' });
+      if (shuttingDown || privateRestoreLocked || workspaceActivity.paused) return json(res, 409, { error: 'RealBud is restoring or pausing this workspace. Try again when it finishes.' });
+      const row = connectedAppOperations.acknowledge(appAcknowledge[1], body.expectedRevision);
+      return json(res, 200, { operation: { id: row.id, status: row.status, revision: row.revision, acknowledgement: row.acknowledgement } });
+    }
     const appRecovery = /^\/api\/connected-apps\/operations\/([a-f0-9-]{36})\/(recovery|reconcile)$/.exec(path);
     if (appRecovery && ((method === 'GET' && appRecovery[2] === 'recovery') || (method === 'POST' && appRecovery[2] === 'reconcile'))) {
       // These owner controls inherit the boot-session, same-origin and restore

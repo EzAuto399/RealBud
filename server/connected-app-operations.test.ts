@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { chmodSync, copyFileSync, linkSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { spawnSync } from 'node:child_process';
+import { chmodSync, copyFileSync, existsSync, linkSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir, uptime } from "node:os";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as atomic from "./atomic.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
@@ -31,14 +32,19 @@ describe("connected-app durable operation receipts", () => {
     const foreign = new ConnectedAppOperationStore({ file: moved, workspaceId: '00000000-0000-4000-8000-000000000002' });
     expect(() => foreign.start({ ...mailInput(foreign), effectDigest: 'f'.repeat(64) })).toThrow(/another private workspace/);
   });
-  it('holds legacy identified rows missing realm and rejects a new realm within retained workspace history', () => {
+  it('scopes realm evidence to the exact effect: a gateway or company move does not hold new mail', () => {
     const file = tempFile(), first = new ConnectedAppOperationStore({ file, workspaceId });
     const row = first.start(mailInput(first)); first.finish(row.id, 'unknown');
-    expect(() => first.start({ ...mailInput(first), accountDigest: 'e'.repeat(64), realmDigest: 'e'.repeat(64), effectDigest: 'e'.repeat(64) })).toThrow(/company\/gateway realm/);
-    const snapshot = JSON.parse(readFileSync(file, 'utf8')); delete snapshot.operations[0].realmDigest;
+    // A new realm's effect cannot match the old receipt, so it is not held by it.
+    const moved = first.start({ ...mailInput(first), accountDigest: 'e'.repeat(64), realmDigest: 'e'.repeat(64), effectDigest: 'e'.repeat(64) });
+    expect(moved.status).toBe('started');
+    expect(first.list().find(item => item.id === row.id)?.status).toBe('unknown');
+    // The same exact effect still needs matching realm evidence.
+    const snapshot = JSON.parse(readFileSync(file, 'utf8')); delete snapshot.operations.find((item: { id: string }) => item.id === row.id).realmDigest;
     writeFileSync(file, JSON.stringify(snapshot), { mode: 0o600 });
     const legacy = new ConnectedAppOperationStore({ file, workspaceId });
-    expect(legacy.list()[0].status).toBe('unknown'); expect(() => legacy.start(mailInput(legacy))).toThrow(/unverified or different company/);
+    expect(() => legacy.start(mailInput(legacy))).toThrow(/without matching company/);
+    expect(() => legacy.start({ ...mailInput(legacy), effectDigest: '9'.repeat(64) })).not.toThrow();
   });
   it('serializes two independently opened stores before starting a second identical effect', () => {
     const file = tempFile(), first = new ConnectedAppOperationStore({ file, workspaceId }), second = new ConnectedAppOperationStore({ file, workspaceId });
@@ -46,20 +52,54 @@ describe("connected-app durable operation receipts", () => {
     expect(() => second.start(mailInput(second))).toThrow(/unresolved outcome/);
     expect(second.list()).toHaveLength(1);
   });
-  it('keeps unidentified legacy mail outcomes held rather than guessing their account or payload', () => {
+  it('keeps an unidentified unknown mail outcome held until the owner marks it checked, without guessing its account', () => {
     const file = tempFile(), old = new ConnectedAppOperationStore({ file });
     const legacy = old.start({ ...input, toolName: 'COMPOSIO_MULTI_EXECUTE_TOOL', toolSlugs: ['OUTLOOK_FORWARD_MESSAGE'] }); old.finish(legacy.id, 'unknown');
     const current = new ConnectedAppOperationStore({ file, workspaceId });
-    expect(() => current.start(mailInput(current))).toThrow(/older mail operation/);
+    expect(() => current.start(mailInput(current))).toThrow(/marks it checked in Connected apps/);
+    // An older gateway's send has no identity either, and is held the same way.
+    expect(() => current.start({ threadId: 'thread-mail', toolName: 'GMAIL_SEND_EMAIL', toolSlugs: [] })).toThrow(/unconfirmed outcome/);
     expect(() => current.reconcile(legacy.id, 1, 'not-sent', { accountDigest: 'a'.repeat(64), realmDigest: 'f'.repeat(64), originalBindingDigest: 'b'.repeat(64), recoveryBindingDigest: 'b'.repeat(64), workspaceDigest: current.workspaceDigest })).toThrow(/original verified/);
+    expect(() => current.acknowledge(legacy.id, 0)).toThrow(/changed/);
+    const checked = current.acknowledge(legacy.id, 1);
+    expect(checked).toMatchObject({ status: 'unknown', revision: 2, acknowledgement: { source: 'owner-checked-app' } });
+    expect(current.acknowledge(legacy.id, 1)).toEqual(checked);
+    expect(new ConnectedAppOperationStore({ file, workspaceId }).list()[0]).toEqual(checked);
+    expect(current.start(mailInput(current)).status).toBe('started');
+    expect(current.start({ threadId: 'thread-mail', toolName: 'GMAIL_SEND_EMAIL', toolSlugs: [] }).status).toBe('started');
   });
-  it.each([false, true])('holds legacy failed mail, including partial batch=%s, without inventing not-sent evidence', partial => {
+  it('refuses owner acknowledgement for identified, settled or in-flight receipts', () => {
+    const store = new ConnectedAppOperationStore({ file: tempFile(), workspaceId });
+    const identified = store.start(mailInput(store)); store.finish(identified.id, 'unknown');
+    expect(() => store.acknowledge(identified.id, 1)).toThrow(/Inspect and record mail outcome/);
+    const failed = store.start(input); store.finish(failed.id, 'failed');
+    expect(() => store.acknowledge(failed.id, 1)).toThrow(/changed/);
+    const live = store.start(input);
+    expect(() => store.acknowledge(live.id, 0)).toThrow(/changed/);
+    expect(() => store.acknowledge('00000000-0000-4000-8000-00000000ffff', 0)).toThrow(/No such/);
+  });
+  it.each([false, true])('treats an older provider-reported failure as final, partial batch=%s, without inventing not-sent evidence', partial => {
     const file = tempFile(), old = new ConnectedAppOperationStore({ file });
     const row = old.start({ ...input, toolName: partial ? 'COMPOSIO_MULTI_EXECUTE_TOOL' : 'GMAIL_SEND_EMAIL', toolSlugs: partial ? ['GMAIL_SEND_EMAIL'] : [] });
     old.finish(row.id, 'failed', partial);
     const current = new ConnectedAppOperationStore({ file, workspaceId });
-    expect(() => current.start(mailInput(current))).toThrow(/original-review identity/);
-    expect(current.list()[0].status).toBe('failed'); expect(current.list()[0].reconciliation).toBeUndefined();
+    expect(current.start(mailInput(current)).status).toBe('started');
+    const saved = current.list().find(item => item.id === row.id)!;
+    expect(saved.status).toBe('failed'); expect(saved.reconciliation).toBeUndefined(); expect(saved.acknowledgement).toBeUndefined();
+  });
+  it.each([
+    ['an identified row', { effectDigest: 'c'.repeat(64) }],
+    ['a failed row', { status: 'failed' }],
+    ['an unknown source', { acknowledgement: { at: 5, source: 'model' } }],
+    ['an extra field', { acknowledgement: { at: 5, source: 'owner-checked-app', outcome: 'sent' } }],
+  ] as const)('holds history whose acknowledgement is on %s', (_label, change) => {
+    const file = tempFile(), store = new ConnectedAppOperationStore({ file, now: () => 5 });
+    const row = store.start(input); store.finish(row.id, 'unknown');
+    const saved = JSON.parse(readFileSync(file, 'utf8'));
+    Object.assign(saved.operations[0], { acknowledgement: { at: 5, source: 'owner-checked-app' } }, change);
+    if ('effectDigest' in change) Object.assign(saved.operations[0], { accountDigest: 'a'.repeat(64), bindingDigest: 'b'.repeat(64), reviewDigest: 'd'.repeat(64), workspaceDigest: 'e'.repeat(64) });
+    writeFileSync(file, JSON.stringify(saved), { mode: 0o600 });
+    expect(() => new ConnectedAppOperationStore({ file }).list()).toThrow(/history needs recovery/);
   });
   it('retains all 1000 identified successful effects and explains the fixed safety capacity truthfully', () => {
     const file = tempFile(), first = new ConnectedAppOperationStore({ file, workspaceId });
@@ -99,13 +139,44 @@ describe("connected-app durable operation receipts", () => {
     rmSync(file); copyFileSync(original, file); chmodSync(file, 0o644);
     expect(() => new ConnectedAppOperationStore({ file }).list()).toThrow(/history needs recovery/); expect(statSync(file).mode & 0o777).toBe(0o644);
   });
-  it('does not infer a failed effect from an old crash lock; unlock recovery retains unknown outcome', () => {
+  it.each([
+    ['a process that has exited', (): string => JSON.stringify({ version: 1, pid: spawnSync(process.execPath, ['-e', '']).pid, bootUptime: uptime() })],
+    ['this process (left by a failed release)', (): string => JSON.stringify({ version: 1, pid: process.pid, bootUptime: uptime() })],
+    ['an earlier boot', (): string => JSON.stringify({ version: 1, pid: process.ppid, bootUptime: uptime() + 86_400 })],
+    ['an older empty lock', (): string => ''],
+  ] as const)('reclaims a crash lock left by %s without inferring the outcome', (_label, owner) => {
     const file = tempFile(), store = new ConnectedAppOperationStore({ file, workspaceId }); store.start(mailInput(store));
-    writeFileSync(`${file}.lock`, '', { mode: 0o600 });
-    expect(() => new ConnectedAppOperationStore({ file, workspaceId }).list()).toThrow(/history needs recovery/);
-    rmSync(`${file}.lock`);
-    const reopened = new ConnectedAppOperationStore({ file, workspaceId }); expect(reopened.list()[0].status).toBe('unknown');
+    const content = owner();
+    writeFileSync(`${file}.lock`, content, { mode: 0o600 });
+    if (!content) utimesSync(`${file}.lock`, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+    const reopened = new ConnectedAppOperationStore({ file, workspaceId });
+    expect(reopened.list()[0].status).toBe('unknown');
     expect(() => reopened.start(mailInput(reopened))).toThrow(/unresolved outcome/);
+    expect(readdirSync(dirname(file)).filter(name => name.includes('.lock'))).toEqual([]);
+  });
+  it.each([
+    ['a live RealBud process', (): string => JSON.stringify({ version: 1, pid: process.ppid, bootUptime: uptime() })],
+    ['a lock still being written', (): string => ''],
+  ] as const)('waits for %s and never asks anyone to delete files', (_label, owner) => {
+    const file = tempFile(), store = new ConnectedAppOperationStore({ file, workspaceId }); store.deny(input);
+    writeFileSync(`${file}.lock`, owner(), { mode: 0o600 });
+    const before = readFileSync(`${file}.lock`, 'utf8');
+    let refusal: unknown;
+    try { store.start(input); } catch (error) { refusal = error; }
+    expect(refusal).toMatchObject({ status: 409, message: expect.stringContaining('Try again in a moment') });
+    expect(String((refusal as Error).message)).not.toMatch(/remove|delete|\.lock/i);
+    expect(readFileSync(`${file}.lock`, 'utf8')).toBe(before);
+    expect(store.list()).toHaveLength(1);
+    rmSync(`${file}.lock`);
+    expect(store.start(input).status).toBe('started');
+  });
+  it('records its owner in the lock and removes only its own lock', () => {
+    const file = tempFile(), store = new ConnectedAppOperationStore({ file, workspaceId });
+    const actual = atomic.writeFileAtomic, seen: string[] = [];
+    vi.spyOn(atomic, 'writeFileAtomic').mockImplementation((path, body, mode) => { seen.push(readFileSync(`${file}.lock`, 'utf8')); actual(path, body, mode); });
+    store.deny(input);
+    expect(JSON.parse(seen[0])).toMatchObject({ version: 1, pid: process.pid, bootUptime: expect.any(Number) });
+    expect(existsSync(`${file}.lock`)).toBe(false);
   });
   it("stores only identifiers and fixed status text, atomically with private permissions", () => {
     const file = tempFile(); let now = 10;

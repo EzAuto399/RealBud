@@ -112,7 +112,15 @@ describe('owner-only original mail review and manual outcome recovery', () => {
       await expect(f.recovery.reconcile(f.row.id, body, signal())).rejects.toThrow(/explicit recovery controls/);
     expect(needsSession(`/api/connected-apps/operations/${f.row.id}/recovery`, 'GET')).toBe(true);
     expect(needsSession(`/api/connected-apps/operations/${f.row.id}/reconcile`, 'POST')).toBe(true);
+    expect(needsSession(`/api/connected-apps/operations/${f.row.id}/acknowledge`, 'POST')).toBe(true);
     expect(f.store.list()[0].reconciliation).toBeUndefined();
+  });
+  it('points an older receipt without account details to the owner check instead of exact-account recovery', async () => {
+    const f = await setup();
+    const legacy = f.store.start({ threadId: 'mail-thread', toolName: 'GMAIL_SEND_EMAIL', toolSlugs: [] }); f.store.finish(legacy.id, 'unknown');
+    await expect(f.recovery.prepare(legacy.id, signal())).rejects.toThrow(/I checked it in the app/);
+    expect(f.bindings).not.toHaveBeenCalled();
+    expect(f.store.acknowledge(legacy.id, 1).acknowledgement?.source).toBe('owner-checked-app');
   });
   it('does not replace a missing private workspace identity when history exists', async () => {
     const f = await setup(); rmSync(join(f.directory, 'company-installation/workspace.json'));

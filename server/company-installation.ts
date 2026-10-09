@@ -26,9 +26,11 @@ type Request = Pick<IncomingMessage, 'headers'>;
 type Reply = { status: number; body: unknown };
 type Settings = { version: 1; databasePort: number; network?: { hostname: string; port: number; cert: string; key: string } };
 class CompanyBindingError extends Error {
-  readonly code: 'host_identity_mismatch' | 'seat_identity_conflict';
-  constructor(code: 'host_identity_mismatch' | 'seat_identity_conflict', message: string) { super(message); this.code = code; }
+  readonly code: 'host_identity_mismatch' | 'host_update_required' | 'seat_identity_conflict';
+  constructor(code: 'host_identity_mismatch' | 'host_update_required' | 'seat_identity_conflict', message: string) { super(message); this.code = code; }
 }
+const HOST_UPDATE_REQUIRED = 'The office host needs the current RealBud update before this computer can join or sign in. Ask the office owner to update RealBud on the host computer, then try again. Your local work is kept.';
+const HOST_OTHER_OFFICE = 'This host is serving a different office from the one in this host code. Ask the office owner for a current host code.';
 const input = (body: unknown, keys: string[]) => {
   if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !keys.includes(key))) throw new Error('Check the setup fields.');
   return body as Record<string, unknown>;
@@ -211,13 +213,14 @@ export function createCompanyInstallation(options: {
   const privateDirectory = () => ensurePrivateDirectory(directory);
   const readPrivate = (path: string) => readPrivateJson(path, 20_000);
   const persist = writePrivateJson;
+  /** Before pairing or enrollment only: the host must name the expected office.
+   * A host from before this check names none and must be updated first. */
   async function checkPeerCompany(target: CompanyPairing): Promise<void> {
     const response = await requestCompanyHost({ ...target, path: '/api/company/status', method: 'GET', signal: abort.signal });
     const status = response.body as { configured?: unknown; hostCompany?: { version?: unknown; companyId?: unknown } } | null;
     if (response.status !== 200 || status?.configured !== true) throw new Error('The company host is not ready. Check its address and try again.');
-    if (status.hostCompany?.version !== 1 || status.hostCompany.companyId !== target.companyId) {
-      throw new CompanyBindingError('host_identity_mismatch', 'This host cannot confirm the expected office before making changes. Ask the office owner for a current host code and an updated host.');
-    }
+    if (status.hostCompany === undefined) throw new CompanyBindingError('host_update_required', HOST_UPDATE_REQUIRED);
+    if (status.hostCompany?.version !== 1 || status.hostCompany.companyId !== target.companyId) throw new CompanyBindingError('host_identity_mismatch', HOST_OTHER_OFFICE);
   }
   function validateSettings(value: unknown): Settings {
     const data = input(value, ['version', 'databasePort', 'network']);
@@ -534,10 +537,12 @@ export function createCompanyInstallation(options: {
           // A host identity mismatch never returns a member token to the renderer.
           const result = response.body as { company?: { id?: string }; transport?: string; limitations?: string[] };
           if (result?.company && result.company.id !== peer.companyId) throw new CompanyBindingError('host_identity_mismatch', 'The company identity does not match the saved host.');
+          // Status polls never require the newer host field: an older host
+          // keeps answering status during mixed-version rollout. A host that
+          // does name an office must name this one.
           if (path === '/api/company/status' && response.status === 200) {
             const identity = (response.body as { hostCompany?: { version?: unknown; companyId?: unknown } } | null)?.hostCompany;
-            if (identity?.version !== 1 || identity.companyId !== peer.companyId) throw new CompanyBindingError('host_identity_mismatch',
-              'This host cannot confirm the expected office before making changes. Ask the office owner for a current host code and an updated host.');
+            if (identity !== undefined && (identity?.version !== 1 || identity.companyId !== peer.companyId)) throw new CompanyBindingError('host_identity_mismatch', 'The company identity does not match the saved host.');
           }
           if (path === '/api/company/status' && response.status === 200) result.transport = 'encrypted-company';
           if (path === '/api/company/status' && response.status === 200) Object.assign(result, { enrollmentPending: (await readPrivate(enrollmentPath)) !== undefined, remoteHost: true, departurePending: leaving?.phase === 'pending' ? leaving.action : undefined });

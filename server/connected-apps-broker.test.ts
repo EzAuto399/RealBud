@@ -374,6 +374,10 @@ describe("connected app authoritative broker", () => {
     let bindings: ConnectedMailBinding[];
     let reviews: Map<string, ConnectedMailReview>;
     let loseReply: boolean;
+    /** An older gateway: no `realbudMailBindings` at initialize. */
+    let omitBindings: boolean;
+    /** A newer gateway's MCP experimental capability for reviewed bindings. */
+    let advertise: boolean;
     /** Per-tool fixture answers for mailbox reads made while preparing a card. */
     let toolAnswers: Record<string, (args: any) => unknown | Promise<unknown>>;
     const managedBroker = (managed: boolean, extra: { threadId?: string; mailDrainMs?: number; mailbox?: "office"; officeAddress?: string; url?: string } = {}) => {
@@ -387,7 +391,7 @@ describe("connected app authoritative broker", () => {
     };
     beforeEach(async () => {
       live = new Set(); calls = []; refusals = []; alwaysExpire = false; sessions = 0; toolAnswers = {};
-      reviews = new Map(); loseReply = false;
+      reviews = new Map(); loseReply = false; omitBindings = false; advertise = false;
       bindings = [{ provider: "gmail", accountId: "gmail-account-a", companyId: "company-a", label: "office@example.test", emailAddress: "office@example.test", generation: "a".repeat(64) },
         { provider: "outlook", accountId: "outlook-account-a", companyId: "company-a", label: "outlook@example.test", emailAddress: "outlook@example.test", generation: "b".repeat(64) }];
       // Mirrors managed-gateway/connectors.ts: an unknown or re-fingerprinted
@@ -399,7 +403,7 @@ describe("connected app authoritative broker", () => {
         if (msg.method === "initialize") {
           if (session) { res.writeHead(429).end(); return; }
           const fresh = `fixture-session-${++sessions}`; live.add(fresh); calls.push({ method: msg.method, status: 200 });
-          res.writeHead(200, { "content-type": "application/json", "mcp-session-id": fresh }).end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, realbudMailBindings: bindings } }));
+          res.writeHead(200, { "content-type": "application/json", "mcp-session-id": fresh }).end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: "2025-06-18", capabilities: { tools: {}, ...(advertise ? { experimental: { "realbud/reviewed-mail-binding": { version: 1, enforcedWhenPresent: true } } } : {}) }, ...(omitBindings ? {} : { realbudMailBindings: bindings }) } }));
           return;
         }
         if (msg.method === "notifications/initialized") {
@@ -737,14 +741,28 @@ describe("connected app authoritative broker", () => {
         expect(result.body.result.content[0].text).toContain('available only for supported managed mail');
         expect(approve).not.toHaveBeenCalled(); expect(calls.filter(row => row.method === 'tools/call' && (row.params as any).name === 'GOOGLE_CALENDAR_CREATE_EVENT')).toEqual([]);
       });
-      it('holds a changed company with reused account ID/address before a fresh card or send', async () => {
-        const action = { name: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'tenant@example.test', body: 'Exact tenant-bound message' } };
-        await invoke('tools/call', action); expect(sends()).toHaveLength(1);
-        bindings = bindings.map(row => ({ ...row, companyId: 'company-b' })); await startManaged(true); approve.mockClear();
-        const result = await invoke('tools/call', action);
-        expect(result.body.result.content[0].text).toContain('company/gateway realm'); expect(approve).not.toHaveBeenCalled(); expect(sends()).toHaveLength(1);
+      it('releases an unresolved reviewed non-mail write once the owner marks it checked, with a fresh card', async () => {
+        const held = operations.start({ threadId: 'another-thread', toolName: 'GOOGLE_CALENDAR_CREATE_EVENT', toolSlugs: [] }); operations.finish(held.id, 'unknown');
+        expect((await invoke('tools/call', { name: 'GOOGLE_CALENDAR_CREATE_EVENT', arguments: { summary: 'Inspection' } }, 310)).body.result.content[0].text).toContain('mark it checked');
+        operations.acknowledge(held.id, 1);
+        await invoke('tools/call', { name: 'GOOGLE_CALENDAR_CREATE_EVENT', arguments: { summary: 'Inspection' } }, 311);
+        expect(approve).toHaveBeenCalledOnce();
       });
-      it('holds a changed managed origin with reused account ID/address before a fresh card or send', async () => {
+      it('gives a changed company a fresh unlinked card instead of holding all mail behind an older unknown outcome', async () => {
+        const action = { name: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'tenant@example.test', body: 'Exact tenant-bound message' } };
+        loseReply = true;
+        await invoke('tools/call', action); expect(sends()).toHaveLength(1);
+        const first = operations.list()[0]; expect(first.status).toBe('unknown');
+        loseReply = false; bindings = bindings.map(row => ({ ...row, companyId: 'company-b' })); await startManaged(true); approve.mockClear();
+        const result = await invoke('tools/call', action);
+        expect(result.body.result.isError).not.toBe(true); expect(approve).toHaveBeenCalledOnce();
+        expect(approve.mock.calls[0][0]).toContain('Company: company-b'); expect(approve.mock.calls[0][0]).not.toContain('INTENTIONAL REPEAT');
+        expect(sends()).toHaveLength(2);
+        const second = operations.list()[0];
+        expect(second.realmDigest).not.toBe(first.realmDigest); expect(second.effectDigest).not.toBe(first.effectDigest);
+        expect(operations.list().find(row => row.id === first.id)?.status).toBe('unknown');
+      });
+      it('gives a changed managed origin a fresh unlinked card and keeps the earlier receipt', async () => {
         const action = { name: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'tenant@example.test', body: 'Exact issuer-bound message' } };
         await invoke('tools/call', action); expect(sends()).toHaveLength(1);
         const address = gateway.address(); if (!address || typeof address === 'string') throw Error('fixture unavailable');
@@ -761,9 +779,52 @@ describe("connected app authoritative broker", () => {
         try {
           const changed = relay.address(); if (!changed || typeof changed === 'string') throw Error('fixture unavailable');
           broker.close(); broker = await managedBroker(true, { url: `http://127.0.0.1:${changed.port}/v1/connectors/mcp` }); approve.mockClear();
+          const first = operations.list()[0];
           const result = await invoke('tools/call', action);
-          expect(result.body.result.content[0].text).toContain('company/gateway realm'); expect(approve).not.toHaveBeenCalled(); expect(sends()).toHaveLength(1);
+          expect(result.body.result.isError).not.toBe(true); expect(approve).toHaveBeenCalledOnce();
+          expect(approve.mock.calls[0][0]).toContain(`managed gateway: http://127.0.0.1:${changed.port}`); expect(approve.mock.calls[0][0]).not.toContain('INTENTIONAL REPEAT');
+          expect(sends()).toHaveLength(2); expect(operations.list()[0].realmDigest).not.toBe(first.realmDigest);
         } finally { relay.closeAllConnections(); await new Promise<void>(resolve => relay.close(() => resolve())); }
+      });
+      it('sends through an older gateway as before, holding only behind an unchecked older outcome', async () => {
+        omitBindings = true; bindings = []; await startManaged(true);
+        const call = { name: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'tenant@example.test', body: 'Older gateway message' } };
+        const result = await invoke('tools/call', call, 320);
+        expect(result.body.result.isError).not.toBe(true);
+        const card = approve.mock.calls[0][0];
+        expect(card).toContain('has not confirmed the exact account'); expect(card).toContain('To: "tenant@example.test"'); expect(card).not.toContain('Verified sending account');
+        // The fixture refuses any reviewed binding it did not issue, so a pass means none was attached.
+        expect(sends().map(row => row.params)).toEqual([{ name: 'GMAIL_SEND_EMAIL', arguments: call.arguments }]);
+        expect(operations.list()[0]).toMatchObject({ toolName: 'GMAIL_SEND_EMAIL', status: 'succeeded' });
+        expect(operations.list()[0].effectDigest).toBeUndefined(); expect(reviews.size).toBe(0);
+        // Sender overrides stay refused before any card.
+        approve.mockClear();
+        expect((await invoke('tools/call', { name: 'GMAIL_SEND_EMAIL', arguments: { ...call.arguments, from_email: 'other@example.test' } }, 321)).body.result.content[0].text).toContain('From override');
+        expect(approve).not.toHaveBeenCalled();
+        const older = operations.start({ threadId: 'older-thread', toolName: 'GMAIL_SEND_EMAIL', toolSlugs: [] }); operations.finish(older.id, 'unknown');
+        const second = { ...call, arguments: { ...call.arguments, body: 'Second message' } };
+        const held = await invoke('tools/call', second, 322);
+        expect(held.body.result.content[0].text).toContain('marks it checked in Connected apps'); expect(approve).not.toHaveBeenCalled(); expect(sends()).toHaveLength(1);
+        operations.acknowledge(older.id, 1);
+        expect((await invoke('tools/call', second, 323)).body.result.isError).not.toBe(true);
+        expect(approve).toHaveBeenCalledOnce(); expect(sends()).toHaveLength(2);
+      });
+      it('fails closed when a gateway advertises reviewed bindings but reports none', async () => {
+        omitBindings = true; advertise = true; await startManaged(true);
+        const result = await invoke('tools/call', { name: 'GMAIL_SEND_EMAIL', arguments: { recipient_email: 'tenant@example.test', body: 'Hello' } }, 324);
+        expect(result.body.result.content[0].text).toContain('could not verify the sending account'); expect(approve).not.toHaveBeenCalled(); expect(sends()).toEqual([]);
+      });
+      it('binds a managed Outlook send to its verified Outlook account and holds it without a verified address', async () => {
+        advertise = true; await startManaged(true);
+        const args = { to: 'tenant@example.test', subject: 'Keys', body: 'Ready.' };
+        const result = await invoke('tools/call', { name: 'OUTLOOK_SEND_EMAIL', arguments: args }, 325);
+        expect(result.body.result.isError).not.toBe(true);
+        expect(approve.mock.calls[0][0]).toContain('Verified sending account: outlook@example.test (outlook, account outlook-account-a)');
+        expect(sends().map(row => row.params)).toEqual([{ name: 'OUTLOOK_SEND_EMAIL', arguments: args }]);
+        expect(operations.list()[0]).toMatchObject({ toolName: 'OUTLOOK_SEND_EMAIL', status: 'succeeded', accountDigest: expect.stringMatching(/^[a-f0-9]{64}$/), effectDigest: expect.stringMatching(/^[a-f0-9]{64}$/) });
+        bindings = bindings.map(row => row.provider === 'outlook' ? { ...row, emailAddress: undefined } : row); await startManaged(true); approve.mockClear();
+        const held = await invoke('tools/call', { name: 'OUTLOOK_SEND_EMAIL', arguments: { ...args, body: 'Again' } }, 326);
+        expect(held.body.result.content[0].text).toContain('Outlook mailbox has no verified sending address'); expect(approve).not.toHaveBeenCalled(); expect(sends()).toHaveLength(1);
       });
       it('preserves reads but holds reviewed sends when older gateway metadata has no company realm', async () => {
         bindings = bindings.map(row => ({ ...row, companyId: undefined })); await startManaged(true);
