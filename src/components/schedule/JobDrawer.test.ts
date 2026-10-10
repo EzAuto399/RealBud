@@ -6,7 +6,17 @@ import { buildScheduleRows } from "@/lib/schedule-rows";
 import { stageState, type FixtureStage } from "../setup-stages.fixture";
 
 vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ state: {}, dispatch: vi.fn() }) }));
+// The saved Desk layout and office preset this window holds (WorkspaceTabsProvider); read, nothing saved yet.
+const tabs = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
+vi.mock("@/lib/workspace-tabs", async (importOriginal) => ({ ...(await importOriginal<object>()), useWorkspaceTabs: () => tabs.current }));
+const holding = (office: OfficeDesk | null, sections?: DeskSection[], loading = false) => {
+  tabs.current = { data: sections ? { state: { version: 3, revision: 1, tabs: [], desk: { sections }, history: [] }, recovery: null, office } : null,
+    loading, saving: false, error: "", office, budChange: null, saveDesk: vi.fn(), revertDesk: vi.fn() };
+};
+holding(null);
 
+import { coreOfficeDesk, type OfficeDesk } from "@shared/desk-areas";
+import { defaultDeskSections, type DeskSection } from "@shared/workspace-tabs";
 import { FlaggedReceipt, JobDrawer, LoopDetail, NewMailSwitch, readNewMailState } from "./JobDrawer";
 import { JobList } from "./JobList";
 
@@ -242,6 +252,53 @@ describe("job drawer", () => {
     expect(html).not.toContain("Run now");
     expect(html).not.toContain("Timing · ");
     expect(html).not.toContain("Resume");
+  });
+});
+
+describe("bank review place", () => {
+  const bank = loop({ id: "bank-references", name: "Bank reference review" });
+  const REVIEW = "Prepare bank references";
+
+  it("keeps the review in the job when this office's Desk does not offer Bank references", () => {
+    holding(coreOfficeDesk(["morning-priorities"]), defaultDeskSections());
+    const html = detail({ loop: bank });
+    expect(html).toContain(REVIEW);
+    expect(html).not.toContain("on Desk</button>");
+    // A failed or missing layout read falls back to the core preset, which offers no Bank area.
+    holding(null);
+    expect(detail({ loop: bank })).toContain(REVIEW);
+  });
+
+  it("opens the office's Bank area on Desk instead of a second copy of the review", () => {
+    holding(coreOfficeDesk(["bank-references"]), defaultDeskSections());
+    const html = detail({ loop: bank });
+    expect(html).not.toContain(REVIEW);
+    expect(html).toContain('aria-label="Bank review"');
+    expect(html).toContain("Bank files are prepared and reviewed in Bank references on Desk.");
+    expect(buttonTag(html, "Open Bank references on Desk")).not.toContain('disabled=""');
+  });
+
+  it("uses the title the office's pack gives the area", () => {
+    const office = coreOfficeDesk(["bank-references"]);
+    holding({ ...office, areas: office.areas.map((area) => area.id === "bank" ? { ...area, title: "Trust receipts" } : area) }, defaultDeskSections());
+    expect(detail({ loop: bank })).toContain("Open Trust receipts on Desk</button>");
+  });
+
+  it("offers to show an area this person hid, as Needs you does, rather than a dead end", () => {
+    holding(coreOfficeDesk(["bank-references"]), defaultDeskSections().map((section) => section.id === "bank" ? { ...section, visible: false } : section));
+    const html = detail({ loop: bank });
+    expect(html).not.toContain(REVIEW);
+    expect(html).toContain("Bank files are prepared and reviewed in Bank references, which is hidden on your Desk.");
+    expect(html).toContain("Show Bank references on my Desk</button>");
+  });
+
+  it("mounts neither place until the office preset is first read", () => {
+    holding(null, undefined, true);
+    const html = detail({ loop: bank });
+    expect(html).not.toContain(REVIEW);
+    expect(html).not.toContain("on Desk</button>");
+    expect(html).toContain("Checking where bank files are reviewed…");
+    expect(detail()).not.toContain("Checking where bank files are reviewed");
   });
 });
 
