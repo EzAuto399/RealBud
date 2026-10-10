@@ -3,7 +3,7 @@
 //     "instances": { "<instanceId>": {"driver":"grok", …} } }
 import { readFileSync, existsSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { mkdirNewSync, mkdirPrivateSync, restrictNewSync, writeFileAtomic } from "./atomic.ts";
 import { admitPrivateDirectorySync, PrivateStorageError } from "./private-json.ts";
@@ -38,8 +38,9 @@ export interface AppConfig {
 }
 
 // OMB_DATA_DIR / REALBUD_DATA_DIR isolate test/soak rigs from the real fleet.
+const DEFAULT_DATA_DIR = join(homedir(), ".realbud");
 export const DATA_DIR =
-  process.env.REALBUD_DATA_DIR ?? process.env.OMB_DATA_DIR ?? join(homedir(), ".realbud");
+  process.env.REALBUD_DATA_DIR ?? process.env.OMB_DATA_DIR ?? DEFAULT_DATA_DIR;
 
 /**
  * Which seat this process is. Empty means single-seat, which is every install
@@ -63,8 +64,9 @@ export const NATIVE_DIR = join(DATA_DIR, "native");
 
 export function ensureDirs() {
   // one-time migration from the pre-rename data dir — bots, transcripts,
-  // config and keys all carry over
-  if (!existsSync(DATA_DIR)) {
+  // config and keys all carry over. Only into the default folder: an isolated
+  // office, seat or test folder never takes this computer's real data.
+  if (resolve(DATA_DIR) === resolve(DEFAULT_DATA_DIR) && !existsSync(DATA_DIR)) {
     for (const legacy of LEGACY_DATA_DIRS) {
       if (!existsSync(legacy)) continue;
       try {
