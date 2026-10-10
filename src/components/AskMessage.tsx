@@ -3,6 +3,7 @@ import { useEffect, useId, useState, type ReactNode, type Ref } from "react";
 import { Check, ChevronLeft, ChevronRight, Copy, Pencil, Repeat2, Send, TextQuote } from "lucide-react";
 import { fmtDateTime } from "@/lib/au";
 import { channelMessage } from "@/lib/channel-message";
+import { replaceChartBlocksWithText } from "@shared/chat-chart";
 import { formatTime } from "@/state/store";
 import { MausAvatar } from "./Avatar";
 import { ChannelMark } from "./ChannelMark";
@@ -27,7 +28,8 @@ export function AskMessage({ text, at, user, children, onEdit, onMakeRepeatable,
   const body = origin?.body ?? text;
   const bodyId = useId();
   const [expanded, setExpanded] = useState(false);
-  const { state: copyState, copy } = useCopyText(body);
+  // A drawn chart copies as readable lines, never its raw data block.
+  const { state: copyState, copy } = useCopyText(user ? body : replaceChartBlocksWithText(body));
   useEffect(() => { if (copyState === "failed") setExpanded(true); }, [copyState]);
   const longRequest = user && (body.length > 600 || body.split("\n").length > 8);
   const hasDate = Number.isFinite(new Date(at).getTime());
