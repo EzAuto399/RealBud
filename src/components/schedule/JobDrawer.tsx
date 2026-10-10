@@ -5,7 +5,12 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { CheckCircle2, CircleAlert, Hourglass, Loader2, Pause, Play, X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
-import { api } from "@/state/store";
+import { api, useStore } from "@/state/store";
+import { openDeskArea } from "@/lib/desk-view-state";
+import { useUnsavedGuard } from "@/lib/unsaved-work";
+import { useWorkspaceTabs } from "@/lib/workspace-tabs";
+import { effectiveDeskAreas } from "@shared/workspace-tabs";
+import { useDeskArrangement } from "../shell/DeskArrangement";
 import { fmtDateTime } from "@/lib/au";
 import { useDialogKeyboard } from "@/lib/use-dialog-keyboard";
 import { useScheduleTiming } from "@/lib/workspace-view-state";
@@ -211,6 +216,8 @@ export function LoopTiming({
   useEffect(() => { setIntervalDays(loop.schedule.intervalDays ?? 0); setAnchor(loop.schedule.anchorDate ?? ''); }, [loop.schedule.intervalDays, loop.schedule.anchorDate]);
   const cadenceEditable = evaluatorForLoop(loop.id)?.cadenceEditable === true;
   const dirty = time !== loop.schedule.time || days.join(",") !== savedDays || interval !== (loop.schedule.intervalDays ?? 0) || anchor !== (loop.schedule.anchorDate ?? '');
+  // Unsaved timing holds the window's beforeunload and main's update restart while it is open.
+  useUnsavedGuard(dirty);
   const toggleDay = (day: number) =>
     setDays((prev) => (prev.includes(day) ? (prev.length > 1 ? prev.filter((d) => d !== day) : prev) : [...prev, day].sort((a, b) => a - b)));
   return (
@@ -333,6 +340,46 @@ export function NewMailSwitch({ loopId, initial }: { loopId: string; initial?: N
   );
 }
 
+/** Bank review has one place per office, so one review never holds two drafts. When this office's
+ * Desk offers the Bank references area (a pack may rename it) the review lives there and this job
+ * opens it; otherwise it stays here. An area this person hid is shown again first, as Needs you does.
+ * In this window the office preset changes only in Agency workflow setup, reached through the close guards.
+ * Until the preset is read neither place mounts; a failed read offers Try again, never a second review here. */
+export function BankReviewPlace({ registerCloseGuard }: { registerCloseGuard: CloseGuardRegistrar }) {
+  const { dispatch } = useStore();
+  const tabs = useWorkspaceTabs();
+  const arrangement = useDeskArrangement();
+  if (!tabs.office && (tabs.loading || tabs.saving)) return <p role="status" className="border-t border-line pt-3 text-[13px] text-ink-muted">Checking where bank files are reviewed…</p>;
+  if (!tabs.office) {
+    return (
+      <section aria-label="Bank review" className="border-t border-line pt-3">
+        <p role="status" className="text-[14px] text-hold">Couldn’t check where bank files are reviewed.</p>
+        <button type="button" onClick={() => void tabs.refresh()} className="pm-control mt-2 rounded border border-line bg-sheet px-3 text-[13px] text-ink hover:bg-selected">
+          Try again
+        </button>
+      </section>
+    );
+  }
+  const area = effectiveDeskAreas(arrangement.sections, arrangement.office).find((row) => row.id === "bank");
+  if (!area) return <div className="border-t border-line pt-3"><BankReferenceReview registerCloseGuard={registerCloseGuard} /></div>;
+  const open = () => { openDeskArea("bank"); dispatch({ type: "showDesk" }); };
+  return (
+    <section aria-label="Bank review" className="border-t border-line pt-3">
+      <p className="text-[14px] text-ink-secondary">
+        {area.visible ? `Bank files are prepared and reviewed in ${area.title} on Desk.` : `Bank files are prepared and reviewed in ${area.title}, which is hidden on your Desk.`}
+      </p>
+      <button
+        type="button"
+        disabled={!area.visible && arrangement.saving}
+        onClick={area.visible ? open : () => void arrangement.setSection("bank", true).then((saved) => { if (saved) open(); })}
+        className="pm-control mt-2 rounded border border-line bg-sheet px-3 text-[13px] text-ink hover:bg-selected disabled:opacity-40"
+      >
+        {area.visible ? `Open ${area.title} on Desk` : `Show ${area.title} on my Desk`}
+      </button>
+    </section>
+  );
+}
+
 const OPEN_GATE: SetupGate = { on: true };
 
 /** Detail for a built-in scheduled job (not a saved plan). */
@@ -427,7 +474,7 @@ export function LoopDetail({
       </div>
 
       {manualOnly ? (
-        <p className="text-[14px] text-ink-secondary">Automatic bank downloads are not available yet. Review a bank file here when you have one.</p>
+        <p className="text-[14px] text-ink-secondary">Automatic bank downloads are not available yet. You can still review a bank file when you have one.</p>
       ) : <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
@@ -492,9 +539,7 @@ export function LoopDetail({
           : <LoopRunResult run={lastRun} deskCount={deskCount(lastRun)} onOpenDesk={onOpenDesk} />}
       </section>
 
-      {loop.id === "bank-references" ? (
-        <div className="border-t border-line pt-3"><BankReferenceReview registerCloseGuard={registerCloseGuard} /></div>
-      ) : null}
+      {loop.id === "bank-references" ? <BankReviewPlace registerCloseGuard={registerCloseGuard} /> : null}
 
       <ExecutionHistory loopId={loop.id} />
     </article>

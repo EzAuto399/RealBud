@@ -1,4 +1,4 @@
-import { readSessionToken, primeBrowserSession } from './local-session.mjs';
+import { readSessionToken, primeBrowserSession, enterSampleDeskForQa } from './local-session.mjs';
 // W5 inspection planning: built React UI from REALBUD_UI_DIR against a real, disposable
 // local service. Fictional sample book + fictional history from
 // pack/workflows/austin-inspections/fixtures. Never reads ~/.realbud or dist/; never calls
@@ -63,8 +63,9 @@ try {
   await page.goto(origin);
   await page.getByLabel('Your name', { exact: true }).fill('Fictional Inspections Reviewer');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
-  await page.getByRole('heading', { name: 'Desk', exact: true }).waitFor();
+  // First run has no sample-desk exit: the QA helper completes it as that button did and passes the office-link screen.
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
+  await enterSampleDeskForQa(page);
 
   // Fictional history from the fixture, laid onto the sample book's properties in order, plus one row no Desk property matches.
   const desk = (await call('/api/desk')).properties;
@@ -80,13 +81,13 @@ try {
   const rulesState = await call('/api/inspection-rules');
   await call('/api/inspection-rules', 'PUT', { expectedRevision: rulesState.revision, rules: RULES });
 
-  // Desk → Bills → Inspections.
-  await page.getByRole('tablist', { name: 'Desk views', exact: true }).getByRole('tab', { name: /^Bills/ }).click();
+  // Desk → Bills and calendar → Inspections.
+  await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: 'Bills and calendar', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Inspections', exact: true });
   await panel.waitFor();
   await panel.getByText('Draft plan · not booked in Property Inspect').waitFor();
   await panel.getByText('fictional-inspector-A and fictional-inspector-B', { exact: false }).waitFor();
-  pass('Desk → Bills shows Inspections with the "not booked in Property Inspect" label and the rules summary');
+  pass('Desk → Bills and calendar shows Inspections with the "not booked in Property Inspect" label and the rules summary');
 
   // 1. Import history CSV through the file control: one unmatched row held, never guessed.
   await panel.locator('input[type="file"]').setInputFiles({ name: 'fictional-history.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
@@ -137,20 +138,35 @@ try {
   for (const a of accepted) assert.deepEqual(plan().appointments.find(x => x.id === a.id), a, `Accepted ${a.id} unchanged on rerun`);
   pass('Accepted 3 by stable id; a rerun keeps all three exactly');
 
-  // 5. Move one (keyboard-reachable form); rerun keeps it.
+  // 5. Move one (keyboard-reachable form); rerun keeps it. A day where its inspector is already at the
+  // daily limit is refused first (server/inspection-bookings.ts move), leaving the plan unchanged.
   const target = plan().appointments.find(a => a.status === 'draft');
+  const FULL_DAY = '2026-11-11', FREE_DAY = '2026-11-12';
+  const sameDay = date => plan().appointments.filter(a => a.id !== target.id && a.date === date && a.inspector === target.inspector).length;
+  assert.equal(sameDay(FULL_DAY), RULES.dailyCapacity, `${target.inspector} is at the daily limit on ${FULL_DAY}`);
+  assert.equal(sameDay(FREE_DAY), 0, `${target.inspector} has no visit on ${FREE_DAY}`);
   const row = panel.locator(`[data-appointment-id="${target.id}"]`);
-  await row.getByRole('button', { name: /^Move / }).click();
-  await row.getByLabel('New date', { exact: true }).fill('2026-11-11');
-  await row.getByLabel('New time', { exact: true }).fill('14:00');
-  await row.getByLabel('New time', { exact: true }).press('Enter');
+  const moveTo = async date => {
+    await row.getByRole('button', { name: /^Move / }).click();
+    await row.getByLabel('New date', { exact: true }).fill(date);
+    await row.getByLabel('New time', { exact: true }).fill('14:00');
+    await row.getByLabel('New time', { exact: true }).press('Enter');
+  };
+  const beforeRefusal = { revision: view.plan.revision, visit: plan().appointments.find(a => a.id === target.id) };
+  await moveTo(FULL_DAY);
+  await panel.getByText(`the daily limit is ${RULES.dailyCapacity}. Choose another day.`, { exact: false }).waitFor();
+  view = await call('/api/inspections');
+  assert.equal(view.plan.revision, beforeRefusal.revision, 'A refused move saves nothing');
+  assert.deepEqual(plan().appointments.find(a => a.id === target.id), beforeRefusal.visit, 'A refused move leaves the visit where it was');
+  pass(`A move onto ${FULL_DAY}, where ${target.inspector} already has ${RULES.dailyCapacity} visits, is refused at the daily limit and saves nothing`);
+  await moveTo(FREE_DAY);
   await panel.getByText('Visit moved.', { exact: false }).waitFor();
   await panel.getByRole('button', { name: 'Redraft plan', exact: true }).click();
   await panel.getByText('Draft plan updated.', { exact: false }).waitFor();
   view = await call('/api/inspections');
-  assert.ok(plan().appointments.find(a => a.id === target.id && a.date === '2026-11-11' && a.time === '14:00' && a.status === 'manual'), 'Moved visit kept on rerun');
+  assert.ok(plan().appointments.find(a => a.id === target.id && a.date === FREE_DAY && a.time === '14:00' && a.status === 'manual'), 'Moved visit kept on rerun');
   await panel.locator(`[data-appointment-id="${target.id}"]`).getByText('Moved', { exact: true }).waitFor();
-  pass(`Moved ${target.id} to 2026-11-11 14:00 with the keyboard; a rerun keeps it`);
+  pass(`Moved ${target.id} to ${FREE_DAY} 14:00 with the keyboard; a rerun keeps it`);
 
   // 6. A move onto a closed day is refused with a plain reason.
   const other = plan().appointments.find(a => a.id !== target.id);

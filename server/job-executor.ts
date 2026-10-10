@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import { isCompanyExecutionSource, type CompanyExecutionSource } from '../shared/company-execution.ts';
 import { departmentWorkRecipe } from './department-work-plan.ts';
 import { addRunUsage, emptyRunUsage } from './run-cost.ts';
+import { workLedger } from './work-ledger.ts';
 
 const MAX_RESULT_ITEMS = 20;
 const MAX_RESULT_LINE = 500;
@@ -201,10 +202,21 @@ function recipeForRun(recipe: Recipe, run: JobRun): Recipe {
   };
 }
 
-export async function executeRecipeJob(
+/** Every prepare and shadow run (manual Run/Prepare, Schedule, workflow packs, department work) comes through here, so
+ * it counts as working in the update restart's ledger (server/work-ledger.ts) until it settles. An attended run is not
+ * executed here: its Bud turn counts it (server/index.ts), and a queued one waits, saved, for the person to press Start. */
+export function executeRecipeJob(
   recipe: Recipe,
   input: ExecuteRecipeJobInput,
   dependencies: JobExecutorDependencies = {},
+): Promise<ExecuteRecipeJobResult> {
+  return workLedger.track("job-run", runRecipeJob(recipe, input, dependencies));
+}
+
+async function runRecipeJob(
+  recipe: Recipe,
+  input: ExecuteRecipeJobInput,
+  dependencies: JobExecutorDependencies,
 ): Promise<ExecuteRecipeJobResult> {
   if (dependencies.department) {
     if (input.mode !== 'prepare') throw new Error('Department work supports reviewed preparation only.');

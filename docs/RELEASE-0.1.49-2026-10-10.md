@@ -25,11 +25,11 @@ On 10 October Auston Realty's Windows PC exposed three problems.
 ## Evidence
 | Check | Result | Tier |
 |---|---|---|
-| Full desktop suite and typecheck | see PR | local tests |
+| Full desktop suite and typecheck | typecheck clean; `check:electron` 34/34; 10,824 passed, then the 9 files that hit a full disk passed on rerun (176 passed, 1 skipped); 3 PDF files fail only in a symlinked worktree | local tests |
 | Old-service tests fail without the fix | 4 failed before the fix, all pass after | local tests |
 | Hermes ACP tool assembly with search off (0.21.5 f97608f1, 0.21.3 345cd2b0) | 9/9; fails when set to auto | local, env-gated |
-| Ask step line at 1280 and 390 px | see PR | local render |
-| CI Windows installer | see PR | CI Windows |
+| Ask step line at 1280 and 390 px | not recorded in PR #199; render it again before citing | not established |
+| CI Windows installer | Package Windows run 38024939250 (`workflow_dispatch` at f9a8a7fc): success | CI Windows |
 
 ## After install on Auston's PC
 Ask the same Gmail and ANZ question. Then read the latest `"event":"turn"` line, and any `"event":"connector"` line, in `%USERPROFILE%\.realbud\realbud.log`.

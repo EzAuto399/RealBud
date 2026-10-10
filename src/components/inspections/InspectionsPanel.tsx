@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useUnsavedGuard } from '@/lib/unsaved-work';
 import { api, useStore } from '@/state/store';
 
 // W5 inspection planning. Server: server/inspection-bookings.ts (/api/inspections*).
@@ -68,6 +69,8 @@ export function groupPlan(appointments: Appointment[]) {
 
 function Row({ a, selected, busy, onSelect, onMove }: { a: Appointment; selected: boolean; busy: boolean; onSelect: (on: boolean) => void; onMove: (date: string, time: string) => void }) {
   const [moving, setMoving] = useState(false), [date, setDate] = useState(a.date), [time, setTime] = useState(a.time);
+  // A changed date or time in an open Move form holds beforeunload and the update restart until saved or cancelled.
+  useUnsavedGuard(moving && (date !== a.date || time !== a.time));
   const name = `${a.address || a.propertyId} at ${a.time} on ${dayLabel(a.date)}`;
   return <li data-appointment-id={a.id} aria-label={name} className="py-2">
     <div className="flex flex-wrap items-start gap-2">

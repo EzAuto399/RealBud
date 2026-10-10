@@ -2,6 +2,7 @@
 // Node 24+, PLAYWRIGHT_MODULE, optional CHROME_EXECUTABLE. No dist build.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
@@ -10,7 +11,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
-import { readSessionToken, primeBrowserSession } from './local-session.mjs';
+import { readSessionToken, primeBrowserSession, enterSampleDeskForQa } from './local-session.mjs';
 
 assert.ok(process.env.PLAYWRIGHT_MODULE, 'Set PLAYWRIGHT_MODULE.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -81,8 +82,19 @@ async function rules(page, name) {
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
 }
+// First run has no sample-desk exit (docs/OFFICE-LINK-GATE-2026-10-10.md): the connect step offers linking, Back and Restore a private backup only.
+const CONNECT_ACTIONS = ['Connect with this code', 'Copy request for your owner', 'I’m the office owner: approve in my browser', 'Back', 'Restore a private backup'];
+async function connectOffersOnlyLinking(page, extra = []) {
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Connect with this code', exact: true }).waitFor();
+  for (const name of ['Open the sample desk first', 'Explore the sample desk']) assert.equal(await page.getByRole('button', { name, exact: true }).count(), 0, `No "${name}" exit`);
+  const actions = await page.getByRole('button').evaluateAll(buttons => buttons.map(button => (button.getAttribute('aria-label') || button.textContent || '').replace(/\s+/g, ' ').trim()));
+  assert.deepEqual(actions.sort(), [...CONNECT_ACTIONS, ...extra].sort(), 'The connect step offers only linking, Back and Restore a private backup');
+}
 async function finish(page) {
-  await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
+  await connectOffersOnlyLinking(page);
+  // QA only: completes first run as the removed sample-desk exit did and passes the office-link screen.
+  await enterSampleDeskForQa(page);
   await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor({ state: 'hidden' });
   await page.getByRole('region', { name: 'This morning', exact: true }).waitFor();
 }
@@ -182,20 +194,35 @@ try {
   record('Replayed welcome preserves a restored book contact instead of overwriting it');
   await page.close();
 
+  // Welcome has no "Explore the sample desk" exit: without a name nothing is saved and the next step stays closed.
   const sample = join(scratch, 'sample'); await start(sample); page = await open();
-  await page.getByRole('button', { name: 'Explore the sample desk', exact: true }).click();
-  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Make the desk yours', exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Explore the sample desk', exact: true }).count(), 0, 'Welcome has no sample-desk exit');
+  assert.equal(await page.getByRole('button', { name: 'Continue', exact: true }).isDisabled(), true, 'Welcome continues only with a name');
   await page.close(); await start(sample); page = await open();
-  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
-  await finish(page); assert.equal((await request('/api/desk')).book.office.pmUser, 'Sample PM');
-  record('Sample exploration retains its profile and can finish after a changed-port restart');
+  await page.getByRole('heading', { name: 'Make the desk yours', exact: true }).waitFor();
+  assert.equal((await request('/api/onboarding')).stage, 'profile');
+  assert.equal((await request('/api/config')).profile?.name ?? '', '');
+  record('Welcome offers no sample-desk exit; an unnamed welcome saves nothing across a changed-port restart');
   await page.close();
 
   await stop(); const recovery = join(scratch, 'recovery'); await mkdir(recovery, { mode: 0o700 });
+  // A readable workspace key with a book it cannot open: the service starts, quarantines the book and holds the desk in recovery.
+  // (A book without its key refuses to start at all; server/desk-key.ts.) The key is random and disposable.
+  await writeFile(join(recovery, 'desk.key'), randomBytes(32), { mode: 0o600 });
   await writeFile(join(recovery, 'desk.json'), '{fictional-protected-broken-book', { mode: 0o600 });
-  await start(recovery); page = await open(); await rules(page, 'Fictional Recovery Person');
-  await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
+  await start(recovery); assert.equal((await request('/api/desk')).recovery.active, true, 'The service holds the unreadable book in recovery');
+  page = await open(); await rules(page, 'Fictional Recovery Person');
+  // A protected book: first run keeps "Open recovery" beside linking (docs/OFFICE-LINK-GATE-2026-10-10.md, Exits); no sample exit leads to it.
+  await connectOffersOnlyLinking(page, ['Open recovery']);
   await page.getByRole('button', { name: 'Open recovery', exact: true }).waitFor();
+  await page.getByText('A protected book is already on this computer. Open recovery to unlock it or preserve it before starting again.', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Open recovery', exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(output, 'connect-recovery-390.png') });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'No 390px horizontal overflow on the protected connect step');
+  await page.setViewportSize({ width: 1440, height: 1050 });
+  await page.screenshot({ path: join(output, 'connect-recovery-1440.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
   assert.equal((await request('/api/onboarding')).stage, 'office-rules');
   await page.getByRole('button', { name: 'Open recovery', exact: true }).click();
   await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor({ state: 'hidden' });

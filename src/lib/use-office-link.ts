@@ -15,6 +15,8 @@ const FAILED: OfficeLinkView = { ...NO_OFFICE_FACTS, link: "unavailable" };
 
 // One shared read for every surface: concurrent mounts reuse the read in flight.
 let current = UNREAD;
+// The last read that answered, kept for the office-link screen while disconnected.
+let lastAnswered = UNREAD;
 let generation = 0;
 let inFlight = false;
 const listeners = new Set<() => void>();
@@ -23,11 +25,13 @@ function load() {
   const request = ++generation;
   inFlight = true;
   void api("/api/office-link", undefined, { timeoutMs: 15_000 })
-    .then((body: unknown): OfficeLinkView => readOfficeLinkFacts(body), () => FAILED)
+    // A fresh object per failure, so a retry that fails again still re-renders.
+    .then((body: unknown): OfficeLinkView => readOfficeLinkFacts(body), () => ({ ...FAILED }))
     .then(next => {
       if (request !== generation) return;
       inFlight = false;
       current = next;
+      if (next.link !== "unavailable") lastAnswered = next;
       for (const listener of listeners) listener();
     });
 }
@@ -43,11 +47,13 @@ function subscribe(listener: () => void) {
 }
 
 /** The shared office-link read. Re-reads when a setup surface changes the
- * link and when the local service reconnects (`enabled` turns true). */
-export function useOfficeLinkView(enabled: boolean): OfficeLinkView {
+ * link and when the local service reconnects (`enabled` turns true). While
+ * disabled it is unread, or with `keepLastRead` the last read that answered
+ * (so the office-link screen stays while the service reconnects). */
+export function useOfficeLinkView(enabled: boolean, { keepLastRead = false }: { keepLastRead?: boolean } = {}): OfficeLinkView {
   const view = useSyncExternalStore(subscribe, () => current, () => current);
   useEffect(() => { if (enabled && !inFlight) load(); }, [enabled]);
-  return enabled ? view : UNREAD;
+  return enabled ? view : keepLastRead ? lastAnswered : UNREAD;
 }
 
 /** As `useOfficeLinkView`, link state only. */

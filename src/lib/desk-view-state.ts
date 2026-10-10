@@ -1,10 +1,12 @@
 import { useSyncExternalStore, type SetStateAction } from "react";
+import { DESK_AREA_IDS, type DeskAreaId } from "@shared/desk-areas";
 import type { PropertyScope } from "./book-groups";
 import type { QueueFilter } from "./desk-queue";
 
-/** Secondary work opened from "Other work". While one is open it replaces the
+/** Desk's work areas, each a tab after Tasks. While one is open it replaces the
  *  task area; null means the queue and case are showing. */
-export type DeskOtherWork = "mail" | "bills" | "shared-work";
+export const DESK_AREAS = DESK_AREA_IDS;
+export type DeskOtherWork = DeskAreaId;
 interface DeskViewState {
   mode: "cases" | "book" | "batch";
   /** The Hermios tab is open over the task area. Shell navigation closes it. */
@@ -31,6 +33,11 @@ function subscribe(listener: () => void) { listeners.add(listener); return () =>
  *  Desk tab (Hermios, Properties, Bills, a property scope) was open. */
 export function openDeskQueueFilter(filter: QueueFilter) {
   Object.assign(view, { mode: "cases", hermios: false, otherWork: null, filter, query: "", caseKind: "all", taskScope: null });
+  emit();
+}
+/** Open one work area's tab, from a notice or a Needs you row. Desk shows Tasks instead if the area is hidden. */
+export function openDeskArea(area: DeskOtherWork) {
+  Object.assign(view, { mode: "cases", hermios: false, otherWork: area, query: "", caseKind: "all", taskScope: null });
   emit();
 }
 /** Explicit task links must open the queue even if the last view was Properties. */

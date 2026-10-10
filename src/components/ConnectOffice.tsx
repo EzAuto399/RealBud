@@ -31,6 +31,8 @@ export interface ConnectOfficeViewProps {
   onRefresh: () => void;
   /** Fixed clock for tests; live, the time left ticks every second. */
   now?: number;
+  /** The surrounding screen already says this computer was disconnected. */
+  revokedShown?: boolean;
 }
 
 /**
@@ -83,7 +85,7 @@ export function ConnectOfficeView(props: ConnectOfficeViewProps) {
       </div>
     </> : <>
       {ended ? <p role="alert">{browserLinkMessage(phase)}</p> : null}
-      {status?.state === "revoked" ? <p>This computer was removed from your office. Connect it again to continue.</p> : null}
+      {status?.state === "revoked" && !props.revokedShown ? <p>This computer was removed from your office. Connect it again to continue.</p> : null}
       {problem ? <p role="alert" className="text-danger">{problem}</p> : null}
       {codePending ? <p>Connecting with a code was interrupted. Paste the same code below to finish safely.</p> : null}
       {/* The link code is the day-one path for office staff; browser approval stays available for owners. */}

@@ -11,7 +11,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
-import { readSessionToken, primeBrowserSession } from './local-session.mjs';
+import { readSessionToken, primeBrowserSession, enterSampleDeskForQa } from './local-session.mjs';
 
 assert.ok(process.env.PLAYWRIGHT_MODULE, 'Set PLAYWRIGHT_MODULE.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -149,7 +149,9 @@ try {
   await page.goto(uiBase);
   await page.getByLabel('Your name', { exact: true }).fill('Fictional Narrow Desk Person');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
+  // First run has no sample-desk exit: the QA helper completes it as that button did and passes the office-link screen.
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
+  await enterSampleDeskForQa(page);
   await page.locator('.desk-content .desk-empty-canvas').waitFor();
   assert.equal((await request('/api/onboarding')).stage, 'complete');
 

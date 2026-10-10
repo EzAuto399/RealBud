@@ -13,16 +13,18 @@ import { DeskCase } from "./DeskCase";
 
 const noop = () => {};
 
-describe("Other work", () => {
+describe("Work area tabs", () => {
   const area = (active: DeskOtherWork | null, opened: DeskOtherWork[]) =>
     renderToStaticMarkup(createElement(DeskWorkArea, {
       active,
       opened: new Set(opened),
+      title: id => ({ mail: "Morning priorities", bills: "Bills & calendar", bank: "Bank references", "shared-work": "Shared work" })[id],
       tasks: createElement("textarea", { "aria-label": "Draft wording", defaultValue: "Unsaved edit" }),
       panels: {
         mail: createElement("form", { "aria-label": "Review saved mail item" }, "mail draft"),
         bills: createElement("div", null, "bills"),
         "shared-work": createElement("div", null, "shared"),
+        bank: createElement("div", null, "bank review"),
       },
     }));
 
@@ -30,7 +32,8 @@ describe("Other work", () => {
     const html = area("mail", ["mail"]);
     expect(html).toMatch(/<div class="desk-work-tasks" hidden="">.*Unsaved edit/);
     // Desk's Tasks tab is the one way back; the surface adds no second one.
-    expect(html).toMatch(/<section class="desk-other-work-surface" data-other-work="mail" aria-label="Mail priorities"><form/);
+    // The surface carries the office's own name for the area.
+    expect(html).toMatch(/<section class="desk-area-surface" data-other-work="mail" aria-label="Morning priorities"><form/);
     expect(html).not.toContain("Back to tasks");
     expect(html).not.toContain("bills");
   });
@@ -38,8 +41,9 @@ describe("Other work", () => {
   it("returns to tasks with an opened surface still mounted but hidden", () => {
     const html = area(null, ["mail", "bills"]);
     expect(html).toMatch(/<div class="desk-work-tasks">.*Unsaved edit/);
-    expect(html).toMatch(/data-other-work="mail" hidden="" aria-label="Mail priorities">.*mail draft/);
+    expect(html).toMatch(/data-other-work="mail" hidden="" aria-label="Morning priorities">.*mail draft/);
     expect(html).toMatch(/data-other-work="bills" hidden=""/);
+    expect(html).not.toContain("bank review");
     // Stable order keeps each surface at the same tree position, so React keeps its state.
     expect(html.indexOf("desk-work-tasks")).toBeLessThan(html.indexOf('data-other-work="mail"'));
     expect(html.indexOf('data-other-work="mail"')).toBeLessThan(html.indexOf('data-other-work="bills"'));

@@ -146,9 +146,19 @@ declare global {
       updater?: {
         check(): Promise<void>;
         download(): Promise<void>;
-        /** quit-and-install the downloaded update */
+        /** quit-and-install the downloaded update; main asks onQueryUnsaved first */
         install(): Promise<void>;
         onState(cb: (s: UpdaterState) => void): () => void;
+        /** Holds the automatic restart for 4 hours. Resolves false when main refuses (required, or nothing downloaded). Absent in older builds. */
+        later?(): Promise<boolean>;
+        /** The countdown's "Not now". Absent in older builds. */
+        cancelCountdown?(): Promise<void>;
+        /** Clears the "Updated to" or "didn't install" note. Absent in older builds. */
+        dismissNote?(): Promise<void>;
+        /** Main asks before restarting whether this window holds unsaved work: true =
+         * unsaved; throwing or anything but false counts as unsaved. One handler at a
+         * time (a newer one replaces it). Returns an unsubscribe. */
+        onQueryUnsaved?(handler: () => boolean | Promise<boolean>): () => void;
       };
     };
   }
@@ -159,6 +169,24 @@ export interface UpdaterState {
   version?: string;
   percent?: number;
   message?: string;
-  /** Set while a downloaded update waits for the office service: Bud busy, the service still stopping, or not stoppable. */
-  deferred?: "busy" | "cannot-stop" | "still-running";
+  /** Set while a downloaded update waits: Bud busy, the service still stopping or not stoppable, or "Restart now" met an unsaved draft. `message` is main's sentence for it. */
+  deferred?: "busy" | "cannot-stop" | "still-running" | "unsaved" | "cannot-record";
+  /** How a downloaded update restarts RealBud (docs/UPDATES-2026-10-10.md). Absent from older builds. */
+  restart?: UpdaterRestart;
+  /** The last install attempt reopened the earlier version. */
+  installFailed?: { version: string };
+  /** First launch on a new version, shown once. */
+  updatedFrom?: { from: string; to: string };
+}
+
+export interface UpdaterRestart {
+  /** waiting = blocked by unsaved work, a busy service or an approval */
+  mode: "when-away" | "countdown" | "waiting";
+  /** countdown end, epoch ms */
+  at?: number;
+  blockedBy?: Array<"unsaved" | "busy" | "approval">;
+  /** epoch ms; absent when "Later" isn't holding the restart */
+  laterUntil?: number;
+  required: boolean;
+  requiredReason?: "unsupported" | "waited";
 }

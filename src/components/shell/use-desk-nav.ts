@@ -1,9 +1,10 @@
 import { useMemo, useSyncExternalStore } from "react";
-import { openDeskCase, openDeskQueueFilter, useDeskViewState } from "@/lib/desk-view-state";
+import { openDeskCase, openDeskQueueFilter, useDeskViewState, type DeskOtherWork } from "@/lib/desk-view-state";
 import { buildDeskQueue, type DeskQueueItem, type QueueFilter } from "@/lib/desk-queue";
 import { useStore } from "@/state/store";
 
-export type DeskTabId = "today" | "properties" | "bills";
+/** Tasks, Properties and the work areas (mail, bills, shared work). */
+export type DeskTabId = "today" | "properties" | DeskOtherWork;
 
 // Desk's own tab row hands the shell a place for its tabs, so Desk shows one row of tabs.
 let tabSlot: HTMLElement | null = null;
@@ -32,7 +33,7 @@ export function useDeskNav() {
   const rows = useMemo<DeskQueueItem[]>(() => (desk ? buildDeskQueue(desk) : []), [desk]);
   const onDesk = state.activeView === "desk";
   const show = () => { if (!onDesk) dispatch({ type: "showDesk" }); };
-  const tab: DeskTabId | null = !onDesk || hermios ? null : mode === "book" ? "properties" : otherWork === "bills" ? "bills" : mode === "cases" && !otherWork ? "today" : null;
+  const tab: DeskTabId | null = !onDesk || hermios ? null : mode === "book" ? "properties" : mode === "cases" ? otherWork ?? "today" : null;
   return {
     rows, tab, filter: onDesk && mode === "cases" && !hermios && !otherWork && !taskScope ? filter : null, scopeIds: onDesk && mode === "cases" ? taskScope?.ids ?? null : null,
     /** The case Desk shows: the chosen row, else the first in Desk's default order. */
@@ -40,8 +41,7 @@ export function useDeskNav() {
     openTab(id: DeskTabId) {
       setHermios(false);
       if (id === "properties") { setOtherWork(null); setMode("book"); }
-      else if (id === "bills") { setMode("cases"); setOtherWork("bills"); }
-      else { setOtherWork(null); setMode("cases"); }
+      else { setMode("cases"); setOtherWork(id === "today" ? null : id); }
       show();
     },
     openFilter(next: QueueFilter) {

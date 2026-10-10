@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { budAutoSetupRetryable, budAutoSetupView, budAvailability, budFirstSetupCover, budFacingCopy, budReadinessFailure, budSetupJourney, parseBudStatus, type BudSetupInput } from "./bud-setup";
+import { LINK_GATE_LEFT, budAutoSetupRetryable, budAutoSetupView, budAvailability, budFirstSetupCover, budFacingCopy, budReadinessFailure, budSetupJourney, continueRecovery, leaveLinkGate, linkGateLeft, officeLinkGate, parseBudStatus, resumeSavedRecovery, type BudSetupInput } from "./bud-setup";
 import type { HermesStatus } from "@/state/store";
 
 const readyBase: BudSetupInput = {
@@ -237,5 +237,88 @@ describe("last readiness check copy", () => {
     // A linked computer with nothing running still hears about its last failed check.
     expect(budReadinessFailure(stale, "linked")).toBe("Bud took too long to answer.");
     expect(budReadinessFailure(auto("idle"), "unavailable")).toBe("Bud took too long to answer.");
+  });
+});
+
+describe("office link before anything else", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+  const on = { connected: true, bookRead: true, recovering: false, preview: false, left: false };
+  const unlinked = { link: "not-linked" as const, revoked: false };
+
+  it("holds a connected computer until it is linked: not linked, revoked, or a link that couldn't be read", () => {
+    expect(officeLinkGate(unlinked, on)).toBe("not-linked");
+    expect(officeLinkGate({ link: "not-linked", revoked: true }, on)).toBe("revoked");
+    expect(officeLinkGate({ link: "unavailable", revoked: false }, on)).toBe("unavailable");
+    expect(officeLinkGate({ link: "linked", revoked: false }, on)).toBeNull();
+  });
+
+  it("checks, rather than opening anything, until both the link and the book have been read", () => {
+    expect(officeLinkGate({ link: undefined, revoked: false }, on)).toBe("checking");
+    // The book says whether recovery comes first; until it is read nothing opens.
+    for (const link of ["not-linked", "unavailable", undefined] as const) expect(officeLinkGate({ link, revoked: false }, { ...on, bookRead: false })).toBe("checking");
+    // A linked computer never waits on the book.
+    expect(officeLinkGate({ link: "linked", revoked: false }, { ...on, bookRead: false })).toBeNull();
+  });
+
+  it("never holds during book recovery, in a design preview or once recovery passed it this session, connected or not", () => {
+    for (const link of ["not-linked", "unavailable", undefined] as const) {
+      for (const key of ["recovering", "preview", "left"] as const) {
+        expect(officeLinkGate({ link, revoked: true }, { ...on, [key]: true })).toBeNull();
+        expect(officeLinkGate({ link, revoked: true }, { ...on, connected: false, [key]: true })).toBeNull();
+      }
+    }
+  });
+
+  it("keeps a computer last read as not linked or revoked on its screen while the service reconnects", () => {
+    const off = { ...on, connected: false };
+    expect(officeLinkGate(unlinked, off)).toBe("not-linked");
+    expect(officeLinkGate({ link: "not-linked", revoked: true }, off)).toBe("revoked");
+    // Even before the book answered: the shell never shows behind a known unlinked computer.
+    expect(officeLinkGate(unlinked, { ...off, bookRead: false })).toBe("not-linked");
+    // Unread, unreadable and linked computers keep the shell's own startup and reconnect UI.
+    for (const link of ["unavailable", undefined, "linked"] as const) {
+      expect(officeLinkGate({ link, revoked: false }, off)).toBeNull();
+      expect(officeLinkGate({ link, revoked: false }, { ...off, bookRead: false })).toBeNull();
+    }
+  });
+
+  it("keeps leaving for this app session in session storage, and in memory when storage is blocked", () => {
+    const saved = new Map<string, string>();
+    vi.stubGlobal("sessionStorage", { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => void saved.set(key, value) });
+    expect(linkGateLeft()).toBe(false);
+    saved.set(LINK_GATE_LEFT, "1");
+    expect(linkGateLeft()).toBe(true);
+    vi.stubGlobal("sessionStorage", { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } });
+    expect(linkGateLeft()).toBe(false);
+    expect(() => leaveLinkGate()).not.toThrow();
+    expect(linkGateLeft()).toBe(true);
+  });
+
+  // Runs after the session test above: leaving the screen is then remembered in memory for the rest of this module.
+  it("reopens a saved recovery choice without passing the office-link screen; only Continue recovery passes it", () => {
+    const saved = new Map<string, string>();
+    const setItem = vi.fn((key: string, value: string) => void saved.set(key, value));
+    vi.stubGlobal("sessionStorage", { getItem: (key: string) => saved.get(key) ?? null, setItem });
+    // Every launch reads the saved stage: it routes to recovery and leaves the screen in place.
+    const launch = { hash: "#/desk" };
+    expect(resumeSavedRecovery("recovery", launch)).toBe(true);
+    expect(launch.hash).toBe("you-recovery");
+    const restore = { hash: "#you-private-backup" };
+    expect(resumeSavedRecovery("recovery", restore)).toBe(true);
+    expect(restore.hash).toBe("you-private-backup");
+    for (const stage of ["profile", "office-rules", "complete", undefined]) {
+      const other = { hash: "#/desk" };
+      expect(resumeSavedRecovery(stage, other)).toBe(false);
+      expect(other.hash).toBe("#/desk");
+    }
+    expect(setItem).not.toHaveBeenCalled();
+    expect(saved.has(LINK_GATE_LEFT)).toBe(false);
+    // The screen's Continue recovery keeps a staged restore's target and passes it for this app session.
+    continueRecovery(restore);
+    expect(restore.hash).toBe("you-private-backup");
+    expect(saved.get(LINK_GATE_LEFT)).toBe("1");
+    const fresh = { hash: "#/desk" };
+    continueRecovery(fresh);
+    expect(fresh.hash).toBe("you-recovery");
   });
 });

@@ -6,6 +6,7 @@ import {
 } from '../shared/hermios-connection.ts';
 import type { HermiosProfile } from '../shared/hermios-modules.ts';
 import { HermiosMcpError, readHermiosProfile } from './hermios-connection-mcp.ts';
+import { workLedger, type WorkLedger } from './work-ledger.ts';
 
 /**
  * A RealBud member's own Bud ↔ Hermios OAuth connection (public client, PKCE,
@@ -32,6 +33,8 @@ export interface HermiosConnectionOptions {
   random?: (bytes: number) => Buffer;
   issuer?: string;
   mcpUrl?: string;
+  /** Where a sign-in waiting on the person counts for an update restart (default: the service's; tests pass their own). */
+  workLedger?: WorkLedger;
 }
 
 type ErrorCode = 'unavailable' | 'needs_reconnect' | 'not_connected' | 'stale' | 'invalid_request';
@@ -132,6 +135,13 @@ export function createHermiosConnectionService(options: HermiosConnectionOptions
   let discovery: { value: Discovery; until: number } | null = null;
   let discovering: Promise<Discovery> | null = null;
   let registering: Promise<string> | null = null;
+  // A sign-in the person has open in their browser lives only in this process: a restart turns its callback into
+  // "expired", so it waits on the person until it completes or its link lapses. Counted, never shown: no member or state.
+  const releaseWork = (options.workLedger ?? workLedger).probe('hermios-sign-in', () => {
+    let waiting = 0;
+    for (const entry of pending.values()) if (entry.expiresAt > now()) waiting++;
+    return { waiting };
+  });
 
   /** One operation per member at a time: refresh, callback, check update, disconnect. */
   function serial<T>(key: string, work: () => Promise<T>): Promise<T> {
@@ -487,6 +497,7 @@ export function createHermiosConnectionService(options: HermiosConnectionOptions
     close() {
       closing.abort();
       pending.clear();
+      releaseWork();
     },
   };
 }

@@ -6,8 +6,22 @@ import { buildScheduleRows } from "@/lib/schedule-rows";
 import { stageState, type FixtureStage } from "../setup-stages.fixture";
 
 vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ state: {}, dispatch: vi.fn() }) }));
+// Each render's answer to the unsaved-work guard (beforeunload and the update restart).
+const guards = vi.hoisted(() => [] as boolean[]);
+vi.mock("@/lib/unsaved-work", async original => ({ ...await original<object>(), useUnsavedGuard: (dirty: boolean) => { guards.push(dirty); } }));
+// The saved Desk layout and office preset this window holds (WorkspaceTabsProvider); read, nothing saved yet.
+const tabs = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
+vi.mock("@/lib/workspace-tabs", async (importOriginal) => ({ ...(await importOriginal<object>()), useWorkspaceTabs: () => tabs.current }));
+const holding = (office: OfficeDesk | null, sections?: DeskSection[], loading = false) => {
+  tabs.current = { data: sections ? { state: { version: 3, revision: 1, tabs: [], desk: { sections }, history: [] }, recovery: null, office } : null,
+    loading, saving: false, error: "", office, budChange: null, saveDesk: vi.fn(), revertDesk: vi.fn() };
+};
+holding(null);
 
-import { FlaggedReceipt, JobDrawer, LoopDetail, NewMailSwitch, readNewMailState } from "./JobDrawer";
+import { coreOfficeDesk, type OfficeDesk } from "@shared/desk-areas";
+import { defaultDeskSections, type DeskSection } from "@shared/workspace-tabs";
+import { FlaggedReceipt, JobDrawer, LoopDetail, LoopTiming, NewMailSwitch, readNewMailState } from "./JobDrawer";
+import { useScheduleTiming } from "@/lib/workspace-view-state";
 import { JobList } from "./JobList";
 
 const NOW = Date.UTC(2026, 9, 0, 23, 0);
@@ -237,11 +251,74 @@ describe("job drawer", () => {
     const list = renderToStaticMarkup(createElement(JobList, { rows, onOpen: () => {}, onAction: () => {} }));
     expect(list).toContain('aria-label="Review bank file: Bank reference review"');
     expect(list).toContain(">On demand<");
+    // This office's Desk was read and offers no Bank area, so the review stays in the job.
+    holding(coreOfficeDesk(), defaultDeskSections());
     const html = detail({ loop: bank, manualOnly: true, next: "On demand" });
     expect(html).toContain("Prepare bank references");
     expect(html).not.toContain("Run now");
     expect(html).not.toContain("Timing · ");
     expect(html).not.toContain("Resume");
+  });
+});
+
+describe("bank review place", () => {
+  const bank = loop({ id: "bank-references", name: "Bank reference review" });
+  const REVIEW = "Prepare bank references";
+
+  it("keeps the review in the job when this office's Desk does not offer Bank references", () => {
+    holding(coreOfficeDesk(["morning-priorities"]), defaultDeskSections());
+    const html = detail({ loop: bank });
+    expect(html).toContain(REVIEW);
+    expect(html).not.toContain("on Desk</button>");
+  });
+
+  it("says where bank files are reviewed could not be checked, with Try again, instead of a second review", () => {
+    // The work-areas read failed before any office preset was read; the core preset offers no Bank area.
+    holding(null);
+    tabs.current = { ...tabs.current, error: "Saved views could not be checked. Refresh before changing them.", refresh: vi.fn() };
+    const html = detail({ loop: bank });
+    expect(html).not.toContain(REVIEW);
+    expect(html).not.toContain("on Desk</button>");
+    expect(html).not.toContain("Checking where bank files are reviewed");
+    expect(html).toContain('aria-label="Bank review"');
+    expect(html).toContain("Couldn’t check where bank files are reviewed.");
+    expect(buttonTag(html, "Try again")).not.toContain('disabled=""');
+    // A failed read after the preset was read keeps that preset, so the decision stands.
+    holding(coreOfficeDesk(["morning-priorities"]), defaultDeskSections());
+    tabs.current = { ...tabs.current, error: "Saved views could not be checked. Refresh before changing them." };
+    expect(detail({ loop: bank })).toContain(REVIEW);
+  });
+
+  it("opens the office's Bank area on Desk instead of a second copy of the review", () => {
+    holding(coreOfficeDesk(["bank-references"]), defaultDeskSections());
+    const html = detail({ loop: bank });
+    expect(html).not.toContain(REVIEW);
+    expect(html).toContain('aria-label="Bank review"');
+    expect(html).toContain("Bank files are prepared and reviewed in Bank references on Desk.");
+    expect(buttonTag(html, "Open Bank references on Desk")).not.toContain('disabled=""');
+  });
+
+  it("uses the title the office's pack gives the area", () => {
+    const office = coreOfficeDesk(["bank-references"]);
+    holding({ ...office, areas: office.areas.map((area) => area.id === "bank" ? { ...area, title: "Trust receipts" } : area) }, defaultDeskSections());
+    expect(detail({ loop: bank })).toContain("Open Trust receipts on Desk</button>");
+  });
+
+  it("offers to show an area this person hid, as Needs you does, rather than a dead end", () => {
+    holding(coreOfficeDesk(["bank-references"]), defaultDeskSections().map((section) => section.id === "bank" ? { ...section, visible: false } : section));
+    const html = detail({ loop: bank });
+    expect(html).not.toContain(REVIEW);
+    expect(html).toContain("Bank files are prepared and reviewed in Bank references, which is hidden on your Desk.");
+    expect(html).toContain("Show Bank references on my Desk</button>");
+  });
+
+  it("mounts neither place until the office preset is first read", () => {
+    holding(null, undefined, true);
+    const html = detail({ loop: bank });
+    expect(html).not.toContain(REVIEW);
+    expect(html).not.toContain("on Desk</button>");
+    expect(html).toContain("Checking where bank files are reviewed…");
+    expect(detail()).not.toContain("Checking where bank files are reviewed");
   });
 });
 
@@ -284,5 +361,24 @@ describe("new mail switch", () => {
     expect(readNewMailState({ enabled: "yes", available: true })).toBeNull();
     expect(readNewMailState({ enabled: true, available: true, reason: 7 })).toBeNull();
     expect(readNewMailState({ loopId: "inbound-triage", enabled: true, available: false, reason: "Fictional reason" })).toEqual({ enabled: true, available: false, reason: "Fictional reason" });
+  });
+});
+
+describe("unsaved job timing", () => {
+  const timing = () => {
+    guards.length = 0;
+    const html = renderToStaticMarkup(createElement(LoopTiming, { loop: loop({ id: "recipe-fictional-timing" }), busy: false, controlsDisabled: false, open: true, onOpen: () => {}, onRetune: () => {} }));
+    return { html, guards: [...guards] };
+  };
+  it("holds beforeunload and the update restart exactly while Timing offers Save", () => {
+    const clean = timing();
+    expect(clean.html).not.toContain("Save</button>");
+    expect(clean.guards).toEqual([false]);
+    // The time field's edit, kept in this window's view state.
+    function EditTime() { useScheduleTiming("recipe-fictional-timing", "08:00", [1]).setTime("09:30"); return null; }
+    renderToStaticMarkup(createElement(EditTime));
+    const edited = timing();
+    expect(edited.html).toContain("Save</button>");
+    expect(edited.guards).toEqual([true]);
   });
 });

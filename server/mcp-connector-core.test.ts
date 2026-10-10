@@ -9,6 +9,7 @@ import { createServer } from 'node:http';
 import { createMcpConnector, McpToolError, readCapped, scrubCredentials, nextPageToken, officeAuthority, pinnedTransport, publicServerAddress, type ConnectorAuthority, type ConnectorReceipt, type McpConnectorConfig, type PinnedAddress } from './mcp-connector-core.ts';
 import { createPrivateVault } from './private-vault.ts';
 import { needsSession } from './session-auth.ts';
+import { createWorkLedger } from './work-ledger.ts';
 import { fictionalConnectorService } from './testing/fictional-mcp-connector.ts';
 
 const MCP = 'https://mcp.fictional-books.example', AUTH = 'https://auth.fictional-books.example';
@@ -46,6 +47,24 @@ beforeEach(() => {
 });
 
 describe('connector OAuth', () => {
+  it('counts an open sign-in as waiting on the person for an update restart, until it completes, lapses or closes', async () => {
+    const ledger = createWorkLedger(), idle = { working: 0, waiting: 0, byKind: {} };
+    const c = createMcpConnector(CONFIG, { vault: createPrivateVault(directory, key), workspaceId: () => 'fictional-workspace', authorize: grant,
+      redirectBase: () => 'http://127.0.0.1:8799', transport: fake.fetch, resolve: fake.resolve, now: () => t, workLedger: ledger });
+    expect(ledger.snapshot()).toEqual(idle);
+    const started = await c.handle('start', 'POST', req, {});
+    const authorizeUrl = (started.body as { authorizeUrl: string }).authorizeUrl;
+    expect(ledger.snapshot()).toEqual({ working: 0, waiting: 1, byKind: { 'connector-sign-in': { working: 0, waiting: 1 } } });
+    // Counts only: never the state or link.
+    expect(JSON.stringify(ledger.snapshot())).not.toContain(new URL(authorizeUrl).searchParams.get('state')!);
+    expect((await c.callback(fake.approve(authorizeUrl))).status).toBe(200);
+    expect(ledger.snapshot()).toEqual(idle);
+    await c.handle('start', 'POST', req, {});
+    expect(ledger.snapshot().waiting).toBe(1);
+    c.close();
+    expect(ledger.snapshot()).toEqual(idle);
+  });
+
   it('keeps every vault name within 80 characters, even for a 40-character id, and keeps short ids on their existing key', async () => {
     const id = `f${'x'.repeat(39)}`;
     const long = connector({ ...CONFIG, id });

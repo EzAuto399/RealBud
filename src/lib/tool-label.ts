@@ -22,6 +22,7 @@ const ALIAS: Record<string, string> = {
   crm_add_task: "proposing a Hermios CRM task",
   set_reminder: "setting a reminder",
   views_list: "checking saved views",
+  desk_arrange: "arranging the Desk",
   views_create: "proposing a new saved view",
   views_rename: "proposing a saved view name",
   views_set_visible: "proposing to show or hide a saved view",
@@ -74,9 +75,9 @@ export function toolLabel(name: string): string {
   // An office connector's tool (`<connector>__<tool>`): its name is the service's own text.
   const added = /^([a-z][a-z0-9-]{1,39})__([a-z0-9_.-]{1,64})$/.exec(id);
   if (added) return `using ${humanise(added[1]!)} (${humanise(added[2]!)})`;
-  if (id.includes("desk")) return "reading the Desk book";
   const exact = ALIAS[id];
   if (exact) return exact;
+  if (id.includes("desk")) return "reading the Desk book";
   for (const token of tokens(id)) {
     const mapped = ALIAS[token];
     if (mapped) return mapped;

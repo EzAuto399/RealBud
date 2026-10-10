@@ -11,6 +11,7 @@ import {
 import { readMcpRpcResponse } from './composio.ts';
 import { pinnedLookup, publicAddress } from './web-research-broker.ts';
 import { redactSecrets, redactSecretsInText } from './redact.ts';
+import { workLedger, type WorkLedger } from './work-ledger.ts';
 
 /**
  * Generic connector core: one OAuth-connected MCP server per workspace.
@@ -95,6 +96,8 @@ export interface McpConnectorOptions {
   now?: () => number;
   random?: (bytes: number) => Buffer;
   audit?: (receipt: ConnectorReceipt) => void;
+  /** Defaults to the process-wide ledger an update restart reads. */
+  workLedger?: WorkLedger;
 }
 
 type ErrorCode = 'unavailable' | 'needs_reconnect' | 'not_connected' | 'stale' | 'forbidden' | 'invalid_request';
@@ -338,6 +341,13 @@ export function createMcpConnector(config: McpConnectorConfig, options: McpConne
   const clientEntry = `connector-client-${config.id}`;
   const closing = new AbortController();
   const pending = new Map<string, Pending>();
+  // A sign-in the person has open in their browser lives only in this process: a restart turns its callback into
+  // "expired", so it waits on the person until it completes or its link lapses. Counted, never shown.
+  const releaseWork = (options.workLedger ?? workLedger).probe('connector-sign-in', () => {
+    let waiting = 0;
+    for (const entry of pending.values()) if (entry.expiresAt > now()) waiting++;
+    return { waiting };
+  });
   const transient = new Map<string, { generation: number; reason: string }>();
   const chains = new Map<string, Promise<unknown>>();
   const refreshing = new Map<string, Promise<Tokens>>();
@@ -940,6 +950,7 @@ export function createMcpConnector(config: McpConnectorConfig, options: McpConne
       closing.abort();
       liveSignals.retireAll();
       pending.clear();
+      releaseWork();
     },
   };
 }

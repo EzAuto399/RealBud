@@ -67,30 +67,34 @@ const sleep = (ms: number) => new Promise<void>(resolve => { setTimeout(resolve,
 
 /** One scheduled wait around `work` (the sign-in handover and the account check after it). The same loop and run
  * pick up their saved wait while it is inside its deadline (after a restart); otherwise a new one is saved. The
- * saved wait is dropped when `work` ends, however it ends; a crash or restart keeps it. */
+ * saved wait is dropped when `work` ends, however it ends; a crash or restart keeps it. Its lines are notes that
+ * wait on the person (`waiting`); `work` calls `signedIn` once the person has signed in, which ends the reminders
+ * and says the run works again. */
 export async function withReiSignInWait<T>(input: {
   waits: ReiSignInWaits; loop: ReiWaitLoop; runId: string; now: () => number; timeZone: string | undefined;
-  note?: (detail: string) => void; copy: (until: string) => ReiWaitCopy; pollMs?: number; work: (until: number) => Promise<T>;
+  note?: (detail: string, waiting?: boolean) => void; copy: (until: string) => ReiWaitCopy; pollMs?: number;
+  work: (until: number, signedIn: (detail: string) => void) => Promise<T>;
 }): Promise<T> {
   const started = input.now();
   const saved = (await input.waits.list()).find(item => item.loop === input.loop && item.runId === input.runId && item.until > started);
   const wait = saved ?? newReiWait(input.loop, input.runId, started, input.timeZone);
   if (!saved) await input.waits.put(wait);
   const copy = input.copy(officeClock(wait.until, input.timeZone));
-  input.note?.(wait.reminded ? copy.reminder : copy.first);
+  input.note?.(wait.reminded ? copy.reminder : copy.first, true);
   let ended = false;
   void (async () => {
     while (!ended && !wait.reminded && input.now() < wait.until) {
       if (input.now() >= wait.reminderAt) {
         wait.reminded = true;
         await input.waits.put(wait).catch(() => {});
-        if (!ended) input.note?.(copy.reminder);
+        if (!ended) input.note?.(copy.reminder, true);
         return;
       }
       await sleep(input.pollMs ?? 30_000);
     }
   })();
-  try { return await input.work(wait.until); }
+  const signedIn = (detail: string) => { if (!ended) { ended = true; input.note?.(detail); } };
+  try { return await input.work(wait.until, signedIn); }
   finally { ended = true; await input.waits.drop(input.loop, input.runId).catch(() => {}); }
 }
 

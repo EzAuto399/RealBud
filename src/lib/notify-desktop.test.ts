@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { notifyBody, shouldNotifyMiss, shouldNotifyNeedsYou } from "./notify-desktop";
+import { SHOW_DESK_EVENT, notifyBody, shouldNotifyMiss, shouldNotifyNeedsYou, showDesk, shownArea } from "./notify-desktop";
 import type { MorningBrief } from "./morning-brief";
 
 describe("shouldNotifyNeedsYou", () => {
@@ -37,5 +37,27 @@ describe("notify miss vocabulary", () => {
   it("notifies once when the miss headline appears", () => {
     expect(shouldNotifyMiss(null, miss, "granted")).toBe(true);
     expect(shouldNotifyMiss(miss.headline, miss, "granted")).toBe(false);
+  });
+});
+
+describe("notice clicks", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("bring the window forward on the work area or Schedule a notice names, and on Tasks otherwise", () => {
+    const win = Object.assign(new EventTarget(), { focus: vi.fn() });
+    vi.stubGlobal("window", win);
+    const opened: unknown[] = [];
+    win.addEventListener(SHOW_DESK_EVENT, (event) => opened.push(shownArea(event)));
+    showDesk("bills");
+    showDesk("schedule");
+    showDesk();
+    expect(opened).toEqual(["bills", "schedule", null]);
+    expect(win.focus).toHaveBeenCalledTimes(3);
+  });
+
+  it("read anything else as Tasks", () => {
+    expect(shownArea(new CustomEvent(SHOW_DESK_EVENT, { detail: { area: "fictional" } }))).toBeNull();
+    expect(shownArea(new CustomEvent(SHOW_DESK_EVENT, { detail: null }))).toBeNull();
+    expect(shownArea(new Event(SHOW_DESK_EVENT))).toBeNull();
   });
 });

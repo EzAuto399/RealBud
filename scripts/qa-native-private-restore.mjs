@@ -14,7 +14,7 @@ import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { serviceIdentity, findRunningService, SERVICE_PORTS } from '../electron/service-instance.mjs';
 import { availableServicePort, readServiceHandle, requestServiceStop } from '../electron/service-lifecycle.mjs';
 import { windowsKeyPrivacy } from '../electron/desk-key-custody.mjs';
-import { readSessionToken } from './local-session.mjs';
+import { readSessionToken, enterSampleDeskForQa, BROWSER_SESSION_KEY, LINK_GATE_LEFT_KEY } from './local-session.mjs';
 
 const args = process.argv.slice(2);
 assert.ok(args.length === 0 || args.length === 1 && ['--reproduce-welcome-restore-block', '--welcome-restore', '--welcome-cancel-setup'].includes(args[0]), 'Use no arguments for native restore, --welcome-restore, --welcome-cancel-setup, or --reproduce-welcome-restore-block for expected-defect evidence only.');
@@ -60,7 +60,7 @@ const source = join(scratch, 'source'), data = join(scratch, 'target'), userData
 for (const dir of [source, data, userData]) mkdirSync(dir, { recursive: true, mode: 0o700 });
 for (const dir of [source, data]) writeFileSync(join(dir, 'config.json'), JSON.stringify({ instances: { fixture: { driver: 'not-a-real-driver' } } }), { mode: 0o600 });
 writeFileSync(join(userData, 'cua-human-pause.json'), JSON.stringify({ version: 1, paused: true }), { mode: 0o600 });
-const delay = ms => new Promise(r => setTimeout(r, ms)), checks = [], errors = [], onboardingFixture = [], identity = serviceIdentity(data);
+const delay = ms => new Promise(r => setTimeout(r, ms)), checks = [], errors = [], onboardingFixture = [], qaFirstRunCompletion = [], identity = serviceIdentity(data);
 const pass = label => { checks.push(label); console.log(`PASS ${label}`); };
 const servicePids = new Set();
 const exited = pid => { try { process.kill(pid, 0); return false; } catch (error) { return error.code === 'ESRCH'; } };
@@ -367,6 +367,25 @@ async function prepareWelcomeRestore(exported, firstDigest) {
   if (!welcomeCancelSetup) await reenterWelcomeBackup(panel);
   return { panel, wrappedDigest };
 }
+// First run has no sample-desk exit (docs/OFFICE-LINK-GATE-2026-10-10.md): the connect step offers linking, Back and Restore a private backup only.
+const CONNECT_ACTIONS = ['Connect with this code', 'Copy request for your owner', 'I’m the office owner: approve in my browser', 'Back', 'Restore a private backup'];
+async function connectOffersOnlyLinking() {
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Connect with this code', exact: true }).waitFor();
+  for (const name of ['Open the sample desk first', 'Explore the sample desk']) assert.equal(await page.getByRole('button', { name, exact: true }).count(), 0, `No "${name}" exit`);
+  const actions = await page.getByRole('button').evaluateAll(buttons => buttons.map(button => (button.getAttribute('aria-label') || button.textContent || '').replace(/\s+/g, ' ').trim()));
+  assert.deepEqual(actions.sort(), [...CONNECT_ACTIONS].sort(), 'The connect step offers only linking, Back and Restore a private backup');
+}
+// Without linking, the visible journey ends at the connect step. QA completes first run
+// with enterSampleDeskForQa from the page: it reads the token from tab storage (the
+// desktop window itself keeps using its preload bridge), so the current token goes there,
+// and the door hash is cleared as finish() clears it. Recorded in qaFirstRunCompletion;
+// it is not evidence that a person completed or linked anything.
+async function completeFirstRunForQa(label) {
+  await page.evaluate(([key, value]) => { sessionStorage.setItem(key, value); history.replaceState(null, '', location.pathname + location.search); }, [BROWSER_SESSION_KEY, token]);
+  await enterSampleDeskForQa(page);
+  qaFirstRunCompletion.push({ label, method: 'enterSampleDeskForQa', visibleCompletion: false });
+}
 async function finishNormalWelcomeAfterCancel(firstDigest) {
   const name = 'Fictional Cancelled Restore Operator';
   assert.equal((await api('/api/onboarding')).stage, 'profile');
@@ -386,7 +405,8 @@ async function finishNormalWelcomeAfterCancel(firstDigest) {
   };
   await restart(); await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
   assert.deepEqual(await api('/api/onboarding'), rules);
-  await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
+  await connectOffersOnlyLinking();
+  await completeFirstRunForQa('normal-setup-after-cancel');
   await page.getByRole('region', { name: 'This morning', exact: true }).waitFor();
   const complete = await api('/api/onboarding'), book = await api('/api/desk');
   assert.equal(complete.stage, 'complete'); assert.equal(book.book.office.pmUser, name); assert.equal(book.revision, 2);
@@ -400,10 +420,10 @@ async function finishNormalWelcomeAfterCancel(firstDigest) {
   const progress = (await api('/api/private-backup/v2/operations?limit=20')).items;
   assert.equal(progress.length, 1); assert.equal(progress[0].id, welcomeJourney.cancelledUploadId); assert.equal(progress[0].phase, 'cancelled');
   await page.setViewportSize({ width: 1440, height: 1050 }); await page.screenshot({ path: join(output, 'normal-setup-after-cancel-restarted.png') });
-  welcomeJourney.normalSetup = { stage: complete.stage, profileName: name, officeContact: name, agencyWrites: welcomeAgencyWrites, profileWrites: welcomeProfileWrites, revision: book.revision, rulesRestartPreserved: true, completionRestartPreserved: true, cancelledTransferPreserved: true, restored: false };
+  welcomeJourney.normalSetup = { stage: complete.stage, profileName: name, officeContact: name, agencyWrites: welcomeAgencyWrites, profileWrites: welcomeProfileWrites, revision: book.revision, completedBy: 'enterSampleDeskForQa', rulesRestartPreserved: true, completionRestartPreserved: true, cancelledTransferPreserved: true, restored: false };
   keyProof = { sameTargetKeyAcrossThreeRestarts: true, afterMigrationPlaintextKeyAbsent: true, fixtureCalls: await inspector.evaluate('globalThis.__realbudCustodyFixture()') };
   assert.deepEqual(onboardingFixture, []); assert.deepEqual(errors, []);
-  pass('After cancellation the real native welcome saves profile once, survives a rules restart, completes normal setup once and preserves contact, custody and cancelled transfer across another restart');
+  pass('After cancellation the real native welcome saves profile once, survives a rules restart and offers only linking on the connect step; QA-completed setup writes the contact once and preserves contact, custody and cancelled transfer across another restart');
 }
 async function finishRestoredWelcome() {
   const before = await api('/api/desk'); assert.equal(before.book.office.pmUser, welcomeSourceContact);
@@ -411,16 +431,15 @@ async function finishRestoredWelcome() {
   await page.getByRole('heading', { name: 'Make the desk yours', exact: true }).waitFor();
   await page.getByLabel('Your name', { exact: true }).fill('Fictional Restore Operator');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
+  await connectOffersOnlyLinking();
+  await completeFirstRunForQa('post-restore-welcome');
   await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor({ state: 'hidden' });
-  await page.getByRole('heading', { name: 'Workspace', exact: true }).waitFor();
   assert.equal((await api('/api/onboarding')).stage, 'complete');
   const after = await api('/api/desk'); assert.equal(after.book.office.pmUser, welcomeSourceContact); assert.equal(after.revision, before.revision);
   assert.equal(welcomeAgencyWrites, 0); assert.deepEqual(onboardingFixture, []);
   const status = await api('/api/private-backup'); assert.equal(status.canRestore, false); assert.equal(status.staged, false);
-  welcomeJourney.postRestore = { visibleWelcomeCompleted: true, restoredOfficeContactPreserved: true, bookRevisionPreserved: true, agencyWrites: 0, canRestore: status.canRestore, staged: status.staged };
-  pass('After native restore, the actual visible welcome completes for the imported workspace without overwriting its named office contact or changing its book revision');
+  welcomeJourney.postRestore = { visibleWelcomeCompleted: false, completedBy: 'enterSampleDeskForQa', restoredOfficeContactPreserved: true, bookRevisionPreserved: true, agencyWrites: 0, canRestore: status.canRestore, staged: status.staged };
+  pass('After native restore, the actual visible welcome reaches the connect step for the imported workspace with only linking offered; QA completion keeps its named office contact and book revision');
 }
 async function runScenario() {
   const nativePort = await availableServicePort(SERVICE_PORTS);
@@ -483,6 +502,8 @@ async function runScenario() {
   else {
     await prepareBackupOnboarding('fresh-restore-target');
     assert.equal((await api('/api/private-backup')).canRestore, true, 'Onboarding fixture setup must preserve the fresh restore target.');
+    // QA only, as primeBrowserSession does for browser scripts: pass the office-link screen for this window session.
+    await page.evaluate(key => sessionStorage.setItem(key, '1'), LINK_GATE_LEFT_KEY);
     await page.goto(origin + '/#/you'); await page.reload();
     await page.locator('details#you-settings > summary').click(); await page.locator('details#you-advanced > summary').click();
     panel = page.getByRole('region', { name: 'Private workspace backup', exact: true }); await panel.waitFor();
@@ -575,8 +596,7 @@ try {
   assert.equal(restoredScans.total,2);assert.deepEqual(restoredScans.items[0],billFixture.mail.metadata.latestScan);
   await page.goto(origin+'/#/desk');
   await page.locator('.desk-more > summary').filter({hasText:/^More$/}).click();
-  await page.locator('.desk-options > summary').click();
-  await page.locator('.desk-options-body').getByRole('button',{name:'Arrange Desk',exact:true}).click();const arrange=page.getByRole('dialog',{name:'Arrange Desk',exact:true});
+  await page.getByRole('group',{name:'More Desk tools',exact:true}).getByRole('button',{name:'Arrange Desk',exact:true}).click();const arrange=page.getByRole('dialog',{name:'Arrange Desk',exact:true});
   let changedDeskLayout=false;
   for(const label of ['Show Mail priorities on my Desk','Show Bills and calendar on my Desk']){
     const visible=arrange.getByLabel(label,{exact:true});
@@ -584,8 +604,7 @@ try {
   }
   if(changedDeskLayout){await arrange.getByRole('button',{name:'Save',exact:true}).click();await arrange.getByText('Desk arrangement saved.',{exact:true}).waitFor();}
   await arrange.getByRole('button',{name:'Close Arrange Desk',exact:true}).click();
-  await page.locator('.desk-other-work > summary').click();
-  await page.getByRole('group',{name:'Other work',exact:true}).getByRole('button',{name:'Mail priorities',exact:true}).click();
+  await page.getByRole('navigation',{name:'Desk workspace',exact:true}).getByRole('button',{name:'Mail priorities',exact:true}).click();
   const mailPanel=page.getByRole('region',{name:'Mail priorities and follow-ups',exact:true});
   await mailPanel.getByRole('button',{name:'Done (1)',exact:true}).click();
   await mailPanel.getByText('Your note: '+billFixture.mail.item.note,{exact:true}).waitFor();
@@ -600,8 +619,7 @@ try {
   const countProposalPost = request => { if (new URL(request.url()).pathname === '/api/bill-proposals' && request.method() === 'POST') proposalPosts++; };
   page.on('request', countProposalPost);
   await page.getByRole('navigation',{name:'Desk workspace',exact:true}).getByRole('button',{name:/^Tasks\s*\d*$/}).click();
-  await page.locator('.desk-other-work > summary').click();
-  await page.getByRole('group',{name:'Other work',exact:true}).getByRole('button',{name:'Bills and calendar',exact:true}).click();
+  await page.getByRole('navigation',{name:'Desk workspace',exact:true}).getByRole('button',{name:'Bills and calendar',exact:true}).click();
   const billsPanel = page.getByRole('region', { name: 'Source-linked bills and calendar', exact: true });
   await billsPanel.locator(`[data-review-id="${retainedDraft.id}"]`).getByRole('button', { name: 'Continue saved review', exact: true }).click();
   const reviewForm = billsPanel.getByRole('form', { name: 'Review source bill', exact: true });
@@ -664,5 +682,5 @@ finally {
     cleanup.serviceProcessesExited = true;
     if (!failure) { rmSync(scratch, { recursive: true, force: true }); cleanup.scratchRemoved = true; }
   } catch { failure ||= 'Fixture service termination could not be verified; disposable directory retained for recovery.'; process.exitCode = 1; }
-  writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), mode, passed: !reproduceWelcomeBlock && !failure, ...(reproduceWelcomeBlock ? { reproductionMatched: !failure, productAcceptance: false, reproduction } : {}), executable, resources, artifact, provenance, runtime, checks, errors, keyProof, onboardingFixture, welcomeJourney, cleanup, limitations: ['Actual packaged Mac runtime, main, native preload IPC, detached service, bootstrap and UI', 'safeStorage is an in-memory AES fixture; OS Keychain/DPAPI protection and keychain prompts are not tested', reproduceWelcomeBlock ? 'Expected-defect reproduction only: visible sample onboarding is exercised without restoring a backup; a matched reproduction is not a product pass' : welcomeCancelSetup ? 'Visible welcome, no-file return, cancelled-upload return, normal setup and two service restarts use the real UI; no target onboarding/profile/agency API fixture or restore is used' : welcomeRestore ? 'Visible welcome, both return paths, passphrase refusal, reviewed restore and postrestore welcome use the real UI; source data is fictional and no target onboarding API fixture is used' : 'Scoped onboarding API calls prepare fictional backup fixtures; visible welcome acceptance is not tested here', 'Only fictional isolated data and allowlisted process environment without provider credentials; renderer and Electron requests are guarded after attachment, not process-wide network isolation', 'Signing and notarization are separate package evidence; this is not customer installation, an older-version upgrade, Windows or reboot survival'], failure, ...(failure ? { diagnostics: { sourceLog, nativeLog, retainedDirectory: cleanup.scratchRemoved ? null : scratch } } : {}) }, null, 2), { flag: 'wx', mode: 0o600 });
+  writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), mode, passed: !reproduceWelcomeBlock && !failure, ...(reproduceWelcomeBlock ? { reproductionMatched: !failure, productAcceptance: false, reproduction } : {}), executable, resources, artifact, provenance, runtime, checks, errors, keyProof, onboardingFixture, qaFirstRunCompletion, welcomeJourney, cleanup, limitations: ['Actual packaged Mac runtime, main, native preload IPC, detached service, bootstrap and UI', 'safeStorage is an in-memory AES fixture; OS Keychain/DPAPI protection and keychain prompts are not tested', reproduceWelcomeBlock ? 'Expected-defect reproduction only: visible sample onboarding is exercised without restoring a backup; a matched reproduction is not a product pass' : welcomeCancelSetup ? 'Visible welcome, no-file return, cancelled-upload return and two service restarts use the real UI up to the connect step, which has no exit without linking; enterSampleDeskForQa then completes setup from the page (qaFirstRunCompletion); no restore is used' : welcomeRestore ? 'Visible welcome, both return paths, passphrase refusal, reviewed restore and the postrestore welcome up to the connect step use the real UI; enterSampleDeskForQa completes that setup from the page (qaFirstRunCompletion); source data is fictional' : 'Scoped onboarding API calls prepare fictional backup fixtures; visible welcome acceptance is not tested here', 'Only fictional isolated data and allowlisted process environment without provider credentials; renderer and Electron requests are guarded after attachment, not process-wide network isolation', 'Signing and notarization are separate package evidence; this is not customer installation, an older-version upgrade, Windows or reboot survival'], failure, ...(failure ? { diagnostics: { sourceLog, nativeLog, retainedDirectory: cleanup.scratchRemoved ? null : scratch } } : {}) }, null, 2), { flag: 'wx', mode: 0o600 });
 }

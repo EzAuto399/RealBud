@@ -10,10 +10,11 @@ describe("portfolio layout preferences", () => {
     expect(portfolioLayout({ ...DEFAULT_WORKSPACE, density: "compact", propertyView: "table" }, 20)).toEqual({ compact: true, table: true });
   });
   it("validates persisted preferences, clamps widths, and excludes unrelated data", () => {
+    // showBud is a retired key: a value stored by an older release is dropped.
     expect(readWorkspacePreferences(null)).toEqual(DEFAULT_WORKSPACE);
-    expect(readWorkspacePreferences({ pageSize: 10000, density: "bad", queueWidth: -1, showBud: "false", propertySort: "bad", propertyGrouping: "invalid", tenant: "private" })).toEqual({ ...DEFAULT_WORKSPACE, queueWidth: 240 });
+    expect(readWorkspacePreferences({ pageSize: 10000, density: "bad", queueWidth: -1, showBud: false, propertySort: "bad", propertyGrouping: "invalid", tenant: "private" })).toEqual({ ...DEFAULT_WORKSPACE, queueWidth: 240 });
     expect(readWorkspacePreferences({ queueWidth: Infinity }).queueWidth).toBe(280);
     expect(readWorkspacePreferences({ queueWidth: 900 }).queueWidth).toBe(360);
-    expect(readWorkspacePreferences({ pageSize: 100, showBud: false, propertyView: "table", propertyGrouping: "building" })).toMatchObject({ pageSize: 100, showBud: false, propertyView: "table", propertyGrouping: "building" });
+    expect(readWorkspacePreferences({ pageSize: 100, propertyView: "table", propertyGrouping: "building" })).toMatchObject({ pageSize: 100, propertyView: "table", propertyGrouping: "building" });
   });
 });

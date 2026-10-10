@@ -65,8 +65,7 @@ async function allowAll() {
 }
 async function openMaintenance() {
   await page.goto(`${demo.base}/#/desk`);
-  await page.locator('.desk-other-work > summary').click();
-  await page.getByRole('group', { name: 'Other work', exact: true }).getByRole('button', { name: 'Bills and calendar', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: 'Bills and calendar', exact: true }).click();
   await page.getByRole('region', { name: 'Maintenance checks' }).waitFor();
   await suppliersPanel().waitFor();
 }

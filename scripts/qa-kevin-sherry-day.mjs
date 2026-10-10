@@ -277,7 +277,7 @@ async function runPerson(who) {
   }
   async function openBills() {
     await rail('Desk').click();
-    await page.getByRole('tablist', { name: 'Desk views', exact: true }).getByRole('tab', { name: /^Bills/ }).click();
+    await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: 'Bills and calendar', exact: true }).click();
     const panel = page.getByRole('region', { name: 'Source-linked bills and calendar' }); await panel.waitFor(); return panel;
   }
   const reconnects = async () => { await page.getByRole('status').filter({ hasText: /^App connected$/ }).waitFor({ timeout: 30_000 }); };
@@ -531,9 +531,7 @@ const sherry = {
       assert.ok(['awaiting-approval', 'completed', 'partial'].includes(run.status), JSON.stringify(run));
       c(`Run settled: ${run.status}${run.detail ? ` · ${run.detail}` : ''}`);
       await rail('Desk').click();
-      const group = page.getByRole('group', { name: 'Other work', exact: true });
-      if (!await group.isVisible().catch(() => false)) await page.locator('.desk-other-work > summary').click();
-      await group.getByRole('button', { name: 'Mail priorities', exact: true }).click();
+      await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: 'Mail priorities', exact: true }).click();
       const panel = page.getByRole('region', { name: 'Mail priorities and follow-ups' }); await panel.waitFor();
       for (const t of seed.mailbox.triage) await panel.getByText(t.subject, { exact: false }).first().waitFor();
       c(`All ${seed.mailbox.triage.length} fictional morning mails listed (many)`);

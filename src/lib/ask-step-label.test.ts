@@ -12,6 +12,8 @@ describe("askStepLabel", () => {
     expect(askStepLabel("mcp__hermios_crm__crm_add_note")).toBe("Preparing a Hermios update…");
     expect(askStepLabel("mcp__reminders__set_reminder")).toBe("Setting a reminder…");
     expect(askStepLabel("mcp__workspace_views__views_delete")).toBe("Preparing a change to your views…");
+    expect(askStepLabel("mcp__workspace-views__desk_arrange")).toBe("Arranging your Desk…");
+    expect(askStepLabel("desk_arrange")).toBe("Arranging your Desk…");
     expect(askStepLabel("mcp__workflow_settings__workflow_settings_read")).toBe("Checking the working rules…");
     expect(askStepLabel("mcp__workflow_settings__repeat_propose")).toBe("Preparing a repeat for your Schedule…");
     expect(askStepLabel("mcp__decisions__decide")).toBe("Weighing up the options…");

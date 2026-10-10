@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 
 import { LEARN_ROW_VALUE, learnBlockers, learnInputKey, type LearnedRecipe, type LearnFlag, type LearnListView, type LearnStep } from "@shared/learned-recipes";
 import { resolveProductBud } from "@/lib/product-bud";
+import { useUnsavedGuard } from "@/lib/unsaved-work";
 import { api, useStore } from "@/state/store";
 import { Card } from "../SettingsPrimitives";
 import { StatusLabel } from "../pm/primitives";
@@ -106,6 +107,8 @@ export function LearnedRecipesCard({ bare = false }: { bare?: boolean }) {
   const load = useCallback(async () => setView(parseLearnList(await api("/api/learn", undefined, { timeoutMs: 15_000 }))), []);
   useEffect(() => { void load().catch(cause => setError(message(cause))); }, [load]);
   const recording = view?.session.state === "recording";
+  // A typed task name holds beforeunload and the update restart while its form shows; Finish clears it.
+  useUnsavedGuard(recording && Boolean(title.trim()));
   useEffect(() => {
     if (!recording) return;
     const timer = setInterval(() => { void load().catch(() => {}); }, 2_000);
@@ -221,6 +224,8 @@ export function LearnedRecipeItem({ recipe, labels, busy, onChange, onRun }: Ite
   const warnings = recipe.flags.filter(flag => flag.code !== "needs-confirm");
   const publishReason = learnPublishReason(recipe, labels);
   const ready = recipe.inputs.every(key => values[key]?.trim()) && marker.trim();
+  // Typed fixed text or run values hold beforeunload and the update restart while their form shows.
+  useUnsavedGuard(draft ? Boolean(fixed?.text.trim()) : runOpen && Boolean(marker.trim() || recipe.inputs.some(key => values[key]?.trim())));
   const submitRun = async (event: FormEvent) => {
     event.preventDefault();
     if (!ready || busy) return;

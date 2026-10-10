@@ -17,6 +17,7 @@ import { tenantDirectoryRules } from "./bank-reference.ts";
 import { loadPortalRecipePack, loadPortalRecipePackWithPaths, loadShippedPortalRecipePack } from "./portal-recipe-task.ts";
 import { LEARNED_LEAK_LABEL, LEARNED_LEAK_RECIPE, publishLearnedInDataDir, saveApprovedPathInDataDir } from "./testing/learned-recipe-fixture.ts";
 import { createW1Host } from "./w1-host.ts";
+import { createWorkLedger } from "./work-ledger.ts";
 import { readReiAccount, REI_ACCOUNT_CONFLICT, saveReiAccount } from "./rei-account.ts";
 import { REI_FRESH_MS } from "./source-gate.ts";
 import { WorkflowDatabase } from "./workflow-database.ts";
@@ -62,8 +63,11 @@ async function fixture(extrasOrLab: HostExtras | ((lab: Awaited<ReturnType<typeo
   const extras = typeof extrasOrLab === "function" ? extrasOrLab(lab) : extrasOrLab;
   // The saved REI tenant directory's stamp: fresh unless a test moves it.
   const tenants = { directory: { savedAt: Date.now() } as { checkedAt?: number; savedAt?: number; hash?: string } | null };
+  const ledger = createWorkLedger();
   const host = createW1Host({ dataDir: dir, provider: () => lab.provider, coverage: new RedbarkCoverage(dir), store: () => store, today: async () => TODAY,
-    tenantDirectory: () => tenants.directory, runtime: lab.runtime, browserId: lab.browserId, load: lab.load, lab, pollMs: 0, signInHolding: () => hold.signIn, ...extras });
+    tenantDirectory: () => tenants.directory, runtime: lab.runtime, browserId: lab.browserId, load: lab.load, lab, pollMs: 0, signInHolding: () => hold.signIn, workLedger: ledger, ...extras });
+  /** What this host put in the update restart's ledger (server/work-ledger.ts): working, and waiting on the person. */
+  const work = () => { const { working, waiting, byKind } = ledger.snapshot(); expect(Object.keys(byKind).every(kind => kind === "bank-import")).toBe(true); return { working, waiting }; };
   const call = async (path: string, method = "POST", body?: unknown) => {
     const result = await host.handle(path, method, new URL(`http://x${path}`).searchParams, async () => body);
     if (result.status !== 200) throw Object.assign(new Error(JSON.stringify(result.body)), { status: result.status });
@@ -100,7 +104,7 @@ async function fixture(extrasOrLab: HostExtras | ((lab: Awaited<ReturnType<typeo
     }));
   };
   const configure = () => call("/api/w1/settings", "PUT", { account: ACCOUNT, reiBusiness: FICTIONAL_BUSINESS, expectedRevision: 0 });
-  return { dir, db, host, lab, bank, call, settle, act, answer, review, store, fetch, hold, configure, tenants };
+  return { dir, db, host, lab, bank, call, settle, act, answer, review, store, fetch, hold, configure, tenants, work };
 }
 
 describe("W1 host", () => {
@@ -276,6 +280,59 @@ describe("W1 host", () => {
     expect(now).toMatchObject({ working: false, ask: null, note: "Stopped. Bud did nothing more in REI. Check the import before continuing." });
     expect(now.run).toMatchObject({ step: before.step, revision: before.revision });
     expect(await f.lab.handle({ action: "status" })).toMatchObject({ uploads: 0, effects: [] });
+  });
+
+  // What an update restart reads (server/work-ledger.ts, /api/health): `working` holds every restart, `waiting` only the automatic one.
+  it("a person-started advance doing work counts as working, at an ask as one approval, and at REI's sign-in as neither", windowsAdmissionTimeout(255), async () => {
+    let gate: Promise<void> | null = null, release = () => {}, signedIn = () => {};
+    const f = await fixture(made => ({
+      today: async () => { await gate; return TODAY; },
+      openForSignIn: async () => { await new Promise<void>(resolve => { signedIn = resolve; }); await made.handle({ action: "sign-in" }); return { outcome: "signed_in" as const, origin: "https://rei-mock.fictional.test" }; } }));
+    await f.configure();
+    expect(f.work()).toEqual({ working: 0, waiting: 0 });
+    await f.call("/api/w1/runs/start");
+    let now = await f.settle();
+    await f.review(now.run!.fetch!.batchId);
+    gate = new Promise(resolve => { release = resolve; });
+    await f.call(`/api/w1/runs/${now.run!.id}/advance`, "POST", { expectedRevision: now.run!.revision });
+    expect(f.work()).toEqual({ working: 1, waiting: 0 });
+    release();
+    // Waiting for the person to sign in to REI: neither.
+    await vi.waitFor(async () => expect((await f.host.status()).signIn).toBeTruthy(), { timeout: 5_000 });
+    expect(f.work()).toEqual({ working: 0, waiting: 0 });
+    signedIn();
+    now = await f.settle();
+    expect(now.ask, String(now.note)).not.toBeNull();
+    expect(f.work()).toEqual({ working: 0, waiting: 1 });
+    now = await f.answer();
+    expect(now.run, String(now.note)).toMatchObject({ step: "handoff" });
+    expect(f.work()).toEqual({ working: 0, waiting: 0 });
+  });
+
+  it("a scheduled run waiting at REI's sign-in is neither working nor an approval; its upload ask is one", windowsAdmissionTimeout(255), async () => {
+    let signedIn = () => {};
+    const f = await fixture(made => ({
+      openForSignIn: async () => { await new Promise<void>(resolve => { signedIn = resolve; }); await made.handle({ action: "sign-in" }); return { outcome: "signed_in" as const, origin: "https://rei-mock.fictional.test" }; } }));
+    await f.configure();
+    await f.call("/api/w1/runs/start");
+    const reviewed = await f.settle();
+    await f.review(reviewed.run!.fetch!.batchId);
+    const notes: Array<[string, boolean | undefined]> = [];
+    const loop = f.host.runLoop((detail, waiting) => { notes.push([detail, waiting]); });
+    await vi.waitFor(async () => expect((await f.host.status()).signIn).toBeTruthy(), { timeout: 5_000 });
+    expect(f.work()).toEqual({ working: 0, waiting: 0 });
+    // Schedule hears that the run waits on the person (server/routines.ts noteRun), so its clock is not `working` either.
+    expect(notes.at(-1)).toEqual([expect.stringMatching(/^Sign in to REI Cloud so Bud can finish the bank import/), true]);
+    signedIn();
+    await vi.waitFor(async () => expect((await f.host.status()).ask).toBeTruthy(), { timeout: 5_000 });
+    expect(f.work()).toEqual({ working: 0, waiting: 1 });
+    expect(notes.at(-1)).toEqual([expect.stringMatching(/^Waiting for/), true]);
+    const answered = await f.answer();
+    expect(answered.tools).toContain("browser_upload");
+    expect(await loop).toMatchObject({ status: "awaiting-approval" });
+    expect(f.work()).toEqual({ working: 0, waiting: 0 });
+    // Each answered ask said the run works again.
+    expect(notes).toContainEqual(["Allowed. Uploading the reviewed bank file to REI.", undefined]);
   });
 
   it("self-serve REI sign-in: opens REI for the person and continues once signed in; wrong account or a timeout stays put", windowsAdmissionTimeout(312), async () => {

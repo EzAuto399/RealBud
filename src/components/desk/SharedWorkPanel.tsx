@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { CompanyStatus } from '@shared/company-api';
 import type { SharedWorkItem, SharedWorkPerson, SharedWorkPurpose, ShareWorkInput } from '@shared/company-work';
 import { companyApi } from '@/lib/company-api';
+import { useUnsavedGuard } from '@/lib/unsaved-work';
 import { SharedWorkDetails } from './SharedWorkDetails';
 import type { SharedWorkEvidence } from '@shared/company-work';
 
@@ -34,7 +35,7 @@ function when(value: string): string {
   return Number.isFinite(time) ? new Date(time).toLocaleString() : value;
 }
 
-export function SharedWorkPanel({ initialDraft, initialExpanded = false, initialFilter = 'with-me' }: { initialDraft?: { title: string; summary: string }; initialExpanded?: boolean; initialFilter?: 'with-me' | 'by-me' } = {}) {
+export function SharedWorkPanel({ initialDraft, initialExpanded = false, initialFilter = 'with-me' }: { initialDraft?: { title: string; summary: string }; initialExpanded?: boolean; initialFilter?: 'with-me' | 'by-me' }) {
   const [expanded, setExpanded] = useState(initialExpanded);
   const [company, setCompany] = useState<CompanyStatus | null>(null);
   const [members, setMembers] = useState<SharedWorkPerson[]>([]);
@@ -64,6 +65,9 @@ export function SharedWorkPanel({ initialDraft, initialExpanded = false, initial
   const reviewHeading = useRef<HTMLHeadingElement>(null);
   const titleField = useRef<HTMLInputElement>(null);
   const previousPreview = useRef(false);
+  // Typed share text holds beforeunload and the update restart until it is shared. A locked
+  // share is already kept in this computer's outbox and comes back after a restart.
+  useUnsavedGuard(!shareLocked && Boolean(title.trim() || summary.trim() || (includeEvidence && Object.values(evidence).some(value => value.trim()))));
 
   const clearVisible = (sessionLost = false) => {
     setMembers([]);
@@ -269,8 +273,11 @@ export function SharedWorkPanel({ initialDraft, initialExpanded = false, initial
   const evidencePreview = includeEvidence && <div className="mt-3 border-t border-line pt-3"><p className="font-medium">Evidence copy: {evidence.label}</p><p className={muted}>{evidence.sourceRef} · {evidence.sourceVersion}</p><p className="mt-2 whitespace-pre-wrap break-words text-sm">{evidence.text}</p></div>;
 
   return (
-    <section aria-label="Shared work" className="mt-5 border-t border-line bg-paper pt-4 break-words">
-      <button type="button" className={button} aria-expanded={expanded} aria-controls="shared-work-panel" onClick={() => setExpanded(open => !open)}>Shared work</button>
+    <section aria-labelledby="shared-work-heading" className="mt-5 border-t border-line bg-paper pt-4 break-words">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 id="shared-work-heading" className="text-[15px] font-medium text-ink">Shared work</h2>
+        <button type="button" className={button} aria-expanded={expanded} aria-controls="shared-work-panel" onClick={() => setExpanded(open => !open)}>{expanded ? 'Hide shared work' : 'Show shared work'}</button>
+      </div>
       {expanded && (
         <div id="shared-work-panel" className="mt-3" aria-busy={loading || busy}>
           <p className={muted}>Share a result or ask a colleague to review it. Only content you review and select is shared. Your chats and connected accounts stay private.</p>

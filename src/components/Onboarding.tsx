@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
-  BookOpen,
   ClipboardCheck,
   Loader2,
   Send,
@@ -12,6 +11,7 @@ import {
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
 import { isRecoveryWriteError } from "@/lib/api-error";
 import { createFirstRunApi, officeContactNamed } from "@/lib/first-run";
+import { leaveLinkGate } from "@/lib/bud-setup";
 import { SETUP_STEP_COUNT } from "@/lib/setup-sequence";
 import type { YouRecoveryTarget } from "@/lib/you-navigation";
 import type { OnboardingState } from '@shared/onboarding';
@@ -25,6 +25,7 @@ const SAMPLE_PROFILE_NAME = "Sample PM";
 // A busy Windows PC can stall the service for half a minute while Bud installs
 // (Windows issues log #6), so each step waits a minute before offering Try again.
 const FINISH_TIMEOUT_MS = 60_000;
+const PROTECTED_BOOK = "A protected book is already on this computer. Open recovery to unlock it or preserve it before starting again.";
 
 function finishRequest(path: string, init?: RequestInit) {
   const controller = new AbortController();
@@ -45,7 +46,8 @@ type BusyState = "profile" | "finish" | "recovery" | "restore" | null;
 
 // First run establishes the person, connects this computer to the office on
 // realbud.app, and leads into the same Bud setup used in settings (step 3).
-// Sample-only exploration remains available at every step.
+// Every computer links before anything else opens: the only ways past are
+// restoring a private backup and, for a protected book, recovery.
 export function Onboarding({ initialState, onDone }: { initialState: OnboardingState; onDone: (setup?: "bud") => void }) {
   const { state, dispatch } = useStore();
   const [saved, setSaved] = useState(initialState);
@@ -65,8 +67,10 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
   const connect = useConnectOffice(name.trim());
   const emailOk = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
   const canContinue = name.trim().length > 0 && emailOk && busy === null;
-  // Sample exploration may leave the name blank; wait for saved settings so a typed name is never missed.
+  // A resumed connect step reads the name from saved settings; wait for them so a typed name is never missed.
   const nameRead = name.trim().length > 0 || Boolean(state.config);
+  // A book already in recovery offers Open recovery before any link; linking stays beside it.
+  const protectedBook = recoveryBlocked || Boolean(state.desk?.recovery?.active);
 
   useEffect(() => {
     if (edited.current) return;
@@ -105,23 +109,16 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
 
   const saveProfile = () => canContinue ? advanceProfile(name.trim(), email.trim().toLowerCase()) : undefined;
 
-  // First run lands on Desk, where Get started lives; "bud" opens the setup sheet over it.
-  const enterWorkspace = (emailStatus: "submitted" | "skipped", destination: "desk" | "bud") => {
+  // First run lands on Desk, where Get started lives, with Bud's setup sheet open over it.
+  const enterWorkspace = (emailStatus: "submitted" | "skipped") => {
     setEmailGateDone(emailStatus);
     // A leftover door hash would move the view on mount and close the sheet.
-    if (destination === "bud") history.replaceState(null, "", location.pathname + location.search);
+    history.replaceState(null, "", location.pathname + location.search);
     dispatch({ type: "showDesk" });
-    onDone(destination === "bud" ? "bud" : undefined);
+    onDone("bud");
   };
 
-  // Only a typed name is saved as the person's: the placeholder would later
-  // name this computer when it links.
-  const exploreSampleDesk = async () => {
-    track("onboarding_sample_desk");
-    await advanceProfile(name.trim(), emailOk ? email.trim().toLowerCase() : '');
-  };
-
-  const finish = async (destination: "desk" | "bud") => {
+  const finish = async () => {
     if (!nameRead || busy !== null || pending.current) return;
     pending.current = true;
     setBusy("finish");
@@ -165,11 +162,11 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
       await currentBook(); checkCurrent(); setSaved(completed);
       track("onboarding_completed", { engines_available: -1, mic: "n/a" });
       enteredDesk = true;
-      enterWorkspace(email.trim() ? "submitted" : "skipped", destination);
+      enterWorkspace(email.trim() ? "submitted" : "skipped");
     } catch (cause) {
       if (isRecoveryWriteError(cause)) {
         setRecoveryBlocked(true);
-        setError("A protected book is already on this computer. Open recovery to unlock it or preserve it before starting again.");
+        setError(PROTECTED_BOOK);
       } else {
         setError(cause instanceof Error ? cause.message : "RealBud could not save your office setup.");
       }
@@ -186,6 +183,8 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
     try {
       setSaved(await createFirstRunApi(api).save(saved, 'recovery'));
       location.hash = target;
+      // Recovery comes before the office link: it never waits behind it.
+      leaveLinkGate();
       dispatch({ type: "showYou" });
       onDone();
     } catch (cause) {
@@ -317,14 +316,6 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
                     {busy === "profile" ? <Loader2 size={15} className="animate-spin motion-reduce:animate-none" /> : <ArrowRight size={15} />}
                     Continue
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void exploreSampleDesk()}
-                    disabled={busy !== null}
-                    className="pm-control mt-2 w-full rounded text-[13px] text-ink-secondary hover:bg-raised/60 hover:text-ink disabled:opacity-40"
-                  >
-                    Explore the sample desk
-                  </button>
                 </div>
               </form>
             ) : (
@@ -353,8 +344,10 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
                     <div role="alert" className="mb-3 border border-danger/25 bg-danger/10 px-3 py-2.5 text-[12.5px] text-danger">
                       {error} Your setup is still here. Try again.
                     </div>
+                  ) : protectedBook ? (
+                    <p role="status" className="mb-3 border border-hold/30 bg-hold/10 px-3 py-2.5 text-[12.5px] text-hold">{PROTECTED_BOOK}</p>
                   ) : null}
-                  {recoveryBlocked ? (
+                  {protectedBook ? (
                     <button
                       type="button"
                       onClick={() => void openRecovery()}
@@ -367,7 +360,7 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
                   ) : connect.office ? (
                     <button
                       type="button"
-                      onClick={() => void finish("bud")}
+                      onClick={() => void finish()}
                       disabled={busy !== null || !nameRead}
                       className="pm-decision flex w-full items-center justify-center gap-2 rounded bg-agency px-4 text-[14px] font-medium text-white transition-transform hover:bg-agency-hover active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
                     >
@@ -375,7 +368,6 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
                       Continue to Bud setup
                     </button>
                   ) : null}
-                  {!recoveryBlocked && <button type="button" onClick={() => void finish("desk")} disabled={busy !== null || !nameRead} className="pm-control mt-2 flex w-full items-center justify-center gap-2 rounded text-[13px] text-ink-secondary hover:bg-raised/60 hover:text-ink disabled:opacity-40"><BookOpen size={14} />Open the sample desk first</button>}
                   <button
                     type="button"
                     onClick={() => void back()}

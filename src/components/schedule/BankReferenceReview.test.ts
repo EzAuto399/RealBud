@@ -2,7 +2,12 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ state: {}, dispatch: vi.fn() }) }));
+vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ dispatch: vi.fn(), refreshActivity: vi.fn(),
+  state: { connected: true, loops: [], loopRuns: [], activityLoad: { routines: "ready" }, scheduleRecovery: { active: false, detail: "" }, desk: null } }) }));
+// A static render never runs effects; record them so the unsaved-work test can run the guard's.
+const hooks = vi.hoisted(() => ({ effects: [] as Array<{ effect: () => unknown; deps?: unknown[] }>, checks: [] as Array<() => boolean> }));
+vi.mock("react", async original => ({ ...await original<typeof import("react")>(), useEffect: (effect: () => unknown, deps?: unknown[]) => { hooks.effects.push({ effect, deps }); } }));
+vi.mock("@/lib/unsaved-work", () => ({ guardUnsavedWork: (check: () => boolean) => { hooks.checks.push(check); return () => {}; } }));
 
 import { accountLabel, BankReferenceReview, coverageLine, FirstPassReview, parseFirstPass, parseW1Status, W1RunStrip, W1Setup, w1View, type FirstPass, type W1Status } from "./BankReferenceReview";
 
@@ -133,5 +138,35 @@ describe("prepare a new export", () => {
     expect(html).toContain("REI tenant list (optional)");
     expect(html).toContain("Export Tenants from REI to put each tenant&#x27;s REI reference in the last column");
     expect(html).toMatch(/aria-label="Property reference directory"/);
+  });
+});
+
+describe("bank review as a Desk work area", () => {
+  it("shows its status line under its own heading and owns its scroll region; the Schedule drawer keeps neither", () => {
+    const area = renderToStaticMarkup(createElement(BankReferenceReview, { area: true }));
+    expect(area).toContain('<section class="space-y-4 min-h-0 overflow-y-auto" aria-labelledby="bank-review-title">');
+    expect(area).toContain('<h2 id="bank-review-title"');
+    expect(area.indexOf('aria-label="Bank references status"')).toBeGreaterThan(area.indexOf('bank-review-title">Prepare bank references'));
+    // The import strip's Start bank import is the one way to start an import here.
+    expect(area).not.toContain(">Check now</button>");
+    const drawer = renderToStaticMarkup(createElement(BankReferenceReview));
+    expect(drawer).toContain('<section class="space-y-4" aria-labelledby="bank-review-title"><div><h3 id="bank-review-title"');
+    expect(drawer).not.toContain("Bank references status");
+  });
+});
+
+describe("unsaved bank review", () => {
+  it("guards beforeunload and main's update restart with the same condition as its close guard", () => {
+    hooks.effects.length = 0; hooks.checks.length = 0;
+    const closeGuards: Array<() => boolean> = [];
+    const registerCloseGuard = (guard: () => boolean) => { closeGuards.push(guard); return () => {}; };
+    renderToStaticMarkup(createElement(BankReferenceReview, { registerCloseGuard }));
+    const guardEffect = hooks.effects.find(entry => entry.deps?.[0] === registerCloseGuard);
+    expect(guardEffect).toBeDefined();
+    guardEffect!.effect();
+    expect(hooks.checks).toHaveLength(1);
+    // Nothing chosen yet: closing is free, and neither beforeunload nor the restart is held.
+    expect(closeGuards[0]()).toBe(true);
+    expect(hooks.checks[0]()).toBe(false);
   });
 });

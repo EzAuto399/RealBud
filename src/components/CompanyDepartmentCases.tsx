@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { AssignDepartmentCaseInput, CloseDepartmentCaseInput, CreateDepartmentCaseInput, DepartmentCase, DepartmentCasePage, DepartmentAssigneePage, RecoverDepartmentCaseInput } from '@shared/company-api';
 import { companyApi, departmentMutationUncertain } from '@/lib/company-api';
+import { useUnsavedGuard } from '@/lib/unsaved-work';
 import { CompanyDepartmentPreparation } from './CompanyDepartmentPreparation';
 
 const button = 'min-h-11 rounded-lg border border-line px-3 py-2 text-[14px] text-ink disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-agency';
@@ -22,6 +23,8 @@ export function CompanyDepartmentCases({ departmentId, onChanged, onOperationCha
   const [uncertain, setUncertain] = useState<Request | null>(null);
   const alive = useRef(true), pending = useRef(false), generation = useRef(0), editorGeneration = useRef(0), editing = useRef(false);
   const lastRequest = useRef<Request | null>(null);
+  // A case's typed title, details or review note holds beforeunload and the update restart until saved or cancelled.
+  useUnsavedGuard(editor?.kind === 'create' ? Boolean(title.trim() || description.trim()) : (editor?.kind === 'close' || editor?.kind === 'recover') && Boolean(note.trim()));
   const clearEditor = () => { editing.current = false; editorGeneration.current++; setEditor(null); setNote(''); setConfirmed(false); setMembers([]); setMembersLoading(false); setMoreMembers(false); setMemberOffset(0); setAssignee(''); setTitle(''); setDescription(''); };
   const load = async () => {
     const current = ++generation.current, epoch = companyApi.sessionVersion();

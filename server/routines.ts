@@ -18,6 +18,7 @@ import type { ExecutionHistoryQuery } from '../shared/execution-history.ts';
 import { MANUAL_JOB_REQUEST_ID } from "../shared/manual-job-request.ts";
 import { cadenceIncludesDay, validCalendarCadence, type CalendarCadence } from '../shared/routine-clock.ts';
 import { redactSecretsInText } from "./redact.ts";
+import { workLedger, type WorkLedger } from "./work-ledger.ts";
 import { DATA_DIR } from "./config.ts";
 import { oplog } from "./oplog.ts";
 import { evaluatorForLoop } from "../shared/workflow-catalog.ts";
@@ -65,6 +66,8 @@ export interface LoopManagerOptions {
   >;
   /** Pause/resume from the clock writes through to the job's status. */
   setRecipeEnabled?: (recipeId: string, enabled: boolean) => void;
+  /** Where a working run is counted for an update restart (tests pass their own). */
+  workLedger?: WorkLedger;
 }
 
 /** A worker that answered some addresses and held the rest is not a miss. */
@@ -380,9 +383,12 @@ export class LoopManager {
   private executing = new Set<LoopId>();
   /** Releases the clock from a running run that said what it waits for (noteRun). */
   private parking = new Map<string, () => void>();
+  /** Running loops whose run said it waits on the person (noteRun with `waiting`), until it says it works again or settles. */
+  private parked = new Set<LoopId>();
   /** Per loop, the run this start interrupted (markResumed). */
   private restartInterrupted = new Map<LoopId, string>();
   private ledger?: ExecutionHistory<LoopRun, Omit<LoopsFile, "version" | "runs">>;
+  private readonly releaseWork: () => void;
 
   constructor(options: LoopManagerOptions) {
     this.options = options;
@@ -469,6 +475,9 @@ export class LoopManager {
       } catch { /* recovery is visible; startup remains available */ }
     }
     if (this.recovery.active) this.emitRecovery();
+    // An update restart waits for the clock or a run doing work. A run parked on the person counts nothing here: the
+    // host it waits in counts its ask (w1-host.ts, rei-directory-sync.ts), and a saved sign-in wait resumes after a restart.
+    this.releaseWork = (options.workLedger ?? workLedger).probe("loop", () => ({ working: this.working ? 1 : 0 }));
   }
 
   get recovery(): { active: boolean; detail: string; generation: string } {
@@ -504,7 +513,7 @@ export class LoopManager {
     return this.readHistory(() => this.ledger!.page({ ...query, subjectId: query.loopId }));
   }
 
-  close() { this.stop(); this.ledger?.close(); }
+  close() { this.stop(); this.releaseWork(); this.ledger?.close(); }
 
   activeRun(loopId: LoopId): LoopRun | null {
     const run = this.runs.find((r) => r.loopId === loopId && ["queued", "running"].includes(r.status));
@@ -702,17 +711,24 @@ export class LoopManager {
     this.emitRun(run);
   }
 
-  /** A running run that waits for the person says so in Schedule (the supplier check's sign-in or download ask). */
-  noteRun(id: string, detail: string): void {
+  /** A running run says in Schedule what it is doing or waits for (the supplier check's sign-in or download ask).
+   * `waiting`: it waits on the person (an ask or REI's sign-in), so an update restart need not wait for it (`working`);
+   * a later note without it says the run works again. Its host counts an ask as a waiting approval (server/index.ts). */
+  noteRun(id: string, detail: string, waiting = false): void {
     const run = this.runs.find((item) => item.id === id);
-    if (this.recovery.active || !run || run.status !== "running" || run.detail === detail) return;
+    if (this.recovery.active || !run || run.status !== "running") return;
+    if (waiting) this.parked.add(run.loopId); else this.parked.delete(run.loopId);
+    if (run.detail === detail) return;
     this.commit(() => { run.detail = redactSecretsInText(detail).slice(0, 500); });
     this.emitRun(run);
     // It may wait days for the person: other loops do not wait with it. Its own lock stays until it settles.
     this.parking.get(id)?.();
   }
 
+  /** Any run open, parked or not (private backup waits for all of them). */
   get busy() { return this.ticking || this.executing.size > 0; }
+  /** The clock or a run doing work now; a run parked on the person is not (an update restart can go ahead). */
+  get working() { return this.ticking || [...this.executing].some((id) => !this.parked.has(id)); }
 
   start() {
     if (this.timer || this.recovery.active) return;
@@ -897,6 +913,7 @@ export class LoopManager {
       } catch { console.warn("[schedule] A completed run diagnostic could not be saved."); }
     } finally {
       this.executing.delete(loopId);
+      this.parked.delete(loopId);
     }
   }
 

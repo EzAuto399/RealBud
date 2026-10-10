@@ -7,6 +7,7 @@ import { fmtDateTime } from "@/lib/au";
 import { isPortalSiteRule, portalRuleLabel } from "@/lib/portal-job";
 import { useOfficeSources } from "@/lib/connected-apps-refresh";
 import { cn } from "@/lib/cn";
+import { useUnsavedGuard } from "@/lib/unsaved-work";
 import { officeAppLabel } from "@shared/office-sources";
 import { CONNECTORS_API, parseConnectorRegistry } from "@shared/mcp-connector";
 import { approvalGroupKey, defaultApprovalSettings, normalizeApprovalSettings, PER_INSTANCE_CLASSES, READ_ONLY_APP_TOOLS, type ApprovalChoice, type ApprovalSettings } from "@shared/approval-settings";
@@ -202,6 +203,8 @@ export function ApprovalSettings() {
     managed, sites: [...sites, ...ruleSites], connectors, saved: Object.keys({ ...saved?.groups, ...draft.groups }),
   }) : [];
   const dirty = !!draft && !!saved && fingerprint(draft) !== fingerprint(saved);
+  // Unsaved approval rules hold the window's beforeunload and main's update restart.
+  useUnsavedGuard(dirty);
 
   const choose = (row: ApprovalRow, choice: RowChoice) => setDraft(current => {
     if (!current) return current;

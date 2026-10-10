@@ -50,10 +50,10 @@ describe("REI sign-in wait: deadline and reminder", () => {
 
   it("says the first line once, reminds once at midday, keeps the wait across a restart and drops it when it ends", async () => {
     const dir = mkdtempSync(join(tmpdir(), "realbud-rei-wait-")); dirs.push(dir);
-    const waits = reiSignInWaits(dir), clock = { now: Date.parse(at("08:00")) }, notes: string[] = [];
+    const waits = reiSignInWaits(dir), clock = { now: Date.parse(at("08:00")) }, notes: string[] = [], waiting: Array<boolean | undefined> = [];
     const copy = (time: string) => ({ first: `First until ${time}`, reminder: `Reminder until ${time}` });
     let finish!: (value: string) => void;
-    const first = withReiSignInWait({ waits, loop: "bank-references", runId: "w1run_fictional", now: () => clock.now, timeZone: ZONE, note: d => notes.push(d), copy, pollMs: 2,
+    const first = withReiSignInWait({ waits, loop: "bank-references", runId: "w1run_fictional", now: () => clock.now, timeZone: ZONE, note: (d, w) => { notes.push(d); waiting.push(w); }, copy, pollMs: 2,
       work: () => new Promise<string>(resolve => { finish = resolve; }) });
     await until(() => notes, n => n.length === 1, "first line");
     expect(notes[0]).toMatch(/^First until 6:00 pm on Tue, 6 Oct$/);
@@ -61,6 +61,8 @@ describe("REI sign-in wait: deadline and reminder", () => {
     await until(() => notes, n => n.length === 2, "reminder");
     await tick(20);
     expect(notes).toEqual([notes[0], "Reminder until 6:00 pm on Tue, 6 Oct"]);
+    // Both lines wait on the person: an update restart need not wait for this run (server/routines.ts noteRun).
+    expect(waiting).toEqual([true, true]);
     expect(await waits.list()).toEqual([expect.objectContaining({ loop: "bank-references", runId: "w1run_fictional", reminded: true, until: Date.parse(at("18:00")) })]);
     // A restart: the same loop and run pick up the saved wait (same deadline, reminder already said).
     expect(await resumableReiWaits(dir, clock.now)).toEqual([]); // no W1 run at sign-in in this folder: dropped
@@ -70,6 +72,23 @@ describe("REI sign-in wait: deadline and reminder", () => {
     expect(await waits.list()).toEqual([]);
     finish("done");
     expect(await first).toBe("done");
+  });
+
+  it("once the person signs in, says the run works again (once) and never reminds", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "realbud-rei-wait-")); dirs.push(dir);
+    const clock = { now: Date.parse(at("08:00")) }, lines: Array<[string, boolean | undefined]> = [];
+    let signedIn!: (detail: string) => void, finish!: (value: string) => void;
+    const wait = withReiSignInWait({ waits: reiSignInWaits(dir), loop: "rei-supplier-check", runId: "rei-supplier-check", now: () => clock.now, timeZone: ZONE,
+      note: (detail, waiting) => lines.push([detail, waiting]), copy: time => ({ first: `First until ${time}`, reminder: `Reminder until ${time}` }), pollMs: 2,
+      work: (_until, resumed) => new Promise<string>(resolve => { signedIn = resumed; finish = resolve; }) });
+    await until(() => lines, l => l.length === 1, "first line");
+    signedIn("Reading.");
+    signedIn("Reading.");
+    clock.now = Date.parse(at("12:01"));
+    await tick(30);
+    expect(lines).toEqual([["First until 6:00 pm on Tue, 6 Oct", true], ["Reading.", undefined]]);
+    finish("done");
+    expect(await wait).toBe("done");
   });
 });
 
@@ -176,6 +195,27 @@ describe("W1 loop run waits at REI sign-in", () => {
     expect(await reiSignInWaits(f.dir).list()).toEqual([]);
   });
 
+  it("parks on the sign-in wait and each ask, works again on each resume, and an allowed upload is work before it starts", async () => {
+    const f = await w1Fixture();
+    // Each line with the portal's upload count at that moment (the lab reads it synchronously).
+    const lines: Array<{ detail: string; waiting: boolean; uploads: Promise<{ uploads: number }> }> = [];
+    const loop = f.first.runLoop((detail, waiting) => lines.push({ detail, waiting: waiting === true, uploads: f.portal() }));
+    await until(() => f.first.status(), s => s.working && s.signIn !== null, "wait");
+    await f.lab.handle({ action: "sign-in" });
+    const tools = await f.answer(f.first);
+    expect(tools).toContain("browser_upload");
+    expect(await loop).toMatchObject({ ok: true, status: "awaiting-approval" });
+    expect(lines[0]).toMatchObject({ detail: expect.stringMatching(/^Sign in to REI Cloud so Bud can finish the bank import\./), waiting: true });
+    expect(lines[1]).toMatchObject({ detail: "Signed in to REI. Checking the account, then carrying on with the bank import.", waiting: false });
+    // Every wait on the person is followed by a line that says the run works again.
+    lines.forEach((line, index) => { if (line.waiting) expect(lines[index + 1]?.waiting, line.detail).toBe(false); });
+    const asked = lines.findIndex(line => line.detail.startsWith("Waiting for your approval to upload the reviewed bank file to REI"));
+    expect(lines[asked]?.waiting).toBe(true);
+    expect(lines[asked + 1]?.detail).toBe("Allowed. Uploading the reviewed bank file to REI.");
+    expect((await lines[asked + 1]!.uploads).uploads).toBe(0);
+    expect((await f.portal()).uploads).toBe(1);
+  });
+
   it("stops with the plain mismatch message when the sign-in is to another business", async () => {
     const f = await w1Fixture(), notes: string[] = [];
     const loop = f.first.runLoop(detail => notes.push(detail));
@@ -248,5 +288,28 @@ describe("Supplier list check waits at REI sign-in", () => {
     await f.lab.handle({ action: "clock", at: at("18:01") });
     expect(await missed).toEqual({ ok: false, status: "missed", detail: SUPPLIER_MISSED });
     expect(await reiSignInWaits(f.dir).list()).toEqual([]);
+  });
+
+  it("parks on the sign-in wait and each ask, and reads again after each", async () => {
+    const f = await supplierFixture(), sync = f.sync(), lines: Array<[string, boolean]> = [];
+    const check = sync.checkSuppliers((detail, waiting) => lines.push([detail, waiting === true]));
+    await until(() => sync.status(), s => Boolean(s.run?.signIn), "wait");
+    await f.lab.handle({ action: "sign-in" });
+    for (let i = 0; i < 800; i++) {
+      const now = await sync.status();
+      if (now.run?.ask) await sync.handle(`/api/rei-directory/runs/${now.run.id}/answer`, "POST", async () => ({ requestId: now.run!.ask!.requestId, allowed: true }));
+      else if (!now.run?.working) break;
+      await tick();
+    }
+    expect(await check).toMatchObject({ ok: true, status: "awaiting-approval" });
+    const reading: [string, boolean] = ["Reading REI's supplier list. Nothing in REI changes.", false];
+    const signIn = lines.findIndex(([detail]) => detail.startsWith("Sign in to REI Cloud so Bud can check the supplier list"));
+    expect(lines[signIn]?.[1]).toBe(true);
+    expect(lines[signIn + 1]).toEqual(reading);
+    lines.forEach(([detail, waiting], index) => {
+      if (/allow a step in REI/.test(detail)) expect(waiting).toBe(true);
+      if (waiting) expect(lines[index + 1], detail).toEqual(reading);
+    });
+    expect(lines.at(-1)).toEqual(reading);
   });
 });

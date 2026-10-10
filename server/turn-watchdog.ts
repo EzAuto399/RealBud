@@ -118,6 +118,17 @@ export class TurnWatchdog {
     return this.turns.has(threadId);
   }
 
+  /** True when the bot has a watched turn and every one of them waits on a person (an approval card). */
+  parkedOnHuman(botId: string): boolean {
+    let parked = false;
+    for (const turn of this.turns.values()) {
+      if (turn.botId !== botId) continue;
+      if (!turn.waitingOnHuman) return false;
+      parked = true;
+    }
+    return parked;
+  }
+
   sweep(): void {
     const at = this.now();
     for (const turn of this.turns.values()) {

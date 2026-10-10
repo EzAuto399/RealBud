@@ -28,7 +28,10 @@ export function serviceCompatible(body, identity, version = APP_VERSION) {
 }
 
 /**
- * @typedef {{ ready: true } | { ready: false, reason: 'busy' | 'cannot-stop' | 'still-running' }} HandoffResult
+ * `stopped`: this handoff stopped a running service, so an install that then
+ * does not go ahead starts it again. A service still on its way out
+ * (`still-running`) keeps its recorded handle, which main's watchdog restarts from.
+ * @typedef {{ ready: true, stopped: boolean } | { ready: false, reason: 'busy' | 'cannot-stop' | 'still-running' }} HandoffResult
  * @param {object} options
  * @param {string} options.dataDirectory
  * @param {import('./service-instance.mjs').ServiceIdentity} options.identity
@@ -46,7 +49,7 @@ export async function prepareServiceForUpdate({ dataDirectory, identity, fetchIm
   if (!running) {
     // Nothing answers, but a recorded service may still be opening the book
     // on its port. Updating under it would leave old code running.
-    return handle && !(await isPortFree(handle.port)) ? { ready: false, reason: "still-running" } : { ready: true };
+    return handle && !(await isPortFree(handle.port)) ? { ready: false, reason: "still-running" } : { ready: true, stopped: false };
   }
   if (/** @type {Record<string, unknown>} */ (running.body).busy === true) return { ready: false, reason: "busy" };
   if (!(await requestServiceStop(handle, identity, { fetchImpl, dataDirectory, verifyWindowsPrivacy, ifIdle: true }))) {
@@ -57,11 +60,29 @@ export async function prepareServiceForUpdate({ dataDirectory, identity, fetchIm
   for (let waited = 0; waited <= waitMs; waited += 250) {
     if (!(await findRunningService(identity, { fetchImpl })) && (await isPortFree(running.port))) {
       clearServiceHandle(dataDirectory);
-      return { ready: true };
+      return { ready: true, stopped: true };
     }
     await sleep(250);
   }
   return { ready: false, reason: "still-running" };
+}
+
+/**
+ * What the office service is doing, for an automatic restart: that needs
+ * `busy === false` and no approval card waiting, since a restart would leave the
+ * card stale. A service that does not say it is idle counts as busy; one from
+ * before `waitingApprovals` reports none waiting, and a value that is not a
+ * count counts as one waiting. Nothing of ours answering leaves the decision to
+ * prepareServiceForUpdate, which still proves the port free before installing.
+ * @param {{ identity: import('./service-instance.mjs').ServiceIdentity, fetchImpl?: typeof fetch }} options
+ * @returns {Promise<{ running: false } | { running: true, busy: boolean, waitingApprovals: number }>}
+ */
+export async function readServiceActivity({ identity, fetchImpl = fetch }) {
+  const running = await findRunningService(identity, { fetchImpl });
+  if (!running) return { running: false };
+  const body = /** @type {Record<string, unknown>} */ (running.body);
+  const waiting = body.waitingApprovals;
+  return { running: true, busy: body.busy !== false, waitingApprovals: waiting === undefined ? 0 : typeof waiting === "number" && waiting >= 0 ? waiting : 1 };
 }
 
 /**

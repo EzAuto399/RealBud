@@ -11,6 +11,7 @@ import { mailConversationComplete, mailScanCoverageComplete, parseMailScanReques
 import { planMailHistory, mailHistoryWindows, parseMailHistoryCheckpoint, mailHistoryCoverage, mailHistoryStatusDetail, type MailHistoryCheckpoint, type MailHistoryCoverage, type MailHistoryMessageRecord, type MailHistoryPlan, type MailHistoryRunState, type MailHistoryStatus, type MailHistoryWindowStatus } from '../shared/mail-ingestion.ts';
 import { gmailThreadId, mailScanWindowCovered, mergeMailIntervals, subtractMailInterval, validMailIntervals, type MailInterval } from '../shared/mail-ingestion.ts';
 import { redactSecretsInText } from './redact.ts';
+import { workLedger, type WorkLedger } from './work-ledger.ts';
 import type { AgencySetupSettings } from '../shared/agency-setup.ts';
 import type { InboxReview } from '../shared/accounts-review.ts';
 import type { JobRun } from '../shared/contracts.ts';
@@ -98,6 +99,8 @@ interface Options {
      * synchronous local CAS, never a source/provider read. */
     withReviewContext?: <T>(work: (context: MailReviewAuthority) => T) => Promise<T>;
     database?: WorkflowDatabase | (() => WorkflowDatabase);
+    /** Where a scan in flight counts for an update restart (default: the service's; tests pass their own). */
+    workLedger?: WorkLedger;
 }
 /** Individual encrypted heads share the workflow transaction boundary. A durable
  * owner fences acquisition across services; a live PID is never timed out. */
@@ -202,6 +205,9 @@ export function createMailIngestionService(options: Options) {
             fail('A mail scan is already running. Wait for its receipt.');
         const controller = new AbortController(), ownerToken = randomUUID();
         active = controller;
+        // A restart interrupts the scan (recover() marks it) and someone has to run it again: an update waits for it.
+        // History acquisition (collectHistory) is not counted: it resumes from its checkpoint at the next start.
+        const work = (options.workLedger ?? workLedger).begin('mail-collect');
         let settled!: () => void;
         activeSettled = new Promise<void>(resolve => { settled = resolve; });
         let receipt: MailScanReceipt | undefined;
@@ -328,6 +334,7 @@ export function createMailIngestionService(options: Options) {
         }
         finally {
             active = null;
+            work.end();
             settled();
         }
     }

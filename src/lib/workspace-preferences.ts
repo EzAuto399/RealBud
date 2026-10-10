@@ -5,11 +5,10 @@ export interface WorkspacePreferences {
   propertyView: "auto" | "cards" | "table";
   pageSize: 20 | 50 | 100;
   queueWidth: number;
-  showBud: boolean;
   propertyGrouping: "none" | "building" | "suburb" | "portal";
   propertySort: "address" | "suburb" | "rent" | "late";
 }
-export const DEFAULT_WORKSPACE: WorkspacePreferences = { density: "auto", propertyView: "auto", pageSize: 50, queueWidth: 280, showBud: true, propertyGrouping: "none", propertySort: "address" };
+export const DEFAULT_WORKSPACE: WorkspacePreferences = { density: "auto", propertyView: "auto", pageSize: 50, queueWidth: 280, propertyGrouping: "none", propertySort: "address" };
 export function readWorkspacePreferences(value: unknown): WorkspacePreferences {
   const p = value && typeof value === "object" ? value as Record<string, unknown> : {};
   return {
@@ -17,7 +16,6 @@ export function readWorkspacePreferences(value: unknown): WorkspacePreferences {
     propertyView: ["auto", "cards", "table"].includes(String(p.propertyView)) ? p.propertyView as WorkspacePreferences["propertyView"] : "auto",
     pageSize: [20, 50, 100].includes(p.pageSize as number) ? p.pageSize as WorkspacePreferences["pageSize"] : 50,
     queueWidth: typeof p.queueWidth === "number" && Number.isFinite(p.queueWidth) ? Math.max(240, Math.min(360, Math.round(p.queueWidth))) : 280,
-    showBud: typeof p.showBud === "boolean" ? p.showBud : true,
     propertyGrouping: ["none", "building", "suburb", "portal"].includes(String(p.propertyGrouping)) ? p.propertyGrouping as WorkspacePreferences["propertyGrouping"] : "none",
     propertySort: ["address", "suburb", "rent", "late"].includes(String(p.propertySort)) ? p.propertySort as WorkspacePreferences["propertySort"] : "address",
   };

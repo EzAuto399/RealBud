@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readSessionToken, primeBrowserSession } from "./local-session.mjs";
+import { readSessionToken, primeBrowserSession, enterSampleDeskForQa } from "./local-session.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const out = resolve(process.env.QA_OUTPUT ?? join(root, "outputs/workspace-unification-2026-09-09/browser"));
@@ -65,7 +65,18 @@ try {
   await page.goto(base);
   await page.getByLabel('Your name', { exact: true }).fill('Fictional Workspace Reviewer');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
+  // First run has no sample-desk exit: the QA helper completes it as that button did and passes the office-link screen.
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
+  await enterSampleDeskForQa(page);
+  // Work's composer opens only on a linked computer whose Bud is ready (setup's Ask gate,
+  // src/lib/setup-sequence.ts). From here on, fictional browser-side replies say so, as qa-setup-stages' ready stage does.
+  await context.route("**/api/office-link", route => route.fulfill({ status: 200, contentType: "application/json",
+    body: JSON.stringify({ state: "linked", label: "Fictional Workspace computer", agencyLabel: "Fictional Harbour Agency", lastReportedAt: "2026-10-08T00:00:00.000Z" }) }));
+  await context.route("**/api/hermes", async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json(), ready: true, readyOnce: true, restartRequired: false } });
+  });
+  await page.reload(); await page.getByRole('heading', { name: 'Desk', exact: true }).waitFor();
   await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'Work', exact: true }).click();
   const request = page.getByRole("article", { name: "Yoda · Telegram", exact: true }).filter({ hasText: short });
   await request.waitFor();

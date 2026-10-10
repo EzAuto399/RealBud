@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BatchService } from "./batches.ts";
 import { Desk } from "./desk.ts";
 import { batchCounts } from "../shared/batches.ts";
+import { createWorkLedger } from "./work-ledger.ts";
 import { removeFixture, windowsAdmissionTimeout } from "./testing/private-fixture.ts";
 
 const dirs: string[] = [];
@@ -31,6 +32,37 @@ function setup(canRecover?: () => boolean) {
 afterEach(async () => { services.splice(0).forEach(s => s.stop()); for (const dir of dirs.splice(0)) await removeFixture(dir); vi.restoreAllMocks(); });
 
 describe("durable property batches", () => {
+  it("counts a preparing batch as working for an update restart until its runner stops, and a batch waiting for Bud not at all", async () => {
+    const { input, ask, available, deps } = setup();
+    const ledger = createWorkLedger(), service = new BatchService({ ...deps, file: join(deps.file, "..", "ledger.json"), workLedger: ledger }); services.push(service);
+    const answer = deferred<ReturnType<typeof receipt>>();
+    ask.mockImplementationOnce(() => answer.promise);
+    const created = service.create(input);
+    await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(1));
+    expect(ledger.snapshot()).toEqual({ working: 1, waiting: 0, byKind: { batch: { working: 1, waiting: 0 } } });
+    answer.resolve(receipt()); await service.wait(created.id);
+    expect(service.get(created.id).status).toBe("finished");
+    expect(ledger.snapshot()).toEqual({ working: 0, waiting: 0, byKind: {} });
+    // Bud unavailable: the batch is saved, waiting for the connection, and continues by itself after a restart.
+    available.mockResolvedValue(false);
+    const waiting = service.create({ ...input, requestKey: "request-0002", autoContinue: true }); await service.wait(waiting.id);
+    expect(service.get(waiting.id)).toMatchObject({ status: "paused", waitingForWorker: true });
+    expect(ledger.snapshot().working).toBe(0);
+  });
+
+  it("counts an auto-continue batch only while a property is being prepared: it is requeued after a restart", async () => {
+    const { input, ask, available, deps } = setup();
+    available.mockResolvedValue(true);
+    const ledger = createWorkLedger(), service = new BatchService({ ...deps, file: join(deps.file, "..", "auto-ledger.json"), workLedger: ledger }); services.push(service);
+    const answer = deferred<ReturnType<typeof receipt>>();
+    ask.mockImplementationOnce(() => answer.promise);
+    const created = service.create({ ...input, requestKey: "request-0003", autoContinue: true });
+    await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(1));
+    expect(ledger.snapshot().byKind.batch).toEqual({ working: 1, waiting: 0 });
+    answer.resolve(receipt()); await service.wait(created.id);
+    expect(ledger.snapshot()).toEqual({ working: 0, waiting: 0, byKind: {} });
+  });
+
   it("isolates each property, saves complete results, and uses only bounded preparation tools", async () => {
     const { service, input, ask, file } = setup();
     const created = service.create(input); await service.wait(created.id);

@@ -1,27 +1,108 @@
 import type { LoopRun } from '@shared/contracts';
+import { areaForLoop, coreOfficeDesk, type DeskAreaId, type NoticeLevel } from '@shared/desk-areas';
+import type { NeedsYouArea, NeedsYouSnapshot } from '@shared/needs-you';
 import { reiWaitNotice } from '@shared/rei-sign-in-wait';
-import { SHOW_DESK_EVENT } from './notify-desktop';
+import { NOTICE_AREA_IDS, effectiveDeskAreas, officeDefaultSections } from '@shared/workspace-tabs';
 import { evaluatorForLoop } from '@shared/workflow-catalog';
+import { getNeedsYou, refreshNeedsYou, subscribeNeedsYou } from './needs-you';
+import { showDesk } from './notify-desktop';
+import { lastWorkspaceTabs } from './workspace-tabs';
 
+const SETTLED = ['completed', 'awaiting-approval', 'partial', 'failed', 'missed', 'interrupted'];
+const HOLDS = ['failed', 'missed', 'interrupted'];
+/** Each new item: at most this many item notices per run, then one "And N more". */
+const ITEM_NOTICES = 3;
 const delivered = new Set<string>();
 const previousHold = new Map<string, string>();
-/** Only new, settled app results; reconnect snapshots and unchanged runs stay quiet. */
+
+type AreaNotice = { area: NeedsYouArea; title: string; level: NoticeLevel };
+/** Where a job's runs report and how loudly: this computer's level for the work area, else the office
+ * preset, else the core default before either is read. An area the office's Desk doesn't show sends its
+ * notices to Schedule. Null for a job in no area: its catalog flag decides, as before. */
+function areaNotice(loopId: string): AreaNotice | null {
+  const id = areaForLoop(loopId);
+  return id ? areaSetting(id) : null;
+}
+function areaSetting(id: DeskAreaId): AreaNotice {
+  const read = lastWorkspaceTabs(), office = read?.office ?? coreOfficeDesk();
+  const shown = effectiveDeskAreas(read?.state?.desk.sections ?? officeDefaultSections(office), office).find(area => area.id === id);
+  const preset = shown ?? office.areas.find(area => area.id === id) ?? coreOfficeDesk().areas.find(area => area.id === id)!;
+  return { area: shown ? id : 'schedule', title: preset.title, level: preset.notify ?? 'off' };
+}
+
+/** A notice names the item, never an amount or account number its title may carry: any number with a currency
+ * sign or three or more digits becomes "…", and a run of them (an account number in groups) one "…". House and
+ * unit numbers (one or two digits) and dates (2026-10-10, 9/10/2026) stay. */
+const DATE = /(\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}\/\d{1,2}\/\d{4}\b)/;
+const NUMBER = /(?:[$€£]\s?)?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?/g;
+const mask = (text: string) => text.replace(NUMBER, number => /[$€£]/.test(number) || number.replace(/\D/g, '').length >= 3 ? '…' : number).replace(/…(?:[\s-]*…)+/g, '…');
+const noticeTitle = (title: string) => title.split(DATE).map((part, index) => index % 2 ? part : mask(part)).join('');
+/** A mail item's title is its Gmail subject, which can carry anything: its notice never shows it. */
+const itemBody = (area: NeedsYouArea, title: string) => area === 'mail' ? 'New conversation to review' : noticeTitle(title);
+
+/** Review keys per area that are not news: the first read after app start, every read while the area is not
+ * on Each new item, and every key told since. So neither a restart nor switching to Each new item announces
+ * what was already there. An area joins once a read could check it. */
+const known = new Map<NeedsYouArea, Set<string>>();
+const reviews = (snapshot: NeedsYouSnapshot, area: NeedsYouArea) => snapshot.items.filter(item => item.area === area && item.level === 'review');
+const readable = (snapshot: NeedsYouSnapshot, area: NeedsYouArea) => !snapshot.unavailable.some(row => row.area === area);
+subscribeNeedsYou(() => {
+  const { snapshot } = getNeedsYou();
+  for (const area of NOTICE_AREA_IDS) {
+    if (!snapshot || !readable(snapshot, area)) continue;
+    const keys = reviews(snapshot, area).map(item => item.key), seen = known.get(area);
+    if (!seen) known.set(area, new Set(keys));
+    else if (areaSetting(area).level !== 'each') for (const key of keys) seen.add(key);
+  }
+});
+
+function tell(title: string, body: string, tag: string, area?: NeedsYouArea): boolean {
+  try {
+    const notification = new Notification(title, { body, tag });
+    notification.onclick = () => { showDesk(area); notification.close(); };
+    return true;
+  } catch { return false; /* Saved result and attention state remain in the app. */ }
+}
+const remember = (id: string) => { delivered.add(id); if (delivered.size > 200) delivered.delete(delivered.values().next().value!); };
+const runNotice = (run: LoopRun, area?: NeedsYouArea) => tell(run.loopName, run.detail || 'Open RealBud to review the saved result.', `realbud-${run.loopId}`, area);
+
+/** Only new, settled app results; reconnect snapshots and unchanged runs stay quiet. Problems (a held or
+ * partial run) notify at every level; findings follow the work area's level. */
 export function notifyRoutineRun(run: LoopRun): void {
   const rei = reiWaitNotice(run);
   if (rei) { notifyReiWait(run, rei === 'waiting'); return; }
-  if (!evaluatorForLoop(run.loopId)?.notify || run.seenAt ||
-      !['completed', 'awaiting-approval', 'partial', 'failed', 'missed', 'interrupted'].includes(run.status) ||
+  const notice = areaNotice(run.loopId);
+  if (!(notice || evaluatorForLoop(run.loopId)?.notify) || run.seenAt || !SETTLED.includes(run.status) ||
       typeof Notification === 'undefined' || Notification.permission !== 'granted' || delivered.has(run.id)) return;
-  const hold = ['failed', 'missed', 'interrupted'].includes(run.status), signature = `${run.status}:${run.detail}`;
+  const hold = HOLDS.includes(run.status), signature = `${run.status}:${run.detail}`;
   if (hold && previousHold.get(run.loopId) === signature) return;
   if (hold) previousHold.set(run.loopId, signature); else previousHold.delete(run.loopId);
-  try {
-    const notification = new Notification(run.loopName, { body: run.detail || 'Open RealBud to review the saved result.', tag: `realbud-${run.loopId}` });
-    delivered.add(run.id);
-    if (delivered.size > 200) delivered.delete(delivered.values().next().value!);
-    notification.onclick = () => { window.focus(); window.dispatchEvent(new Event(SHOW_DESK_EVENT)); notification.close(); };
-  } catch { /* Saved result and attention state remain in the app. */ }
+  const level = !notice || hold || run.status === 'partial' ? 'summary' : notice.level;
+  if (level === 'off') return;
+  if (notice && level === 'each') { remember(run.id); void noticeNewItems(run, notice); return; }
+  if (runNotice(run, notice?.area)) remember(run.id);
 }
+
+/** Needs you after this run: a read already in flight may predate it, so wait for the one queued behind it too. */
+async function readAfterRun() {
+  await refreshNeedsYou();
+  if (getNeedsYou().checking) await new Promise<void>(done => { const stop = subscribeNeedsYou(() => { if (!getNeedsYou().checking) { stop(); done(); } }); });
+  return getNeedsYou();
+}
+/** Each new item: one notice per review item the area didn't have before, up to the cap, then one for the rest.
+ * When Needs you can't say what is new, one notice for the run instead: unread is never "nothing new". That
+ * includes a first run with no earlier read (this run's own read becomes the baseline). */
+async function noticeNewItems(run: LoopRun, notice: AreaNotice): Promise<void> {
+  const had = known.has(notice.area);
+  const { snapshot, error } = await readAfterRun();
+  const seen = known.get(notice.area);
+  if (!had || error || !snapshot || !seen || !readable(snapshot, notice.area)) { runNotice(run, notice.area); return; }
+  const fresh = reviews(snapshot, notice.area).filter(item => !seen.has(item.key));
+  for (const item of fresh) seen.add(item.key);
+  for (const item of fresh.slice(0, ITEM_NOTICES)) tell(notice.title, itemBody(notice.area, item.title), `realbud-${item.key}`, notice.area);
+  if (fresh.length > ITEM_NOTICES) tell(notice.title, `And ${fresh.length - ITEM_NOTICES} more`, `realbud-${notice.area}-more`, notice.area);
+}
+
 /** A run waiting at REI sign-in notifies while it runs (once, plus at most one midday reminder) and the bank import's
  * miss notifies too. Both are holds: the same line again, as after a restart, stays quiet (shared/rei-sign-in-wait.ts). */
 function notifyReiWait(run: LoopRun, waiting: boolean): void {
@@ -29,10 +110,6 @@ function notifyReiWait(run: LoopRun, waiting: boolean): void {
   const signature = `${run.status}:${run.detail}`;
   if (previousHold.get(run.loopId) === signature) return;
   previousHold.set(run.loopId, signature);
-  try {
-    const notification = new Notification(run.loopName, { body: run.detail || 'Open RealBud to see what is waiting.', tag: `realbud-${run.loopId}` });
-    // A waiting run is not delivered yet: its reminder and its result still notify.
-    if (!waiting) delivered.add(run.id);
-    notification.onclick = () => { window.focus(); window.dispatchEvent(new Event(SHOW_DESK_EVENT)); notification.close(); };
-  } catch { /* The wait still shows in Schedule. */ }
+  // A waiting run is not delivered yet: its reminder and its result still notify.
+  if (tell(run.loopName, run.detail || 'Open RealBud to see what is waiting.', `realbud-${run.loopId}`, areaNotice(run.loopId)?.area) && !waiting) delivered.add(run.id);
 }

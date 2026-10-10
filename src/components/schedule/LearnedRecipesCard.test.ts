@@ -1,10 +1,25 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { LEARN_ROW_VALUE, type LearnedRecipe } from "@shared/learned-recipes";
 import { LearnedRecipeItem, LearnedRecipesCard, learnFlagText, learnInputLabel, learnPublishReason, learnStepText, parseLearnList } from "./LearnedRecipesCard";
 
 vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ state: { bots: [] }, dispatch: vi.fn() }) }));
+// A static render can't type. While `typing.on`, state keeps its value across renders in call
+// order, so a test can change a field as its onChange would, render again and read the guard.
+const typing = vi.hoisted(() => ({ on: false, at: 0, values: [] as unknown[], guards: [] as boolean[] }));
+vi.mock("react", async original => {
+  const react = await original<typeof import("react")>();
+  return { ...react, useState: (initial: unknown) => {
+    if (!typing.on) return react.useState(initial);
+    const at = typing.at++;
+    if (!(at in typing.values)) typing.values[at] = typeof initial === "function" ? (initial as () => unknown)() : initial;
+    return [typing.values[at], (next: unknown) => { typing.values[at] = typeof next === "function" ? (next as (old: unknown) => unknown)(typing.values[at]) : next; }];
+  } };
+});
+vi.mock("@/lib/unsaved-work", async original => ({ ...await original<object>(), useUnsavedGuard: (dirty: boolean) => { typing.guards.push(dirty); } }));
+afterEach(() => { typing.on = false; typing.values.length = 0; });
+const answer = (element: ReturnType<typeof createElement>) => { typing.at = 0; typing.guards.length = 0; renderToStaticMarkup(element); return [...typing.guards]; };
 
 const draft: LearnedRecipe = {
   version: 1, purpose: "realbud-learned-recipe", id: "lr_fictional", portal: "fictional-portal", name: "learned-arrears-check", title: "Arrears check",
@@ -104,5 +119,34 @@ describe("LearnedRecipesCard", () => {
     expect(bare).not.toContain("Show Bud a task");
     expect(bare).not.toContain("border-line bg-sheet p-4");
     expect(bare).toContain("It never keeps what you type into fields.");
+  });
+});
+
+describe("unsaved learned-task text", () => {
+  it("holds beforeunload and the update restart while a recording's task name is typed", () => {
+    const card = createElement(LearnedRecipesCard, {});
+    typing.on = true;
+    expect(answer(card)).toEqual([false]);
+    typing.values[0] = parseLearnList({ session: { state: "recording", portal: "fictional-portal", startedAt: 1, events: 2 }, recipes: [], portals: ["fictional-portal"], labels: {} });
+    expect(answer(card)).toEqual([false]);
+    typing.values[typing.values.lastIndexOf("")] = "Fictional arrears check"; // the task name, the card's last text state
+    expect(answer(card)).toEqual([true]);
+  });
+
+  it("holds them while a draft's fixed text or a published task's run values are typed", () => {
+    const item = (recipe: LearnedRecipe) => createElement(LearnedRecipeItem, { recipe, labels, busy: false, onChange: vi.fn(), onRun: vi.fn() });
+    typing.on = true;
+    expect(answer(item(draft))).toEqual([false]);
+    const fixed = typing.values.indexOf(null);
+    typing.values[fixed] = { index: 3, text: "Fictional tenant" };
+    expect(answer(item(draft))).toEqual([true]);
+    typing.values.length = 0;
+    const published = item({ ...draft, state: "published", flags: [], confirmedLabels: ["View"] });
+    expect(answer(published)).toEqual([false]);
+    const [open, marker] = [typing.values.indexOf(false), typing.values.indexOf("")];
+    typing.values[marker] = "FICT-01";
+    expect(answer(published)).toEqual([false]); // the run form is closed
+    typing.values[open] = true;
+    expect(answer(published)).toEqual([true]);
   });
 });

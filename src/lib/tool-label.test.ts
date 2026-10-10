@@ -33,6 +33,7 @@ describe("toolLabel", () => {
     expect(toolLabel("mcp__reminders__set_reminder")).toBe("setting a reminder");
     expect(toolLabel("mcp__workspace-views__views_list")).toBe("checking saved views");
     expect(toolLabel("views_create")).toBe("proposing a new saved view");
+    expect(toolLabel("mcp__workspace-views__desk_arrange")).toBe("arranging the Desk");
     expect(toolLabel("mcp__workspace-views__views_rename")).toBe("proposing a saved view name");
     expect(toolLabel("views_set_visible")).toBe("proposing to show or hide a saved view");
     expect(toolLabel("views_reorder")).toBe("proposing a saved view order");

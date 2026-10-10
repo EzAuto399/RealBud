@@ -5,6 +5,11 @@
 // connected apps, REI sign-in, the loops and the config flags are fictional
 // route replies over the real server's own answers.
 //
+// An unlinked or disconnected computer first shows the office-link screen with
+// no way around it; the script asserts that, then passes it the QA way (the
+// session flag from local-session.mjs; in the app only recovery sets it) to
+// check the shell behind it.
+//
 // Walks stage 0 (not linked) → 1 (Bud installing) → 2 (pack to import) →
 // 3 (REI sign-in) → 4 (workflows off) → ready, then revoked, AI limit and Gmail
 // lost. At each: Desk, Work, Schedule, Connected apps and the status bar, by
@@ -19,7 +24,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readSessionToken, primeBrowserSession } from './local-session.mjs';
+import { readSessionToken, primeBrowserSession, LINK_GATE_LEFT_KEY } from './local-session.mjs';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { completeFictionalOnboarding } from './qa-onboarding.mjs';
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE to an installed Playwright module.');
@@ -68,7 +73,7 @@ try {
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: 'reduce' });
   await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base });
-  await primeBrowserSession(context, base, token);
+  await primeBrowserSession(context, base, token, { linkGate: true });
   await context.addInitScript(() => localStorage.setItem('realbud.first-run-done', '1'));
   await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
   const json = (route, body) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
@@ -112,8 +117,30 @@ try {
 
   page = await context.newPage(); page.setDefaultTimeout(20_000); page.on('pageerror', error => errors.push(`${stage}: ${error.message}`));
   const shot = async (name) => { const path = join(output, `${name}.png`); await page.screenshot({ path }); screenshots.push(path); };
+  /** The office-link screen each unlinked stage opens on. */
+  const GATE = {
+    0: { heading: 'Connect this computer to your office' },
+    revoked: { heading: 'This computer was disconnected from your office' },
+  };
+  let gateDue = null;
   const open = async (hash) => {
-    await page.goto(`${base}/${hash}`); await page.reload();
+    await page.goto(`${base}/${hash}`);
+    // A new app session for this stage: the office-link screen comes first.
+    if (gateDue) await page.evaluate(key => sessionStorage.removeItem(key), LINK_GATE_LEFT_KEY);
+    await page.reload();
+    if (gateDue) {
+      const gate = GATE[stage];
+      await page.getByRole('heading', { name: gate.heading, exact: true }).waitFor();
+      assert.equal(await page.getByRole('contentinfo', { name: 'Status bar' }).count(), 0, `${stage}: the shell waits behind the office-link screen`);
+      assert.ok(await page.getByRole('button', { name: 'Connect with this code', exact: true }).isVisible(), `${stage}: code entry on the office-link screen`);
+      assert.equal(await page.getByRole('button', { name: /sample desk|without Bud/i }).count(), 0, `${stage}: no way around the office-link screen`);
+      await shot(`${gateDue}-link-gate`);
+      // QA only: pass it for this session the way recovery does.
+      await page.evaluate(key => sessionStorage.setItem(key, '1'), LINK_GATE_LEFT_KEY);
+      await page.reload();
+      pass(`${gateDue}: the office-link screen ("${gate.heading}") comes before the shell, with no sample-desk or saved-work exit`);
+      gateDue = null;
+    }
     // Bud's first setup covers the shell while it installs; the cover offers the sample desk meanwhile.
     const explore = page.getByRole('button', { name: 'Explore the sample desk', exact: true });
     if (stage === '1') { await explore.click(); await explore.waitFor({ state: 'hidden' }); }
@@ -126,6 +153,7 @@ try {
     for (const [name, want] of Object.entries(STAGES)) {
       stage = name;
       const tag = `${width}-stage-${name}`;
+      gateDue = GATE[name] ? tag : null;
       // Desk: the status bar's one setup item, else the most serious degraded state, else nothing.
       await open('#/desk');
       const bar = statusBar();

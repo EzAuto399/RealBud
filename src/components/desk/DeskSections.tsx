@@ -1,19 +1,6 @@
-import { Fragment, useState, type MouseEvent, type ReactNode } from "react";
-import { deskSectionsOrDefault, type DeskSectionId } from "@shared/workspace-tabs";
-import type { DeskOtherWork } from "@/lib/desk-view-state";
+import { useState, type MouseEvent, type ReactNode } from "react";
+import { DESK_AREAS, type DeskOtherWork } from "@/lib/desk-view-state";
 import { StatusLabel } from "../pm";
-
-/** Renders Desk content sections in the saved order, skipping hidden ones.
- * An absent or invalid layout renders today's order. Needs you always shows. */
-export function DeskSections({ sections, render }: { sections: unknown; render: Record<DeskSectionId, ReactNode> }) {
-  return (
-    <>
-      {deskSectionsOrDefault(sections).map(section =>
-        section.visible || section.id === "queue" ? <Fragment key={section.id}>{render[section.id]}</Fragment> : null,
-      )}
-    </>
-  );
-}
 
 export const LICENSEE_BADGE = "Needs licensee review";
 export const LICENSEE_EXPLANATION =
@@ -66,32 +53,29 @@ export function DeskRemindersDisclosure({ children, initialOpen = false }: { chi
   );
 }
 
-export const OTHER_WORK_LABELS: Record<DeskOtherWork, string> = {
-  mail: "Mail priorities",
-  bills: "Bills and calendar",
-  "shared-work": "Shared work",
-};
-
-/** The task area and any opened Other work surface. Only one shows at a time;
+/** The task area and any opened work-area surface. Only one shows at a time;
  *  the rest stay mounted but hidden so unsaved drafts and in-flight request
  *  identities survive switching back and forth. The Tasks tab is the way back. */
 export function DeskWorkArea({
   active,
   opened,
+  title,
   tasks,
   panels,
 }: {
   active: DeskOtherWork | null;
   opened: ReadonlySet<DeskOtherWork>;
+  /** The area's name as this office calls it. */
+  title: (id: DeskOtherWork) => string;
   tasks: ReactNode;
   panels: Record<DeskOtherWork, ReactNode>;
 }) {
   return (
     <>
       <div className="desk-work-tasks" hidden={active !== null}>{tasks}</div>
-      {(Object.keys(OTHER_WORK_LABELS) as DeskOtherWork[]).map(id =>
+      {DESK_AREAS.map(id =>
         opened.has(id) || active === id ? (
-          <section key={id} className="desk-other-work-surface" data-other-work={id} hidden={active !== id} aria-label={OTHER_WORK_LABELS[id]}>
+          <section key={id} className="desk-area-surface" data-other-work={id} hidden={active !== id} aria-label={title(id)}>
             {panels[id]}
           </section>
         ) : null,

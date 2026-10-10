@@ -4,11 +4,14 @@ import { lstat, open, readFile, unlink, readdir } from 'node:fs/promises';
 import { basename, dirname, join, parse, resolve } from 'node:path';
 import type { LoopSchedule, Recipe } from '../shared/contracts.ts';
 import { CUSTOMER_PACK_FILES, type CustomerPackOfficeSettings, type OfficePacksSource, type OfficePacksView } from '../shared/customer-packs.ts';
+import { AREA_LAYOUTS, DESK_LAYOUTS, DESK_LAYOUT_LABELS, NOTICE_LEVELS, type DeskLayoutName, type NoticeLevel } from '../shared/desk-areas.ts';
+import { areaForWorkflow } from './desk-preset.ts';
 import { BUILT_IN_MISMATCH_MESSAGE, PACK_PUBLISHER_KEYS, UNSIGNED_PACK_MESSAGE, verifyPackSignature, type PackPublisherKey } from './pack-signing.ts';
 import { parsePortalRecipePack } from './portal-recipe.ts';
 import type { CustomerPack, CustomerPackCheck, CustomerPackCheckId, CustomerPackInstallation, CustomerPackPreview, CustomerPackArchivePreview, CustomerPackArchivedHistory, CustomerPackHistoryItem, PackSkillProposal, PackSkillRevisionMetadata, PackSkillHistorySummary, PackSkillArchivePreview, PackSkillArchiveConfirmation, PackSkillHistoryPage, PackSkillHistorySelection, PackSkillRevertPreview } from '../shared/customer-packs.ts';
 import { loadRecipes, parseRecipeSchedule, resetRecipeApprovalsAtomically, saveRecipesAtomically, validateRecipe } from './recipes.ts';
 import { mkdirPrivate, privateDirectory, readPrivateJson, writePrivateJson } from './private-json.ts';
+import { workLedger, type WorkLedger } from './work-ledger.ts';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
 import { austinAccountsCustomerPack, austinCustomerPack, latestAustinAccountsCustomerPack, latestAustinCustomerPack, austinPropertyCustomerPack, austinReiFiles } from './customer-pack-definition.ts';
 import { officeCoreCustomerPack } from './office-core-pack.ts';
@@ -83,6 +86,22 @@ function validatePackFiles(value: unknown): CustomerPack['files'] {
   }
   return Object.keys(out).length ? out : undefined;
 }
+/** Display-only Desk preset, by shape: each area names a different workflow of this pack,
+ * an approved layout and notice level, and a plain title. */
+function validatePackDesk(value: unknown, workflows: CustomerPack['workflows']): NonNullable<CustomerPack['desk']> {
+  const desk = fields(value, ['areas']), seen = new Set<string>();
+  if (!Array.isArray(desk.areas) || !desk.areas.length || desk.areas.length > 8) return fail('A pack’s Desk preset needs one to eight work areas.');
+  return { areas: desk.areas.map(raw => {
+    const area = fields(raw, ['workflow', 'title', 'layout', 'notify']), workflow = workflows.find(item => item.id === area.workflow);
+    if (!workflow || seen.has(workflow.id)) return fail('Each Desk work area must name a different workflow in this pack.');
+    seen.add(workflow.id);
+    const layout = area.layout as DeskLayoutName;
+    if (!DESK_LAYOUTS.includes(layout)) return fail(`Unknown Desk layout${typeof layout === 'string' && /^[a-z0-9-]{1,40}$/.test(layout) ? ` ${layout}` : ''}.`);
+    if (!NOTICE_LEVELS.includes(area.notify as NoticeLevel)) return fail('Choose a Desk notice level: each, summary or off.');
+    if (!plain(area.title, 40) || /[\u202a-\u202e\u2066-\u2069]/.test(area.title as string)) return fail('Give each Desk work area a plain title of up to 40 characters.');
+    return { workflow: workflow.id, title: area.title as string, layout, notify: area.notify as NoticeLevel };
+  }) };
+}
 export function validateCustomerPack(value: unknown): CustomerPack {
   const serialized = JSON.stringify(value);
   if (!serialized || Buffer.byteLength(serialized) > 500_000) return fail('Choose a customer pack smaller than 500 KB.');
@@ -97,7 +116,7 @@ export function validateCustomerPack(value: unknown): CustomerPack {
     if (item && typeof item === 'object') values.push(...Object.values(item));
   }
   if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY|\bsk-[A-Za-z0-9_-]{20,}|(?:api[_-]?key|access[_-]?token|password)\s*[=:]\s*["']?[A-Za-z0-9_+\/-]{12,}|(?:\/Users\/|\/home\/|\b[A-Za-z]:[\\/])/i.test(JSON.stringify(unsigned))) return fail('Remove credentials and machine-specific paths before sharing a pack.');
-  const row = fields(value, ['format', 'version', 'id', 'revision', 'title', 'workflows', 'recipes', 'skills', 'dependencies', 'files', 'signature']);
+  const row = fields(value, ['format', 'version', 'id', 'revision', 'title', 'workflows', 'recipes', 'skills', 'dependencies', 'files', 'signature', 'desk']);
   if (row.format !== 'realbud-customer-pack' || row.version !== 1 || !Number.isSafeInteger(row.revision) || Number(row.revision) < 1) return fail('Unsupported customer pack format or revision.');
   const dependencies = fields(row.dependencies, ['runtime', 'mode', 'schedules', 'permissions']);
   if (dependencies.runtime !== 'hermes-property' || dependencies.mode !== 'supplied-source-preparation' || dependencies.schedules !== 'off' || dependencies.permissions !== 'local-review-required') return fail('This importer accepts preparation plans only. Schedules and new execution permissions cannot be imported.');
@@ -127,15 +146,16 @@ export function validateCustomerPack(value: unknown): CustomerPack {
   });
   if (recipes.some(recipe => !workflows.some(workflow => workflow.recipeIds.includes(recipe.id)))) return fail('Every recipe must belong to a named business workflow.');
   const files = row.files === undefined ? undefined : validatePackFiles(row.files);
+  const desk = row.desk === undefined ? undefined : validatePackDesk(row.desk, workflows);
   let signature: CustomerPack['signature'];
   if (rawSignature !== undefined) {
     const sig = fields(rawSignature, ['algorithm', 'keyId', 'value']);
     if (sig.algorithm !== 'ed25519' || typeof sig.keyId !== 'string' || !/^[a-z0-9][a-z0-9.-]{0,63}$/.test(sig.keyId) || typeof sig.value !== 'string' || !/^[A-Za-z0-9+/]{86}==$/.test(sig.value)) return fail(UNSIGNED_PACK_MESSAGE);
     signature = { algorithm: 'ed25519', keyId: sig.keyId, value: sig.value };
   }
-  // A pack without files or a signature keeps its exact earlier bytes and digest.
+  // A pack without files, a signature or a Desk preset keeps its exact earlier bytes and digest.
   return { format: 'realbud-customer-pack', version: 1, id: safeId(row.id), revision: Number(row.revision), title: text(row.title, 120), recipes, skills, workflows, dependencies: { runtime: 'hermes-property', mode: 'supplied-source-preparation', schedules: 'off', permissions: 'local-review-required' },
-    ...(files ? { files } : {}), ...(signature ? { signature } : {}) };
+    ...(files ? { files } : {}), ...(signature ? { signature } : {}), ...(desk ? { desk } : {}) };
 }
 
 /** Stable identity of an instruction change: never a runtime path, so relocating or recreating the worker folder keeps it valid. */
@@ -205,6 +225,18 @@ export interface CustomerPackServiceOptions {
   selectWorkflowPack?: (packId: string) => Promise<unknown>;
   /** Packs the office uploaded on the website (server/office-link.ts). Untrusted until admitted with a signature. */
   officePacks?: () => Promise<OfficePacksSource>;
+  /** Where a pack change in progress counts for an update restart (default: the service's; tests pass their own). */
+  workLedger?: WorkLedger;
+}
+/** On import (preview, install, upgrade, the office's pack list): this core can show each preset area
+ * as laid out. Saved journals are read by shape only, so a later core or a downgrade never sends an
+ * install to recovery over a display preset; `officeDesk` leaves out what it can't show. */
+function assertDeskShowable(pack: CustomerPack): void {
+  for (const area of pack.desk?.areas ?? []) {
+    const id = areaForWorkflow(area.workflow), title = pack.workflows.find(workflow => workflow.id === area.workflow)!.title;
+    if (!id) fail(`This RealBud can't show the ${title} workflow on Desk yet.`);
+    if (!AREA_LAYOUTS[id].includes(area.layout)) fail(`This RealBud can't show the ${title} workflow as a ${DESK_LAYOUT_LABELS[area.layout]} on Desk.`);
+  }
 }
 /** Packs generated from files inside the signed app bundle. Trusted as shipped:
  * the digest is computed from the current app files, never pinned. */
@@ -215,6 +247,7 @@ const builtInHistory: Record<string, (() => CustomerPack)[]> = { 'austin-office'
  * the office website always must: matching a built-in is no excuse there. */
 export function admitPack(value: unknown, keys: readonly PackPublisherKey[], requireSignature = false): CustomerPack {
   const pack = validateCustomerPack(value);
+  assertDeskShowable(pack);
   if (pack.signature) verifyPackSignature(pack, keys);
   else if (requireSignature || !Object.hasOwn(builtInPacks, pack.id)) fail(UNSIGNED_PACK_MESSAGE);
   else {
@@ -299,11 +332,12 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
     if (upgrade.pendingId && upgrade.pendingDigest) complete.proposalReceipts = [...entry.proposalReceipts ?? [], { id: upgrade.pendingId, digest: upgrade.pendingDigest, outcome: 'applied', at: new Date().toISOString() }];
     return { ...entries, [entry.pack.id]: complete };
   }
-  // Cooperating service instances in this host share the same write lane.
+  // Cooperating service instances in this host share the same write lane. A change waiting in it or running (install,
+  // upgrade, rollback, archive, instruction review) holds an update restart: one cut short is left for recovery or resume.
   const exclusive = <T>(work: () => Promise<T>): Promise<T> => {
     const key=resolve(path), previous=packWriters.get(key) ?? Promise.resolve(), next=previous.then(work,work);
     const settled=next.catch(()=>{}); packWriters.set(key,settled);
-    void settled.then(()=>{if(packWriters.get(key)===settled)packWriters.delete(key);}); return next;
+    void settled.then(()=>{if(packWriters.get(key)===settled)packWriters.delete(key);}); return (options.workLedger ?? workLedger).track('pack-change',next);
   };
   async function journals(): Promise<Record<string, Journal>> {
     const saved = await readPrivateJson(path, PACK_JOURNAL_MAX_BYTES+SKILL_ARCHIVE_INTENT_ALLOWANCE);
@@ -1075,6 +1109,8 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
       }
     },
     async list() { const entries = await journals(); return { installations: await Promise.all(Object.values(entries).map(status)) }; },
+    /** The installed manifest of a pack, or null. Read only, for the office's Desk preset (server/desk-preset.ts). */
+    async installedPack(packId: string): Promise<CustomerPack | null> { const entry = (await journals())[safeId(packId)]; return entry?.phase === 'installed' ? entry.pack : null; },
     async clientExport(packId: string) { const entry = (await journals())[safeId(packId)]; if (!entry) return fail('The installed pack was not found.', 404); return clientExportPack(entry.pack, await options.officeSettings?.()); },
     async handle(route: string, method: string, body?: unknown): Promise<{ status: number; body: unknown } | null> {
       if (!route.startsWith('/api/customer-packs')) return null;

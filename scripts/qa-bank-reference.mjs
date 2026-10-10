@@ -81,8 +81,19 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   await page.goto(base+'/#/desk');
   const bankCsv = "Date,Amount,Narrative,Reference\n2026-09-10,500.00,FICTIONAL RENT,P101\n2026-09-10,500.00,FICTIONAL TRANSFER,\n";
   assert.equal((await fetch(base+"/api/bank-reference")).status, 401);
-  await page.getByRole("button", { name: /^Schedule\b/ }).first().click();
-  await page.getByRole("button", { name: "Open job: Bank reference review", exact: true }).click();
+  // The list leaves out a never-run, off Auston job; its deep link still opens it (as qa-bank-amendments.mjs does).
+  // Land on Schedule first: a job hash set before Schedule mounts reads as an unknown door.
+  const openBankJob = async () => {
+    await page.evaluate(() => { location.hash = '#/schedule'; });
+    await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
+    await page.evaluate(() => { location.hash = 'job-bank-references'; });
+    const drawer = page.getByRole("dialog", { name: "Bank reference review", exact: true });
+    await drawer.waitFor();
+    // Screenshots after the drawer's opening transition, not mid-fade.
+    await page.waitForFunction(() => document.getAnimations().every(animation => animation.playState !== 'running'));
+    return { drawer, place: drawer.getByRole("region", { name: "Bank review", exact: true }) };
+  };
+  await openBankJob();
   await page.getByText("Prepare a new export", { exact: true }).click();
   await page.getByLabel("Bank CSV", { exact: true }).setInputFiles({ name: "fictional-bank.csv", mimeType: "text/csv", buffer: Buffer.from(bankCsv) });
   for (const [key, value] of Object.entries({ date: "Date", amount: "Amount", narrative: "Narrative", reference: "Reference" })) await page.getByLabel(`${key} column`, { exact: true }).fill(value);
@@ -112,6 +123,39 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   const after = await request("/api/desk");
   assert.deepEqual(after.properties, before.properties);
   pass("Synthetic bank-shaped CSV is refused without changing the property book", { status: preview.status, error: preview.body.error });
+
+  // One place per decision: once the office runs Bank references, its Desk area owns the review and the job opens it.
+  const setup = await request('/api/agency-setup');
+  await request('/api/agency-setup', 'PUT', { expectedRevision: setup.state.revision, settings: { ...setup.state.settings, selectedWorkflows: [...setup.state.settings.selectedWorkflows, 'bank-references'] } });
+  assert.ok((await request('/api/workspace-tabs')).office.areas.some(area => area.id === 'bank' && area.available), 'the office preset offers the Bank references area');
+  const bankArea = page.locator('.desk-area-surface[data-other-work="bank"]');
+  // A reload reads the office preset again.
+  const reopenBankJob = async () => { await page.reload(); return openBankJob(); };
+  let job = await reopenBankJob();
+  await job.place.getByText("Bank files are prepared and reviewed in Bank references on Desk.", { exact: true }).waitFor();
+  assert.equal(await job.drawer.getByRole("heading", { name: "Prepare bank references" }).count(), 0, "the job holds no second copy of the review");
+  await screenshot("08-bank-job-points-to-desk");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForFunction(() => document.getAnimations().every(animation => animation.playState !== 'running'));
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "no horizontal scroll at 390px");
+  await page.screenshot({ path: join(output, "08-bank-job-points-to-desk-390.png") });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await job.place.getByRole("button", { name: "Open Bank references on Desk", exact: true }).click();
+  await bankArea.getByRole("heading", { name: "Prepare bank references", exact: true }).waitFor();
+  assert.equal(await page.locator(".pm-desk-header").getByRole("navigation", { name: "Desk workspace", exact: true }).getByRole("button", { name: "Bank references", exact: true }).getAttribute("aria-pressed"), "true");
+  await screenshot("09-bank-area-opened-from-job");
+  pass("With the office running Bank references, the job drawer shows one line and Open Bank references on Desk instead of a second review, and the button opens the Desk area");
+
+  // A person who hid the area gets the Needs you path: show it on their Desk, then open it.
+  const views = await request('/api/workspace-tabs');
+  await request('/api/workspace-tabs', 'PUT', { version: 3, expectedRevision: views.state.revision, tabs: views.state.tabs, desk: { sections: views.state.desk.sections.map(section => section.id === 'bank' ? { ...section, visible: false } : section) } });
+  job = await reopenBankJob();
+  await job.place.getByText("Bank files are prepared and reviewed in Bank references, which is hidden on your Desk.", { exact: true }).waitFor();
+  await screenshot("10-bank-job-area-hidden");
+  await job.place.getByRole("button", { name: "Show Bank references on my Desk", exact: true }).click();
+  await bankArea.getByRole("heading", { name: "Prepare bank references", exact: true }).waitFor();
+  assert.equal((await request('/api/workspace-tabs')).state.desk.sections.find(section => section.id === 'bank').visible, true, "showing the area saves it on this person's Desk");
+  pass("With the area hidden, the job offers Show Bank references on my Desk, which saves it shown and opens it");
   assert.deepEqual(errors, []);
 } catch (error) { failure = error instanceof Error ? error.stack : String(error); if (page) writeFileSync(join(output, 'failure.txt'), await page.locator('body').innerText().catch(() => 'No page')); await page?.screenshot({ path: join(output, 'failure.png'), fullPage: true }).catch(() => {}); }
 finally {

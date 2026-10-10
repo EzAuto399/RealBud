@@ -4,6 +4,9 @@ import { sweepStaleTempFiles } from "./temp-sweep.ts";
 import { LiveStreamRecovery } from "../shared/live-stream.ts";
 import { sendToSseClients } from "./sse-clients.ts";
 import { createWorkspaceTabsHandler } from "./workspace-tabs.ts";
+import { createNeedsYouHandler } from "./needs-you.ts";
+import { officeDesk } from "./desk-preset.ts";
+import { coreOfficeDesk } from "../shared/desk-areas.ts";
 import { createRemindersService } from "./reminders.ts";
 import { createOnboardingHandler } from "./onboarding.ts";
 import { createCustomerPackService } from "./customer-packs.ts";
@@ -47,6 +50,7 @@ import { createPrivateBackupCoordinator } from './private-backup-coordinator.ts'
 import { handlePrivateBackupV2Http } from './private-backup-http.ts';
 import { withDurablePrivateBackupRestore } from './private-backup-legacy-api.ts';
 import { WorkspaceActivityGate } from './workspace-activity.ts';
+import { workLedger } from './work-ledger.ts';
 import { PRIVATE_BACKUP_MAX_BYTES } from '../shared/private-workspace-backup.ts';
 import type { PrivateBackupBusyReason } from '../shared/private-backup-transfers.ts';
 import { createAgencySetupService } from './agency-setup.ts';
@@ -864,6 +868,8 @@ const askTaskDone = new Map<string, string[]>();
 const recipeTaskStops = new Map<string, AbortController>();
 /** Ask tasks waiting at Start for the person to sign in (server/ask-task-sign-in.ts): ending the task stops the wait. */
 const askSignInWaits = new Map<string, AbortController>();
+// An open Ask browser task holds an update restart: running, at Start waiting for sign-in, paused for sign-in, or a portal read.
+workLedger.probe("ask-browser-task", () => ({ working: new Set([...askTaskTimers.keys(), ...askSignInWaits.keys(), ...recipeTaskStops.keys()]).size }));
 
 /** The task ends when its time runs out, whether it is running or paused for sign-in. */
 function armAskTaskTimer(threadId: string, grant: BrowserTaskGrant): void {
@@ -1155,6 +1161,14 @@ const watchdog = new TurnWatchdog({
   },
 });
 watchdog.start();
+// A turn working holds an update restart: a bot's own, or a room member's (a room turn marks its group, not the bot).
+// A turn parked on an approval card waits on the person: its card is counted as waiting ("approval-card"), not here.
+workLedger.probe("turn", () => {
+  let working = 0;
+  for (const bot of store.bots) if (bot.busy && !watchdog.parkedOnHuman(bot.id)) working++;
+  for (const group of store.groups) if (group.busyBotId && !watchdog.parkedOnHuman(group.busyBotId)) working++;
+  return { working };
+});
 
 // ── server-side event folding (upstream's ingestion worker, miniature) ──
 // The canonical stream is the source of truth; the persisted transcript
@@ -1169,6 +1183,17 @@ const turnStartedAt = new Map<string, { at: number; receivedAt?: number; prelude
 /** A product Ask turn about to be handed to the driver: when RealBud received it and how long it took to get there. */
 const askTurnDispatch = new Map<string, { receivedAt: number; preludeMs: number }>(); // threadId -> timing
 const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> messageId
+// Cards still waiting in this process (answerLiveRequest's registry) wait on the person: a restart leaves them stale.
+// Not working, so "Restart now" still goes ahead; the automatic restart reads the waiting count. A count only.
+workLedger.probe("approval-card", () => {
+  let waiting = 0;
+  for (const key of askMessageByRequest.keys()) {
+    const split = key.indexOf(":");
+    try { if (liveRequestCard(key.slice(0, split), key.slice(split + 1))) waiting++; }
+    catch { /* a conversation that cannot be read cannot answer its card either */ }
+  }
+  return { waiting };
+});
 /** A paired phone's answer: who and where, and the line its receipts show. */
 type PhoneAnswer = { by: ToolCardAnswerer; line: string };
 const phoneAnswers = new Map<string, PhoneAnswer>(); // threadId:requestId, answered by phone until resolved
@@ -1244,6 +1269,8 @@ try {
 // so only one thread may lease it at a time.
 let activeVmThreadId: string | null = null;
 let localVmLifecycleBusy = false;
+// A Local VM setup action (install, start, stop, remove) holds an update restart; a bot driving the VM is its turn.
+workLedger.probe("local-vm", () => ({ working: localVmLifecycleBusy ? 1 : 0 }));
 
 /** Only RealBud's browser broker emits a request that already carries `fence`:
  * it decided the step (server/browser-authority.ts) and the host displays that
@@ -2260,13 +2287,14 @@ async function startSeatTurn(
             return { id: created.id, dueAt: created.dueAt };
           },
         };
-        // Desk saved views through the same service and revision check as the
-        // Desk's own GET/PUT; every change is shown on the one-time card first.
+        // Desk saved views and layout through the same service and revision check as
+        // the Desk's own GET/PUT; saved-view changes show the one-time card first.
+        // Writes are announced as Bud's, so Desk offers Undo.
         integrations.workspaceViews = {
           read: async () => (await workspaceTabs.handle('/api/workspace-tabs', 'GET'))!,
           save: async body => {
             if (desk.memberKeyForWorker() !== reminderMember) throw Object.assign(new Error('The RealBud member changed, so no views were changed.'), { code: 'member_changed' });
-            return (await workspaceTabs.handle('/api/workspace-tabs', 'PUT', body))!;
+            return (await workspaceTabs.handle('/api/workspace-tabs', 'PUT', body, 'bud'))!;
           },
         };
         // Working rules (maintenance month rule, inspection rules, Morning priorities)
@@ -2535,6 +2563,8 @@ function runCostAccess(): { baseUrl: string; key: string } | null {
 // after the worker answered (Desk changed, 409) was still billed: its
 // requests become a "desk recheck" row before the refusal goes back.
 const deskCheckFlight = new SingleFlight<{ snapshot: ReturnType<Desk["snapshot"]>; usage: RunUsage }>();
+// Desk Recheck (and the morning check that shares it) holds an update restart while the worker reads the book.
+workLedger.probe("desk-check", () => ({ working: deskCheckFlight.running() ? 1 : 0 }));
 async function runDeskCheck(origin?: Parameters<Desk["withRoutineOrigin"]>[0]): Promise<{ snapshot: ReturnType<Desk["snapshot"]>; usage?: RunUsage }> {
   let started = false;
   const { snapshot, usage } = await deskCheckFlight.run(async () => {
@@ -2595,7 +2625,7 @@ loops = new LoopManager({
     // One handler per evaluator (server/workflow-catalog.ts). The spec is checked before a handler runs;
     // a loop without a registered evaluator is refused with a reason.
     return dispatchLoop<LoopExecuteResult>(loop.id, {
-    'bank-references': async () => (await w1Host()).runLoop(detail => loops?.noteRun(run.id, detail)), // W1 host (see BEGIN W1 host)
+    'bank-references': async () => (await w1Host()).runLoop((detail, waiting) => loops?.noteRun(run.id, detail, waiting)), // W1 host (see BEGIN W1 host)
     'weekly-bills': async () => websiteRunContext.runLoop(run.requestId, () => mailWorkspace.withWorkflow(() => runWeeklyBillsWorkflow(run, {
       database: workflowDatabase, workspaceId: workspaceIdentity.id, drafts: billDraftStore,
       authorize: async () => { await checkWebsiteExecution(); await authorizeBillWorkflow(); },
@@ -2605,7 +2635,7 @@ loops = new LoopManager({
       bills: range => sourceBills().snapshot(range),
     }))),
     // REI Suppliers list check: the Refresh from REI read up to its preview; saving waits for the person (server/rei-directory-sync.ts).
-    'rei-supplier-check': async () => (await reiDirectorySync()).checkSuppliers(detail => loops?.noteRun(run.id, detail)),
+    'rei-supplier-check': async () => (await reiDirectorySync()).checkSuppliers((detail, waiting) => loops?.noteRun(run.id, detail, waiting)),
     // REI morning refresh: read-only loop grant in the already signed-in REI session, one Desk apply; never signs in (server/rei-morning-refresh.ts).
     'rei-morning-refresh': async () => { const result = await (await reiMorningRefresh()).run(); commitDesk(desk.snapshot()); noteReiRefresh(result); return result; },
     // W4: reads saved reviewed bills only; no mail, model or browser call.
@@ -2716,6 +2746,7 @@ askLab?.catch(() => {}); // a failed lab start is answered on the next Ask brows
 /** Ask's browser runtime: the work browser, or in the lab its fictional portal once the lab is up. */
 async function askRuntime() { if (askLab) await askLab; return askBrowserRuntime(); }
 async function currentBankProvider() { return w1Lab ? (await w1Lab).provider : (await import("./bank-provider.ts")).connectedBankProvider(); }
+// Once made, the host counts its own work in the update restart's ledger (server/work-ledger.ts).
 let w1HostPromise: Promise<import("./w1-host.ts").W1Host> | undefined;
 // One coverage tracker per process: separate instances on the same file would
 // queue writes independently and could lose each other's updates.
@@ -2754,6 +2785,7 @@ async function resumeReiSignInWaits() {
 
 // ---- BEGIN REI directory refresh (REI Tenants → W1 tenant directory, REI Suppliers → W4 supplier directory). Logic in server/rei-directory-sync.ts. ----
 // Bud reads the list in the work browser under a host-issued read-only grant; the person saves the preview. Same lab as W1.
+// Once made, the refresh counts its own work in the update restart's ledger (server/work-ledger.ts).
 let reiDirectoryPromise: Promise<import("./rei-directory-sync.ts").ReiDirectorySync> | undefined;
 function reiDirectorySync() {
   return reiDirectoryPromise ??= (async () => {
@@ -3332,8 +3364,18 @@ const workerAutoSetup = createWorkerAutoSetup({
   log: message => oplog("boot", message),
 });
 
-/** Work an update must not cut short: a turn, a browser task, a held workspace operation, Bud setup. */
-function serviceBusy() { return store.bots.some(bot => bot.busy) || workspaceActivity.active > 0 || recipeTaskStops.size > 0 || installBlocksUpdate(); }
+// Bud setup holds an update restart until it is told to stop (server/hermes-bridge.ts).
+workLedger.probe("bud-setup", () => ({ working: installBlocksUpdate() ? 1 : 0 }));
+/** Work an update must not cut short, from the one ledger (server/work-ledger.ts): each kind of work registers itself
+ * where it starts or where its state lives. Work that is saved and resumes after a restart is not in it. */
+function serviceBusy() {
+  return workLedger.snapshot().working > 0;
+}
+/** Work waiting on the person that a restart would drop (cards, asks, unsaved previews, a person's own sign-in). Not
+ * `busy`, so "Restart to update" still works; the automatic restart reads this count. A count only: no ids or content. */
+function waitingApprovals(): number {
+  return workLedger.snapshot().waiting;
+}
 /** The one way a waiting card is answered (both respond routes). The request
  * must still be waiting in this process: a persisted card from another client
  * or an earlier process is never a grant. Client scope, rules and read grants
@@ -3678,6 +3720,11 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         limit: url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : undefined,
         loopId: url.searchParams.get('loopId') ?? undefined,
       }));
+    }
+    if (path === '/api/needs-you') {
+      res.setHeader('cache-control', 'no-store');
+      const result = await needsYou.handle(method);
+      return json(res, result.status, result.body);
     }
     if (path === "/api/loops" && method === "GET") {
       const fromParam = url.searchParams.get("from");
@@ -5852,10 +5899,13 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     // re-read it from disk, so after a manual install they reported the new
     // version while running the old code. The app adopts only a service that
     // sends `runtimeVersion` (electron/update-service-handoff.mjs).
+    //
+    // `busy` holds any update restart; `waitingApprovals` (a count) holds only
+    // the automatic one, so a person can still choose "Restart to update".
     if (method === "GET" && path === "/api/health") {
       if (!localSessionPublished) return json(res, 503, { error: "starting" });
       return json(res, 200, { app: "realbud", pid: process.pid, static: Boolean(STATIC_DIR), instanceId: SERVICE_INSTANCE_ID, controlId: SERVICE_CONTROL.id, version: appVersion(),
-        runtimeVersion: appVersion(), busy: serviceBusy() });
+        runtimeVersion: appVersion(), busy: serviceBusy(), waitingApprovals: waitingApprovals() });
     }
 
     // ── provider instances (model picker) ──
@@ -6361,10 +6411,19 @@ setBankProvider({
   listBankAccounts: async () => (await redbark.listBankAccounts()).map(account => ({ ...account, connection: 'redbark-mcp' })),
   listBankTransactions: query => redbark.listBankTransactions(query),
 });
-const workspaceTabs = createWorkspaceTabsHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id });
+// Every saved layout is announced, so an open Desk rereads at once whoever made the change.
+// The office's Desk preset comes from its chosen workflow pack (server/desk-preset.ts). A damaged
+// setup shows the core Desk; a damaged pack journal keeps the office's selected workflows without the pack preset.
+// Setup and Workspace report the damage themselves.
+const readOfficeDesk = () => officeDesk({ agency: async () => (await agencySetup.getConfiguration()).settings,
+  installedPack: id => customerPacks.installedPack(id).catch(() => { oplog("storage", "desk: the workflow pack record could not be read; Desk shows the core work areas"); return null; }),
+}).catch(() => coreOfficeDesk());
+const workspaceTabs = createWorkspaceTabsHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, officeDesk: readOfficeDesk, onSaved: change => broadcast({ kind: "workspace-tabs", ...change }) });
 void workspaceTabs.addGetStartedToAutomaticSimpleDesk()
   .then(applied => { if (applied) oplog("boot", "desk: Get started added to the automatic simple layout"); })
-  .catch(() => oplog("boot", "desk: Get started could not be added to the simple layout; the saved layout stays"));
+  .then(() => workspaceTabs.showAreaTabsOnAutomaticSimpleDesk())
+  .then(applied => { if (applied) oplog("boot", "desk: work-area tabs shown on the automatic simple layout"); })
+  .catch(() => oplog("boot", "desk: the automatic simple layout could not be updated; the saved layout stays"));
 // One-off reminders per workspace and member. Its own interval only marks them
 // due; nothing is sent or started. The office zone is read, never guessed.
 // Weekly-bills follow-ups: owner, date, resolve/reopen per finding; survives repeat runs.
@@ -6532,6 +6591,15 @@ const mailWorkspace = createMailIngestionService({ directory: DATA_DIR, workspac
     if (!binding || binding.accountId !== authority.accountId) throw new Error('The reviewed Gmail binding is unavailable.');
     return scanGmailReadOnly({ ...binding, assertAuthority }, request, signal);
   },
+});
+// Needs you: one read of what needs a person across the office's workflows (server/needs-you.ts).
+const needsYou = createNeedsYouHandler({
+  selectedWorkflows: async () => (await agencySetup.getConfiguration()).settings.selectedWorkflows,
+  officeDesk: readOfficeDesk,
+  mail: mailWorkspace, billFollowUps: billFollowUpsApi,
+  weeklyBills: () => latestRoutineResult(workflowDatabase(), 'weekly-bills'),
+  w1Status: async () => (await w1Host()).status(),
+  loops: () => loops!, jobRuns: () => jobRuns.list(), savedJobs: () => listRecipes().map(recipe => recipe.id),
 });
 // Restore only the connection. An interrupted browser job always stays held.
 const sourceBillRegisters = new WeakMap<ReturnType<typeof workflowDatabase>, SourceBillRegister>();

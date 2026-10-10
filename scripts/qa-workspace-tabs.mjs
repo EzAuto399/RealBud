@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
-import { readSessionToken, primeBrowserSession } from './local-session.mjs';
+import { readSessionToken, primeBrowserSession, enterSampleDeskForQa } from './local-session.mjs';
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE to an installed playwright module.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -70,7 +70,9 @@ try {
   await page.goto(origin);
   await page.getByLabel('Your name', { exact: true }).fill('Fictional Saved Views Reviewer');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
+  // First run has no sample-desk exit: the QA helper completes it as that button did and passes the office-link screen.
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
+  await enterSampleDeskForQa(page);
   await nav().waitFor();
   await openSavedViews();
   await page.getByText('No saved views yet. Ask Bud for one, such as “Waiting for a reply” or “Bills to review”.', { exact: true }).waitFor();
@@ -172,12 +174,17 @@ try {
   const beforeDeskMail = await views();
   assert.equal(beforeDeskMail.desk.sections.find(section => section.id === 'mail')?.visible, true, 'The unlinked sample fixture keeps the default Mail priorities section');
   const openDeskMail = async () => {
-    await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).locator('summary').filter({ hasText: /^Other work$/ }).click();
-    await page.getByRole('group', { name: 'Other work', exact: true }).getByRole('button', { name: 'Mail priorities', exact: true }).click();
+    await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: 'Mail priorities', exact: true }).click();
   };
   await openDeskMail();
   const mailPanel = page.getByRole('region', { name: 'Mail priorities and follow-ups', exact: true });
-  await mailPanel.getByText('No source collection is recorded. Finish agency setup and explicitly collect the reviewed Gmail scope.', { exact: true }).waitFor();
+  // The source note sits in the area's collapsed Setup.
+  const mailSetupNote = async () => {
+    const setup = mailPanel.locator('details.area-setup');
+    if (!await setup.evaluate(element => element.open)) await setup.locator(':scope > summary').click();
+    await mailPanel.getByText('No source collection is recorded. Finish agency setup and explicitly collect the reviewed Gmail scope.', { exact: true }).waitFor();
+  };
+  await mailSetupNote();
   assert.equal(await page.locator('.desk-work-tasks').isVisible(), false);
   await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: /^Tasks\s*\d*$/ }).click();
   await page.locator('.desk-work-tasks').waitFor();
@@ -186,7 +193,7 @@ try {
   await putViews(tabs => [...tabs, view('view-fictional-mail', 'Mail priorities', 'mail', 'open')]);
   await openSavedViews(); await refreshViews();
   await page.getByRole('button', { name: 'Open Mail priorities', exact: true }).click();
-  await mailPanel.getByText('No source collection is recorded. Finish agency setup and explicitly collect the reviewed Gmail scope.', { exact: true }).waitFor();
+  await mailSetupNote();
   const mailHash = new URL(page.url()).hash; await page.reload(); await mailPanel.waitFor(); assert.equal(new URL(page.url()).hash, mailHash);
   await page.setViewportSize({ width: 1365, height: 1024 });
   await page.screenshot({ animations: 'disabled', path: join(output, 'mail-saved-view-desktop.png') });

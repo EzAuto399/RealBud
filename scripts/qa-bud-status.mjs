@@ -50,7 +50,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 async function freePort() { const s = createServer(); s.listen(0, '127.0.0.1'); await once(s, 'listening'); const p = s.address().port; await new Promise(r => s.close(r)); return p; }
 async function until(fn, label, timeout = 20_000) { const end = Date.now() + timeout; while (Date.now() < end) { if (await fn().catch(() => false)) return; await wait(100); } throw new Error(`Timed out: ${label}`); }
 const limits = [
-  'Source renderer with real application store and real isolated local service; worker status and administrator policy are fictional network fixtures.',
+  'Source renderer with real application store and real isolated local service; worker status, office link and administrator policy are fictional network fixtures.',
   'The QA Vite server adds an in-memory state bridge to force offline/recovery states; production files are not modified by that instrumentation.',
   serveOnly
     ? 'Office-link writes and worker mutations are intercepted by fictional middleware. Browser egress is not independently audited in serve-only mode; no live provider, worker, customer account or installed application is part of this fixture.'
@@ -174,6 +174,7 @@ try {
     if (url.pathname === '/api/onboarding' && req.method() === 'GET') return json({ version: 1, scope: 'a'.repeat(64), revision: 1, stage: 'complete' });
     if (url.pathname === '/api/config' && req.method() === 'GET') { const res = await route.fetch(); const body = await res.json(); body.serviceAdmin = { managed, configured: true, authenticated: false, expiresAt: null }; return json(body); }
     if (url.pathname === '/api/service-admin/status') return json({ managed, configured: true, authenticated: false, expiresAt: null });
+    if (url.pathname === '/api/office-link' && req.method() === 'GET') { counts.officeReads++; return json(officeFixture); }
     if (url.pathname === '/api/hermes' && req.method() === 'GET') { counts.statusReads++; statusReadsInFlight++; try { if (delayRefresh) await wait(delayRefresh); if (failRefresh) return await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Fictional status read failed.' }) }); return await json(fixture); } finally { statusReadsInFlight--; } }
     if (url.pathname === '/api/desk/recovery/auto') return json({ ok: false, error: 'Fictional recovery remains held.' });
     if (url.pathname.startsWith('/api/hermes') && req.method() !== 'GET') { counts.hermesMutations.push({ path: url.pathname, managed }); return route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'Fictional QA blocks worker mutations.' }) }); }
@@ -182,13 +183,30 @@ try {
     return route.continue();
   });
   page = await context.newPage(); page.setDefaultTimeout(15_000); page.on('pageerror', e => errors.push(e.message));
+  // Work's composer opens only on a linked computer whose Bud is ready (setup's Ask gate,
+  // src/lib/setup-sequence.ts); a hold keeps the draft but locks it, and Bud's status opener
+  // shows only on a linked computer. So fictional replies say linked and ready while the draft
+  // is typed, then Bud drops to the safeguards hold this run checks.
+  officeFixture = { state: 'linked', label: 'Fictional Front Desk', agencyLabel: 'Fictional Harbour Agency', lastReportedAt: '2026-10-08T00:00:00.000Z' };
+  fixture = structuredClone(ready);
   await page.goto(`${uiBase}/#/ask`);
   await page.locator('.ask-composer textarea').first().waitFor();
   await until(() => page.evaluate(() => window.__budQa?.state.connected === true), 'connected real store');
   const shot = async name => { await page.screenshot({ path: join(output, `${name}.png`), fullPage: true }); screenshots.push(`${name}.png`); };
+  const setState = async (status, { connected = true, recovering = false } = {}) => {
+    fixture = structuredClone(status);
+    // A read that started before this change must not land after the dispatch below.
+    await until(async () => statusReadsInFlight === 0, 'status reads settled'); await wait(250);
+    await page.evaluate(({ status, connected, recovering }) => { const { state, dispatch } = window.__budQa; dispatch({ type: 'connected', value: connected }); dispatch({ type: 'hermesStatus', status }); if (state.desk) dispatch({ type: 'deskSnapshot', snapshot: { ...state.desk, recovery: { ...(state.desk.recovery || {}), active: recovering } } }); }, { status, connected, recovering });
+  };
+  const setOffice = async next => { const before = counts.officeReads; officeFixture = next; await page.evaluate(() => window.dispatchEvent(new Event('realbud-website-link-changed'))); await until(async () => counts.officeReads > before, 'office link re-read'); };
   const composer = page.locator('.ask-composer textarea').first();
   const draft = 'Fictional unfinished repair request kept while checking Bud.';
+  await until(() => composer.isEnabled(), 'composer opens on a linked computer with Bud ready');
   await composer.fill(draft);
+  await setState(safeguards);
+  await until(() => composer.isDisabled(), 'safeguards hold locks the composer');
+  assert.equal(await composer.inputValue(), draft, 'the safeguards hold keeps the draft');
   await shot('ask-safeguards-1280');
   const opener = page.getByRole('button', { name: baseline ? /^Finish Bud setup/ : /^View Bud status/ });
   await opener.focus(); await page.keyboard.press('Enter');
@@ -244,18 +262,16 @@ try {
     assert.ok(counts.statusReads - beforeAuto >= 1 && counts.statusReads - beforeAuto <= 2, 'automatic status refresh must stay bounded');
     assert.ok((await readRows()).every(row => row.state === 'Ready')); await shot('bud-ready-auto-refresh');
     checks.push('A later ready status is observed automatically within the 15-second read interval; bounded read refreshes update the visible facts without a model or repair request.');
-    const setState = async (status, { connected = true, recovering = false } = {}) => {
-      fixture = structuredClone(status);
-      // A read that started before this change must not land after the dispatch below.
-      await until(async () => statusReadsInFlight === 0, 'status reads settled'); await wait(250);
-      await page.evaluate(({ status, connected, recovering }) => { const { state, dispatch } = window.__budQa; dispatch({ type: 'connected', value: connected }); dispatch({ type: 'hermesStatus', status }); if (state.desk) dispatch({ type: 'deskSnapshot', snapshot: { ...state.desk, recovery: { ...(state.desk.recovery || {}), active: recovering } } }); }, { status, connected, recovering });
-    };
     await setState(null); await panel.getByText('Checking Bud', { exact: true }).waitFor(); assert.ok((await readRows()).every(row => row.state === 'Not checked')); await shot('bud-checking');
     await setState({ ...ready, ready: false, lastPing: null }); await panel.getByText('Check needed', { exact: true }).waitFor(); await shot('bud-readiness-needed');
+    // The link-code form and a worker-reported withdrawal both belong to an unlinked computer
+    // (a fresh link overrides the worker's withdrawal), so these two checks run unlinked.
+    const linkedOffice = officeFixture; await setOffice({ state: 'unlinked' });
     await setState({ ...ready, ready: false, lastPing: null, model: { attached: false, provider: null, model: null }, modelAccess: { managed: false, withdrawn: false, attached: false, detail: '' } });
     await panel.getByRole('button', { name: 'Connect with this code', exact: true }).waitFor(); await shot('bud-model-needed');
     await setState({ ...ready, ready: false, model: { ...ready.model, attached: false }, modelAccess: { managed: true, withdrawn: true, attached: false, detail: 'Model access was withdrawn for this fictional computer. Your records are kept.' } });
     await panel.getByText('Disconnected from your office', { exact: true }).waitFor(); assert.equal(await panel.getByRole('button', { name: 'Connect with this code', exact: true }).count(), 0); await shot('bud-withdrawn');
+    await setOffice(linkedOffice);
     await setState(ready, { recovering: true }); await panel.getByText('Recovery needed', { exact: true }).waitFor(); assert.notEqual((await readRows()).at(-1).state, 'Ready'); await shot('bud-recovery');
     await setState(ready, { connected: false }); await panel.getByText('Reconnecting', { exact: true }).waitFor(); assert.ok((await readRows()).every(row => row.state === 'Not checked')); assert.equal(await panel.getByRole('button', { name: 'Check again', exact: true }).isDisabled(), true); await shot('bud-offline');
     await setState({ ...safeguards, cli: { ...ready.cli, matchesPin: false, compatible: false }, installerAvailable: true });

@@ -1,10 +1,24 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ state: {}, dispatch: vi.fn() }) }));
+// A static render can't type. While `typing.on`, state keeps its value across renders in call
+// order, so a test can change a field as its onChange would, render again and read the guard.
+const typing = vi.hoisted(() => ({ on: false, at: 0, values: [] as unknown[], guards: [] as boolean[] }));
+vi.mock("react", async original => {
+  const react = await original<typeof import("react")>();
+  return { ...react, useState: (initial: unknown) => {
+    if (!typing.on) return react.useState(initial);
+    const at = typing.at++;
+    if (!(at in typing.values)) typing.values[at] = typeof initial === "function" ? (initial as () => unknown)() : initial;
+    return [typing.values[at], (next: unknown) => { typing.values[at] = typeof next === "function" ? (next as (old: unknown) => unknown)(typing.values[at]) : next; }];
+  } };
+});
+vi.mock("@/lib/unsaved-work", async original => ({ ...await original<object>(), useUnsavedGuard: (dirty: boolean) => { typing.guards.push(dirty); } }));
+afterEach(() => { typing.on = false; typing.values.length = 0; });
 import type { Reminder } from "@shared/reminders";
 import type { RemindersViewState } from "@/lib/reminders-api";
-import { RemindersView, type RemindersViewProps } from "./RemindersPanel";
+import { RemindersPanel, RemindersView, type RemindersViewProps } from "./RemindersPanel";
 
 const NOW = Date.UTC(2026, 9, 2, 1, 0);
 const scheduled: Reminder = { id: "00000000-0000-4000-8000-000000000001", title: "Inspect 12 Example St", note: "", dueAt: NOW + 3_600_000, createdBy: "person", state: "scheduled", createdAt: NOW, updatedAt: NOW, revision: 1 };
@@ -89,5 +103,19 @@ describe("Reminders panel", () => {
     expect(html({ view: view({ data: null, readError: "Reminders couldn't be loaded. Try again." }) })).toContain("Try again");
     expect(html({ view: view({ data: null, loading: true }) })).toContain("Loading reminders");
     expect(html({ view: view({ busyId: due.id, data: { version: 1, reminders: [due], timeZone: null } }) })).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Done: Call the owner back"/);
+  });
+});
+
+describe("unsaved reminder", () => {
+  it("holds beforeunload and the update restart only while a reminder title is typed", () => {
+    const answer = () => { typing.at = 0; typing.guards.length = 0; renderToStaticMarkup(createElement(RemindersPanel)); return [...typing.guards]; };
+    typing.on = true;
+    expect(answer()).toEqual([false]);
+    const draft = typing.values.findIndex(value => JSON.stringify(value) === JSON.stringify({ title: "", when: "" }));
+    expect(draft).toBeGreaterThanOrEqual(0);
+    typing.values[draft] = { title: "  ", when: "2026-10-12T09:00" };
+    expect(answer()).toEqual([false]);
+    typing.values[draft] = { title: "Call the fictional owner", when: "" };
+    expect(answer()).toEqual([true]);
   });
 });

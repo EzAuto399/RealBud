@@ -55,6 +55,7 @@ import { reiSignInWaits, withReiSignInWait, type ReiWaitCopy } from "./w1-sign-i
 import { REDBARK_ACCOUNT_ID } from "../shared/bank-source.ts";
 import { bankReviewVersion } from "../shared/bank-review.ts";
 import { parseBrowserTaskGrant, type BrowserTaskGrant, type BrowserTaskUpload } from "../shared/browser-task.ts";
+import { workLedger, type WorkLedger } from "./work-ledger.ts";
 
 const fail = (status: number, message: string): never => { throw Object.assign(new Error(message), { status }); };
 const message = (error: unknown) => error instanceof Error ? error.message : "Something went wrong.";
@@ -123,11 +124,15 @@ export interface W1HostDeps {
   now?: () => number;
   /** How often a scheduled sign-in wait checks for its midday reminder. */
   waitPollMs?: number;
+  /** Where this host counts its work for an update restart (default: the service's; tests pass their own). */
+  workLedger?: WorkLedger;
 }
 
 type Ask = { requestId: string; tool: string; summary: string; at: string };
-/** `unattended`: a loop run, which waits on REI's sign-in page until the office day ends; `note` tells its Schedule row what it waits for. */
-type RunContext = { runId: string; unattended: boolean; signal: AbortSignal; note?: (detail: string) => void };
+/** `unattended`: a loop run, which waits on REI's sign-in page until the office day ends; `note` tells its Schedule row what it
+ * does or, with `waiting`, what it waits for from the person. */
+type RunNote = (detail: string, waiting?: boolean) => void;
+type RunContext = { runId: string; unattended: boolean; signal: AbortSignal; note?: RunNote };
 /** The read-only pending-import recipe. Only the fictional pack has it so far (see the header). */
 const PENDING_RECIPE = "bulk-receipting-pending";
 const BULK_RECEIPTING_ROUTE = "/customers/importbanklink/index";
@@ -140,6 +145,10 @@ const WAIT_COPY = (until: string): ReiWaitCopy => ({
   reminder: `Reminder: sign in to REI Cloud so Bud can finish the bank import. Bud waits until ${until}, then the next scheduled run tries again.` });
 export const W1_MISSED = "Missed: REI Cloud wasn't signed in today, so the bank import is waiting. The next scheduled run tries again.";
 const ASK_LINE: Record<string, string> = { browser_upload: "Waiting for your approval to upload the reviewed bank file to REI", browser_download: "Waiting for you to allow the download of REI's Receipt Register" };
+/** The run works again once its ask is answered (before the step runs). */
+const ASK_DONE: Record<string, string> = { browser_upload: "Allowed. Uploading the reviewed bank file to REI.", browser_download: "Allowed. Downloading REI's Receipt Register." };
+const ASK_SKIPPED = "Skipped that step in REI; nothing was done there.";
+const SIGNED_IN = "Signed in to REI. Checking the account, then carrying on with the bank import.";
 const NO_BROWSER = "The work browser could not be opened. Check that Chrome or Edge is installed, then try again.";
 /** The hold check only lists saved handoffs; it never releases or verifies anything. */
 const readOnly = async (): Promise<never> => { throw new Error("Read-only sign-in hold check."); };
@@ -302,8 +311,14 @@ export function createW1Host(deps: W1HostDeps) {
       request: { text, sha256: createHash("sha256").update(text).digest("hex") }, sites: needs.sites, browser: { id: browserId, accountMarker: marker },
       actions: needs.actions, consequential: "ask-each", uploads, expiresAt: Date.now() + 30 * 60_000, budget: null });
     const approve = portalRecipeApprovalChannel(`w1:${ctx.runId}`, ask => { asks.set(ctx.runId, { requestId: ask.requestId, tool: ask.tool, summary: ask.summary.slice(0, 600), at: new Date().toISOString() });
-      ctx.note?.(`${ASK_LINE[ask.tool] ?? "Waiting for you to allow a step in REI"}. Answer in Schedule → Bank reference review.`); },
-      requestId => { if (asks.get(ctx.runId)?.requestId === requestId) asks.delete(ctx.runId); });
+      ctx.note?.(`${ASK_LINE[ask.tool] ?? "Waiting for you to allow a step in REI"}. Answer in Schedule → Bank reference review.`, true); },
+      (requestId, allowed) => {
+        const ask = asks.get(ctx.runId);
+        if (ask?.requestId !== requestId) return;
+        asks.delete(ctx.runId);
+        // Answered (or ended): the run works again, so a restart waits for an allowed upload.
+        ctx.note?.(allowed ? ASK_DONE[ask.tool] ?? "Allowed. Carrying on in REI." : ASK_SKIPPED);
+      });
     return { grant, runtime: deps.runtime, threadId: `w1-${ctx.runId}-${id}`, approve, workroom, load, signal: ctx.signal, ...(deps.pollMs !== undefined ? { pollMs: deps.pollMs } : {}) };
   }
   /** REI's view of an upload as a run preview: matched rows included, any difference a warning. */
@@ -385,7 +400,7 @@ export function createW1Host(deps: W1HostDeps) {
       // handover so Schedule shows it (with Done and Stop) instead of "Working".
       const ctx = context.getStore()!, { signal, runId } = ctx, threadId = `w1-${runId}`;
       /** One handover, then the same read-only check (signed in is not proof of the account). */
-      const handover = async (until?: number): Promise<W1Session> => {
+      const handover = async (until?: number, signedIn?: (detail: string) => void): Promise<W1Session> => {
         signingIn.set(runId, threadId);
         let opened: Awaited<ReturnType<typeof signIn>>;
         try { opened = await signIn({ site: W1_REI_PORTAL, reason: "Import bank receipts", signal, threadId, ...(office.rei.urlValue ? { account: office.rei.urlValue } : {}), ...(until === undefined ? {} : { until }) }); }
@@ -394,6 +409,7 @@ export function createW1Host(deps: W1HostDeps) {
         if (signal.aborted) return fail(409, STOPPED);
         if (opened.outcome === "stopped") { note(STOPPED); return first; }
         if (opened.outcome === "timed_out") { if (until !== undefined) note(W1_MISSED); return first; }
+        signedIn?.(SIGNED_IN);
         return check();
       };
       // A person's Continue: the attended 15-minute handover.
@@ -455,7 +471,7 @@ export function createW1Host(deps: W1HostDeps) {
 
   /** One execution slot per run: its Stop and its "working" entry are registered
    * synchronously, before any await, so a Stop during setup is never missed. */
-  function advance(id: string, unattended: boolean, noteRun?: (detail: string) => void): Promise<W1Run> {
+  function advance(id: string, unattended: boolean, noteRun?: RunNote): Promise<W1Run> {
     const stop = new AbortController();
     stops.set(id, stop);
     const job = (async () => {
@@ -472,6 +488,13 @@ export function createW1Host(deps: W1HostDeps) {
     working.set(id, slot);
     return job;
   }
+  /** What an update restart must respect (server/work-ledger.ts, /api/health), as counts: advances doing work now, and asks
+   * waiting on the person. A run waiting at REI's sign-in is neither (a scheduled wait is saved and resumes after a restart). */
+  (deps.workLedger ?? workLedger).probe("bank-import", () => {
+    let busy = 0, asked = 0;
+    for (const id of working.keys()) { if (asks.has(id)) asked++; else if (!signingIn.has(id)) busy++; }
+    return { working: busy, waiting: asked };
+  });
   /** Person-driven steps run in the background: an ask can wait minutes for the person. */
   function kick(id: string) {
     if (working.has(id)) return;
@@ -571,7 +594,7 @@ export function createW1Host(deps: W1HostDeps) {
    * the review, then wait on REI's sign-in page (until the office day ends)
    * and carry on to the upload ask, which waits for the person. `noteRun`
    * tells the Schedule row what the run waits for. */
-  async function runLoop(noteRun: (detail: string) => void = () => {}): Promise<{ ok: boolean; status?: "completed" | "awaiting-approval" | "failed" | "missed"; detail: string; quiet?: boolean }> {
+  async function runLoop(noteRun: RunNote = () => {}): Promise<{ ok: boolean; status?: "completed" | "awaiting-approval" | "failed" | "missed"; detail: string; quiet?: boolean }> {
     await ready;
     const office = await readW1Office(deps.dataDir);
     if (!office) return { ok: false, status: "failed", detail: "Choose the bank account and REI account for bank imports first." };
