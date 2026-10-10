@@ -2,7 +2,7 @@
 // projected on each read from each workflow's own store (shared/needs-you.ts).
 // Read-only. Each source is read on its own: one that fails is listed as
 // unavailable with a fixed sentence, never as empty, and its error text is never forwarded.
-import { areaForLoop, type OfficeDesk } from '../shared/desk-areas.ts';
+import { areaForLoop, type DeskAreaId, type OfficeDesk } from '../shared/desk-areas.ts';
 import type { MailScanReceipt, MailScanStatus, MailTaskPage, MailTaskPageQuery } from '../shared/mail-ingestion.ts';
 import { readBillFollowUpPage, type BillFollowUp } from '../shared/bill-followups.ts';
 import { NEEDS_YOU_AREA_LIMIT, parseNeedsYouSnapshot, type NeedsYouArea, type NeedsYouItem, type NeedsYouLevel, type NeedsYouSnapshot } from '../shared/needs-you.ts';
@@ -186,17 +186,19 @@ const order = (a: NeedsYouItem, b: NeedsYouItem) => (a.level === b.level ? 0 : a
 
 export async function readNeedsYou(deps: NeedsYouDeps): Promise<NeedsYouSnapshot> {
   const checkedAt = new Date((deps.now ?? Date.now)()).toISOString();
-  const selected = deps.selectedWorkflows().catch(() => null);
+  const selected = deps.selectedWorkflows().catch(() => null), office = deps.officeDesk();
+  // An area the office doesn't show (left out of its pack's preset) has no tab to open its rows, so its source isn't read.
+  const offered = async (area: DeskAreaId) => (await office).areas.some(row => row.id === area && row.available);
   const sources = await Promise.all([
-    settle('mail', () => mailItems(deps.mail)),
-    settle('bills', () => followUpItems(deps.billFollowUps)),
-    settle('bills', () => coverageItems(deps.weeklyBills())),
+    settle('mail', async () => await offered('mail') ? mailItems(deps.mail) : []),
+    settle('bills', async () => await offered('bills') ? followUpItems(deps.billFollowUps) : []),
+    settle('bills', async () => await offered('bills') ? coverageItems(deps.weeklyBills()) : []),
     settle('bank', async () => bankItems(await selected, deps.w1Status)),
   ]);
   // Newest dated item per area and level; an undated item never hides a job row.
   const own = new Map<string, number>();
   for (const item of sources.flatMap(source => source.items ?? [])) if (item.foundAt) own.set(`${item.area}:${item.level}`, Math.max(own.get(`${item.area}:${item.level}`) ?? -Infinity, Date.parse(item.foundAt)));
-  sources.push(await settle('schedule', async () => jobItems(deps.loops(), deps.jobRuns(), deps.savedJobs(), own, await deps.officeDesk())));
+  sources.push(await settle('schedule', async () => jobItems(deps.loops(), deps.jobRuns(), deps.savedJobs(), own, await office)));
   const counts: NeedsYouSnapshot['counts'] = {}, shown = new Map<NeedsYouArea, number>();
   const items = sources.flatMap(source => source.items ?? []).sort(order).filter(item => {
     (counts[item.area] ??= { problem: 0, review: 0 })[item.level]++;

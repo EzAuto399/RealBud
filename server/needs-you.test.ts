@@ -276,6 +276,17 @@ describe('Needs you: jobs', () => {
     const snapshot = await read({ officeDesk: async () => mailOnly, loops: loops([loopRun('bills-fail', { loopId: 'weekly-bills', loopName: 'Weekly bills' })]) });
     expect(snapshot.items).toEqual([expect.objectContaining({ key: 'loop:bills-fail', area: 'schedule', level: 'problem' })]);
   });
+
+  it("doesn't read mail or bills for an office whose pack leaves those areas out, so no row opens nothing", async () => {
+    const bankOnly: OfficeDesk = { source: { kind: 'pack', packId: 'fictional-bank', revision: 1 },
+      areas: allAreas.areas.map(area => ({ ...area, available: area.id === 'bank' || area.id === 'shared-work' })) };
+    const mailRead = vi.fn(mail([mailItem(1)], scan('partial')).get);
+    const snapshot = await read({ officeDesk: async () => bankOnly, mail: { ...mail([mailItem(1)], scan('partial')), get: mailRead },
+      billFollowUps: bills([followUp('b1')]), weeklyBills: () => weekly(['gap']) });
+    expect(mailRead).not.toHaveBeenCalled();
+    expect(snapshot.items).toEqual([]);
+    expect(snapshot.unavailable).toEqual([]);
+  });
 });
 
 describe('Needs you: order, limits and failures', () => {
