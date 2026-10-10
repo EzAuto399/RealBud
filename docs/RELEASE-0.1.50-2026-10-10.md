@@ -1,6 +1,6 @@
 # Release 0.1.50, 10 October 2026
 
-**This does not establish:** an installed or upgraded customer PC, a live office link with realbud.app, a Mac release, or customer acceptance. The proof is source, local tests and local renderer QA with fictional data; Windows packaging runs in CI at the release commit.
+**This does not establish:** an installed or upgraded customer PC, a live office link with realbud.app, a Mac release, or customer acceptance. The proof is source, local tests, local renderer QA with fictional data, and CI Windows packaging with an installed-runtime check on a disposable Windows runner.
 
 ## Why
 - **Desk didn't fit the office's workflows.** Mail, bills and bank work each sat behind their own panel. Nothing showed what needed a person across all of them, and notices were all-or-nothing per job.
@@ -42,7 +42,7 @@
 | Typecheck, `check:electron`, UI build at `25f77e8d` | clean; 34/34 electron modules | local tests |
 | Full suite (`pnpm test`) at `25f77e8d` | 11,113 passed, 335 skipped, 0 failed (679 files) | local tests |
 | Renderer QA, 29 scripts on one build of the branch (fictional data, isolated homes) | 29 of 29 pass in one run at `25f77e8d`. Highlights: link-gate 28 (including Continue recovery and the gate kept through a reconnect), setup-stages 29, kevin-sherry-day 28, clean-walkthrough 13/13 steps, source-bills 30, austin-workflow 17, austin-showcase 16. Receipts: `outputs/release-0.1.50-2026-10-10/` | local QA |
-| Package Windows (`workflow_dispatch` at the release SHA) | runs at the merge commit; recorded after the build | CI packaging |
+| Package Windows ([run 38041188688](https://github.com/EzAuto399/RealBud/actions/runs/38041188688), rehearsal, at `99eddd0c`) | NSIS installer, managed runtime and installed lifecycle passed; `latest.yml` sha512 and size match the uploaded setup.exe. Published as v0.1.50 (latest), 10 Oct 2026 12:21 UTC | CI packaging |
 | Independent review of the gate and late fixes | 1 high (a saved recovery choice skipped the gate on every launch), 1 medium, 4 low; all fixed except a revoked computer having no recovery exit, which follows the owner's no-exit decision | source review |
 | Installed or upgraded Auston PC, live office link | not run | not established |
 
