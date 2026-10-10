@@ -87,6 +87,8 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   await arrange.getByRole('button',{name:'Close Arrange Desk',exact:true}).click();
   await page.getByRole('navigation',{name:'Desk workspace',exact:true}).getByRole('button',{name:'Mail priorities',exact:true}).click();
   const panel=page.getByRole('region',{name:'Mail priorities and follow-ups',exact:true});await panel.waitFor();
+  // Refresh and collection history sit in the area's collapsed Setup.
+  const setupButton=async name=>{const area=panel.locator('details.area-setup');if(!await area.evaluate(element=>element.open))await area.locator(':scope > summary').click();return area.getByRole('button',{name,exact:true});};
   await panel.getByText('Showing 20 of 43 conversations',{exact:false}).waitFor();
   await panel.getByRole('button',{name:'Needs attention (43)',exact:true}).waitFor();
   await panel.getByRole('button',{name:'Waiting (1)',exact:true}).waitFor();
@@ -101,7 +103,7 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   await editor.getByLabel('Your note',{exact:true}).fill('Keep this unsaved staff note across page changes');
   await search.fill(otherSearch.subject);await panel.getByText('Showing 1 of 1 conversations',{exact:false}).waitFor();
   assert.equal(await editor.getByLabel('Your note',{exact:true}).inputValue(),'Keep this unsaved staff note across page changes');
-  await panel.getByRole('button',{name:'Refresh saved mail work',exact:true}).click();await panel.getByText('Saved work and receipt refreshed.',{exact:true}).waitFor();
+  await (await setupButton('Refresh saved mail work')).click();await panel.getByText('Saved work and receipt refreshed.',{exact:true}).waitFor();
   assert.equal(await editor.getByText('This saved item changed elsewhere.',{exact:false}).count(),0);
   assert.equal(await editor.getByLabel('Your note',{exact:true}).inputValue(),'Keep this unsaved staff note across page changes');
   assert.ok(readUrls.some(url=>url===`/api/mail-workspace/items/${oldest.id}`));
@@ -114,14 +116,14 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   assert.equal(await panel.getByRole('button',{name:'Review or edit this item',exact:true}).count(),20);
   assert.equal(await editor.getByLabel('Your note',{exact:true}).inputValue(),'Keep this unsaved staff note across page changes');
   pass('Real concurrent HTTP edit makes continuation return409; already loaded rows and the off-page staff draft remain visible');
-  await panel.getByRole('button',{name:'Refresh saved mail work',exact:true}).click();await panel.getByText('Saved work and receipt refreshed.',{exact:true}).waitFor();
+  await (await setupButton('Refresh saved mail work')).click();await panel.getByText('Saved work and receipt refreshed.',{exact:true}).waitFor();
   await panel.getByRole('button',{name:'Load more conversations',exact:true}).click();await panel.getByText('Showing 40 of 43 conversations',{exact:false}).waitFor();
   await panel.getByRole('button',{name:'Load more conversations',exact:true}).click();await panel.getByText('Showing 43 of 43 conversations',{exact:false}).waitFor();
   assert.equal(await panel.getByRole('button',{name:'Review or edit this item',exact:true}).count(),43);
   pass('Fresh revision pages append all43 matching conversations once without pulling full history into the first request');
   const latest=(await request(`/api/mail-workspace/items/${oldest.id}`)).item;
   await request(`/api/mail-workspace/items/${oldest.id}`,'PATCH',{expectedRevision:latest.revision,owner:'Fictional other reviewer'});
-  await panel.getByRole('button',{name:'Refresh saved mail work',exact:true}).click();await editor.getByText('This saved item changed elsewhere.',{exact:false}).waitFor();
+  await (await setupButton('Refresh saved mail work')).click();await editor.getByText('This saved item changed elsewhere.',{exact:false}).waitFor();
   assert.equal(await editor.getByLabel('Your note',{exact:true}).inputValue(),'Keep this unsaved staff note across page changes');
   assert.ok(await editor.getByRole('button',{name:'Save reviewed item',exact:true}).isDisabled());
   await editor.getByRole('button',{name:'Reload this item and discard my edits',exact:true}).click();
@@ -136,10 +138,10 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   pass('Direct stale-item detection preserves edits, requires explicit discard with cancel, then saves a reviewed note against the fresh item revision');
   let failedReads=0;
   await page.route('**/api/mail-workspace/items?**',route=>{failedReads++;return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Explicit fictional browser read failure'})});});
-  await panel.getByRole('button',{name:'Refresh saved mail work',exact:true}).click();await panel.getByRole('alert').filter({hasText:'Explicit fictional browser read failure'}).waitFor();
+  await (await setupButton('Refresh saved mail work')).click();await panel.getByRole('alert').filter({hasText:'Explicit fictional browser read failure'}).waitFor();
   assert.equal(await panel.getByRole('button',{name:'Review or edit this item',exact:true}).count(),20);assert.ok(failedReads>0);
   await page.unroute('**/api/mail-workspace/items?**');
-  await panel.getByRole('button',{name:'Refresh saved mail work',exact:true}).click();await panel.getByText('Saved work and receipt refreshed.',{exact:true}).waitFor();
+  await (await setupButton('Refresh saved mail work')).click();await panel.getByText('Saved work and receipt refreshed.',{exact:true}).waitFor();
   pass('Explicitly injected503 task-page read preserves loaded rows and refresh recovers after the injection is removed');
   await panel.getByText('Collection history',{exact:true}).click();await panel.getByRole('button',{name:'Refresh collection history',exact:true}).click();
   await panel.getByText('10 of 12 retained collections shown.',{exact:true}).waitFor();await panel.getByRole('button',{name:'Load more collection receipts',exact:true}).click();

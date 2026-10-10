@@ -21,9 +21,11 @@ process.env.REALBUD_DATA_DIR = temp;
 const { createAgencySetupService } = await import('../server/agency-setup.ts');
 const { createMailIngestionService } = await import('../server/mail-ingestion.ts');
 const { mailWorkspaceQuery } = await import('../server/mail-workspace-query.ts');
-let browser, server, verified = false, uncertainOnce = true, operation = null, sourceVersion = 1;
-const checks = [], errors = [], reviewRequests = [];
+let browser, server, verified = false, sourceVersion = 1;
+const checks = [], errors = [], runRequests = [], loopRuns = new Map();
 const schedule = { revision: 1, enabled: false, timezone: 'Australia/Brisbane', localTime: '08:00', weekdays: [1, 2, 3, 4, 5], nextRunAt: null, available: true, detail: 'Fictional queue adapter for rendered UI verification.' };
+// Mail's Check now runs this job through Schedule's Run now path; a fictional clock adapter answers it.
+const triage = { id: 'inbound-triage', name: 'Morning priorities', description: 'Fictional clock adapter for rendered UI verification.', available: true, enabled: false, schedule: { type: 'daily', time: '08:00', weekdays: [1, 2, 3, 4, 5] }, revision: 3, nextRunAt: null, evaluatorId: 'inbound-triage', evaluatorVersion: 1 };
 const options = {
   directory: temp, workspaceId: 'fictional-agency-workspace', actorId: () => 'fictional-owner',
   checkGmail: async () => { verified = true; },
@@ -39,11 +41,11 @@ const mail = createMailIngestionService({ directory: temp, workspaceId: options.
   authorize: async () => { const result = await agency.assertWorkflowReady('morning-priorities'); return { accountId: result.settings.gmailAccountId, bindingRevision: createHash('sha256').update(result.evidenceDigest).digest('hex'), settings: result.settings, settingsRevision: result.revision }; },
   scan: async (authority, request) => ({ accountId: authority.accountId, windowStartAt: request.windowStartAt, windowEndAt: request.windowEndAt, pages: 1, paginationComplete: true, gaps: [], threads: [{ id: 'abc123', historyComplete: true, messages: [{ id: `abc12${sourceVersion}`, threadId: 'abc123', at: request.windowEndAt - 1000, direction: 'incoming', from: 'fictional-sender@example.invalid', to: 'fictional-office@example.invalid', subject: 'Fictional property inspection follow-up', body: `Fictional source version ${sourceVersion}. <img src="https://example.invalid/track" onerror="alert(1)"> Please review the inspection evidence.`, bodyTruncated: false, attachments: [] }] }] }),
 });
-const getSnapshot = async () => ({ ...await mail.get(), schedule, operation });
+const getSnapshot = async () => ({ ...await mail.get(), schedule });
 try {
   server = await createServer({ root, server: { port: 0, host: '127.0.0.1' }, plugins: [{ name: 'agency-mail-local-fixture',
     resolveId(id) { if (id === 'virtual:agency-mail-qa') return '\0agency-mail-qa'; },
-    load(id) { if (id === '\0agency-mail-qa') return `import React from 'react'; import {createRoot} from 'react-dom/client'; import '/src/styles.css'; import {AgencyWorkflowSetup} from '/src/components/schedule/AgencyWorkflowSetup.tsx'; import {MailWorkPanel} from '/src/components/desk/MailWorkPanel.tsx'; createRoot(document.getElementById('root')).render(React.createElement('main',{style:{height:'100vh',overflowY:'auto',maxWidth:1100,margin:'0 auto',padding:16,display:'grid',gap:24}},React.createElement('p',null,'Fictional local fixture — no accounts or model calls'),React.createElement(AgencyWorkflowSetup),React.createElement(MailWorkPanel)));`; },
+    load(id) { if (id === '\0agency-mail-qa') return `import React from 'react'; import {createRoot} from 'react-dom/client'; import '/src/styles.css'; import {AgencyWorkflowSetup} from '/src/components/schedule/AgencyWorkflowSetup.tsx'; import {MailWorkPanel} from '/src/components/desk/MailWorkPanel.tsx'; import {StoreProvider} from '/src/state/store.tsx'; createRoot(document.getElementById('root')).render(React.createElement(StoreProvider,null,React.createElement('main',{style:{height:'100vh',overflowY:'auto',maxWidth:1100,margin:'0 auto',padding:16,display:'grid',gap:24}},React.createElement('p',null,'Fictional local fixture — no accounts or model calls'),React.createElement(AgencyWorkflowSetup),React.createElement(MailWorkPanel))));`; },
     configureServer(vite) {
     vite.middlewares.use(async (req, res, next) => {
       const path = req.url?.split('?')[0];
@@ -60,11 +62,15 @@ try {
         if (path === '/api/mail-workspace/items' && req.method === 'GET') return json(200, await mail.page(mailWorkspaceQuery(new URL(req.url, 'http://127.0.0.1').searchParams, 'tasks')));
         if (path === '/api/mail-workspace/scans' && req.method === 'GET') return json(200, await mail.scanHistory(mailWorkspaceQuery(new URL(req.url, 'http://127.0.0.1').searchParams, 'scans')));
         if (path === '/api/mail-workspace/scan') return json(200, await mail.collect());
-        if (path === '/api/mail-workspace/review') {
-          reviewRequests.push(body); assert.equal(body.expectedRevision, schedule.revision); assert.match(body.requestId, /^[a-f0-9-]{36}$/);
-          if (uncertainOnce) { uncertainOnce = false; return json(500, { error: 'Fictional uncertain transport receipt.' }); }
-          operation = { state: 'running', kind: 'review', startedAt: Date.now(), detail: 'Fictional queued review; no model has been called.', requestId: body.requestId };
-          return json(202, { run: { id: randomUUID(), requestId: body.requestId } });
+        // The real renderer store needs its event stream open (connected) and the job list.
+        if (path === '/api/events') { res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' }); res.write(': fictional event stream\n\n'); return; }
+        if (path === '/api/loops') return json(200, { loops: [triage], runs: [...loopRuns.values()] });
+        if (path === `/api/loops/${triage.id}/run`) {
+          runRequests.push(body); assert.equal(body.expectedRevision, triage.revision); assert.match(body.requestId, /^[a-f0-9-]{36}$/);
+          // The run is saved, then the first reply is lost: the same request must find that run, never start a second.
+          if (!loopRuns.has(body.requestId)) loopRuns.set(body.requestId, { id: randomUUID(), requestId: body.requestId, loopRevision: body.expectedRevision, loopId: triage.id, loopName: triage.name, manual: true, status: 'running', detail: 'Fictional queued check; no model has been called.', scheduledFor: Date.now(), startedAt: Date.now(), createdAt: Date.now() });
+          if (runRequests.length === 1) return json(500, { error: 'Fictional uncertain transport receipt.' });
+          return json(202, { run: loopRuns.get(body.requestId) });
         }
         if (path === '/api/mail-workspace/schedule') { await agency.assertWorkflowReady('morning-priorities'); schedule.enabled = body.enabled; schedule.revision++; return json(200, { schedule }); }
         const item = path.match(/^\/api\/mail-workspace\/items\/([a-f0-9]{64})(\/source)?$/);
@@ -101,7 +107,9 @@ try {
   assert.equal(schedule.enabled, false); checks.push('Four-step setup persists actual agency settings and digest-bound review; acceptance unverified and schedule off');
   await setup.evaluate(element => element.scrollIntoView({block:'start'})); await page.screenshot({ path: join(output, 'agency-setup-desktop.png') });
   const panel = page.getByRole('region', { name: 'Mail priorities and follow-ups', exact: true });
-  await panel.getByRole('button', { name: 'Collect reviewed Gmail scope', exact: true }).click();
+  // Collection and the morning schedule sit in the area's collapsed Setup; Check now heads the area.
+  const setupButton = async name => { const area = panel.locator('details.area-setup'); if (!await area.evaluate(element => element.open)) await area.locator(':scope > summary').click(); return area.getByRole('button', { name, exact: true }); };
+  await (await setupButton('Collect reviewed Gmail scope')).click();
   await panel.getByText('Fictional property inspection follow-up', { exact: true }).waitFor();
   await panel.getByRole('button', { name: 'Review or edit this item', exact: true }).click();
   const editor = panel.getByRole('form', { name: 'Review saved mail item', exact: true });
@@ -120,26 +128,25 @@ try {
   assert.equal((await doneResponse).status(), 200);
   assert.equal((await mail.page({ group: 'all' })).items[0].status, 'done');
   sourceVersion++;
-  await panel.getByRole('button', { name: 'Collect reviewed Gmail scope', exact: true }).click();
+  await (await setupButton('Collect reviewed Gmail scope')).click();
   await panel.getByText('New reply since you reviewed', { exact: true }).waitFor();
   const reopened = (await mail.page({ group: 'all' })).items[0];
   assert.equal(reopened.status, 'open');
   assert.equal(reopened.note, 'Preserve my review through a later scan.');
   checks.push('Actual encrypted mail journal collects fixture evidence, preserves human edits, reopens changed evidence, and renders hostile source markup as text');
-  await panel.getByRole('button', { name: 'Collect and prepare priorities with Bud', exact: true }).click();
-  await panel.getByRole('button', { name: 'Reconcile and retry the same review request', exact: true }).waitFor();
-  await panel.getByRole('button', { name: 'Reconcile and retry the same review request', exact: true }).click();
-  await panel.getByText(/Priority review: running/).waitFor();
-  assert.equal(reviewRequests.length, 2); assert.deepEqual(reviewRequests[0], reviewRequests[1]);
-  assert.equal(await panel.getByRole('button', { name: 'Collect and prepare priorities with Bud', exact: true }).isDisabled(), true);
-  operation.state = 'complete'; operation.detail = 'Fictional receipt completed; no model output or business acceptance was claimed.';
-  await panel.getByRole('button', { name: 'Refresh saved mail work', exact: true }).click();
-  await panel.getByRole('button', { name: 'Enable reviewed morning schedule', exact: true }).click();
+  const status = panel.getByRole('group', { name: 'Mail priorities status', exact: true });
+  await status.getByRole('button', { name: 'Check now', exact: true }).click();
+  await status.getByRole('alert').filter({ hasText: 'Fictional uncertain transport receipt.' }).waitFor();
+  await status.getByRole('button', { name: 'Check previous run', exact: true }).click();
+  await status.getByText(/^Checking… started/).waitFor();
+  assert.equal(runRequests.length, 2); assert.deepEqual(runRequests[0], runRequests[1]); assert.equal(loopRuns.size, 1);
+  assert.equal(await status.getByRole('button', { name: 'Check now', exact: true }).count(), 0);
+  await (await setupButton('Enable reviewed morning schedule')).click();
   await panel.getByRole('button', { name: 'Turn off morning schedule', exact: true }).waitFor();
   assert.equal(schedule.enabled, true);
   await panel.getByRole('button', { name: 'Turn off morning schedule', exact: true }).click();
   await panel.getByRole('button', { name: 'Enable reviewed morning schedule', exact: true }).waitFor();
-  assert.equal(schedule.enabled, false); checks.push('Uncertain review retry preserves request ID and revision, running review blocks duplicates, explicit schedule toggle reads back');
+  assert.equal(schedule.enabled, false); checks.push('Check now after an uncertain reply re-sends the same request ID and job revision and finds the one saved run; a running check offers no new Check now; explicit schedule toggle reads back');
   await panel.evaluate(element => element.scrollIntoView({block:'start'})); await page.screenshot({ path: join(output, 'mail-work-desktop.png') });
   await page.reload(); await panel.getByText('Your note: Preserve my review through a later scan.', { exact: true }).waitFor();
   assert.equal((await createAgencySetupService(options).getConfiguration()).settings.agencyName, 'Fictional Acacia');
@@ -151,7 +158,7 @@ try {
   await page.screenshot({ path: join(output, 'agency-source-mobile.png') });
   assert.deepEqual(errors, []); checks.push('Reload preserves saved agency and mail records; both 390px components have no overflow or browser errors');
   const saved = await readFile(join(temp, 'agency-setup.json'), 'utf8'); assert.ok(!saved.includes(FICTIONAL_SESSION));
-  await writeFile(join(output, 'receipt.json'), JSON.stringify({ checkedAt: new Date().toISOString(), layer: 'rendered production React components and actual persisted agency/encrypted mail stores; fictional source and queue adapters; no live account, model or desktop package proof', checks, errors }, null, 2));
+  await writeFile(join(output, 'receipt.json'), JSON.stringify({ checkedAt: new Date().toISOString(), layer: 'rendered production React components in the real renderer store and actual persisted agency/encrypted mail stores; fictional source, queue and clock adapters; no live account, model or desktop package proof', checks, errors }, null, 2));
   console.log(JSON.stringify({ output, checks, errors }, null, 2));
 } catch (cause) {
   const failedPage = browser?.contexts()[0]?.pages()[0];

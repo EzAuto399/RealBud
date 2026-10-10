@@ -179,7 +179,9 @@ export function BankReferenceReview({ registerCloseGuard, area = false }: { regi
   const Heading = area ? "h2" : "h3";
   return <section className={`space-y-4${area ? " min-h-0 overflow-y-auto" : ""}`} aria-labelledby="bank-review-title">
     <div><Heading id="bank-review-title" className="font-medium text-ink">Prepare bank references</Heading>
-      {area && <div className="mt-2"><AreaStatusLine area="bank" /></div>}
+      {/* One way to start an import here: the strip's Start bank import (attended REI sign-in, asks answered in place).
+          Check now would start the same run through the clock, which waits on REI sign-in until the office day ends (server/w1-host.ts). */}
+      {area && <div className="mt-2"><AreaStatusLine area="bank" checkNow={false} /></div>}
       <p className="mt-1 text-sm text-ink-secondary">Review the daily bank export, match incoming payments to property references, then download a checked CSV copy.</p>
       <p className="mt-1 text-xs text-ink-muted">Pull from the bank feed or choose a bank CSV. The last bank mapping and property references are reused for the next file. Original dates, amounts and order stay intact.</p></div>
     <W1RunPanel accounts={bank.accounts} error={bank.error} onLoadAccounts={() => void bank.load()} onOpenBatch={id => perform(() => open(id))}
