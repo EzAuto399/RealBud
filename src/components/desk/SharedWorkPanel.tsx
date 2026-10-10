@@ -278,7 +278,7 @@ export function SharedWorkPanel({ initialDraft, initialExpanded = false, initial
           {loading && <p role="status" className={muted}>Loading shared work…</p>}
           {error && <p id="shared-work-error" role="alert" className="mt-2 text-sm text-danger">{error}</p>}
           <p role="status" className={muted}>{notice}</p>
-          {!company?.member && !loading && <p className={muted}>Sign in through Workspace → Office details if needed, then refresh shared work.</p>}
+          {!company?.member && !loading && <p className={muted}>Sign in through Workspace → Office & colleagues if needed, then refresh shared work.</p>}
           {company?.member && (
             <>
               <p className="mt-3 text-sm text-ink">{company.company?.name} · {company.member.displayName}</p>
@@ -313,7 +313,7 @@ export function SharedWorkPanel({ initialDraft, initialExpanded = false, initial
                 <div className="rounded-lg border border-line bg-sheet p-3">
                   <h3 className="text-[14px] font-medium text-ink">Share reviewed work</h3>
                   {error.includes('needs service recovery') ? <p className={muted}>Sharing is paused. After the record is repaired, refresh to continue. Your draft is kept until you leave this view.</p> : loading || (error && others.length === 0) ? <p className={muted}>Refresh the company connection to choose a recipient. Your draft is kept until you leave this view.</p> : others.length === 0 ? (
-                    <p className={muted}>Invite a colleague in Workspace → Office details before sharing work.</p>
+                    <p className={muted}>Invite a colleague in Workspace → Office & colleagues before sharing work.</p>
                   ) : shareLocked ? (
                     <>
                       <p role="status" className={muted}>The share may already exist. Its reviewed content is saved on this computer. Retry uses the same request, including after restarting RealBud.</p>

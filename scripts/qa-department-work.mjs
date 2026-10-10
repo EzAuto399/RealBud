@@ -90,7 +90,7 @@ try{
   page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
   async function open(){
     await page.goto(base+'/#/you');
-    await page.locator('summary').filter({hasText:/^Office details/}).first().evaluate(n=>{n.parentElement.open=true;});
+    await page.locator('#you-company > summary').evaluate(n=>{n.parentElement.open=true;});
     await page.locator('summary').filter({hasText:/^Departments and access$/}).evaluate(n=>{n.parentElement.open=true;});
     const work=page.getByRole('button',{name:'View work in Fictional Operations',exact:true});
     await work.waitFor();

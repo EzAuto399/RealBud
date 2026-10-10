@@ -136,6 +136,7 @@ export function YouPage({ section, onServiceAdministration }: { section?: "phone
   const [lawWatch, setLawWatch] = useState<LawWatch | null>(null);
   const [lawWatchError, setLawWatchError] = useState("");
   const [officeGroup, setOfficeGroup] = useState("basics");
+  const [companySummary, setCompanySummary] = useState("");
   const companySession = useSyncExternalStore(companyApi.subscribeSession, companyApi.sessionVersion, companyApi.sessionVersion);
   const [officeIdentity, setOfficeIdentity] = useState<{ context: OfficeDraftContext | null; checking: boolean; error: string }>({ context: null, checking: true, error: "" });
   const identityRead = useRef(0);
@@ -318,9 +319,10 @@ export function YouPage({ section, onServiceAdministration }: { section?: "phone
           <Card title="This office" subtitle="Open Desk once to load the book." />
         )}
       </>;
+  const peopleContent = (onSummary?: (summary: string) => void) => <><CompanySetupCard onServiceAdministration={openServiceAdministration} onSummary={onSummary} /><div className="px-1 text-[13px] leading-relaxed text-ink-muted"><p className="font-medium text-ink">Hermios CRM workspace</p><p className="mt-1">Each person connects their own Hermios account from Desk → Hermios or Connected apps. Bud uses only that person's verified workspace and access; office membership never connects a CRM account for anyone else. Department access to CRM records is coming next.</p></div></>;
   const officeGroups = [
     { id: "basics", label: "Office basics", content: officeBasics },
-    { id: "people", label: "People & departments", content: <><CompanySetupCard onServiceAdministration={openServiceAdministration} /><div className="px-1 text-[13px] leading-relaxed text-ink-muted"><p className="font-medium text-ink">Hermios CRM workspace</p><p className="mt-1">Each person connects their own Hermios account from Desk → Hermios or Connected apps. Bud uses only that person's verified workspace and access; office membership never connects a CRM account for anyone else. Department access to CRM records is coming next.</p></div></> },
+    { id: "people", label: "Office & colleagues", content: peopleContent() },
     { id: "account", label: "Account & usage", content: <><section id={section ? undefined : "you-website"} tabIndex={-1} aria-label="Website account"><WebsiteLinkCard /></section><AiUsageCard /></> },
     { id: "remote", label: "Remote access", content: <><WebsiteRequestsCard /><RemoteApproversCard /><RemoteWorkCard /></> },
   ];
@@ -329,13 +331,17 @@ export function YouPage({ section, onServiceAdministration }: { section?: "phone
       {officeGroups.map(group => <button type="button" key={group.id} className="pm-control" aria-pressed={officeGroup === group.id} onClick={() => setOfficeGroup(group.id)}>{group.label}</button>)}
     </nav>
     {officeGroups.map(group => <div key={group.id} className="office-settings-group" hidden={officeGroup !== group.id} inert={officeGroup !== group.id}>{group.content}</div>)}
-  </section> : (
+  </section> : <>
     <details id="you-office" className={WORKSPACE_ROW}>
       <summary><span>Office details</span><span className="settings-section-hint">{deskError ? "Could not load · open to retry" : desk?.demo ? "Agency basics · optional setup details" : agency?.name || "Agency and property settings"}</span></summary>
-      {/* People & departments (company setup and the CRM note) is shared with the office setup sheet. */}
-      <div className="settings-section-body">{officeBasics}{officeGroups.find(group => group.id === "people")?.content}</div>
+      <div className="settings-section-body">{officeBasics}</div>
     </details>
-  );
+    {/* Office & colleagues (local office collaboration and the CRM note) is shared with the office setup sheet. */}
+    <details id="you-company" className={WORKSPACE_ROW}>
+      <summary><span>Office &amp; colleagues</span><span className="settings-section-hint">{companySummary || "Checking…"}</span></summary>
+      <div className="settings-section-body">{peopleContent(setCompanySummary)}</div>
+    </details>
+  </>;
 
   // After an office link, an app the service offers with no account yet is
   // the next thing to do, so Connections opens instead of hiding as optional.

@@ -71,9 +71,9 @@ try {
     await primeBrowserSession(context, origin, await readSessionToken(data));
     if (page.url() === origin + '/#/you') await page.reload();
     else await page.goto(origin + '/#/you');
-    const office = page.locator('details').filter({ has: page.getByText('Office details', { exact: true }) }).first();
+    const office = page.locator('details#you-company');
     await office.waitFor(); await office.evaluate(node => { node.open = true; });
-    await page.getByRole('heading', { name: 'Local office collaboration', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Office & colleagues', exact: true }).waitFor();
     await page.locator('summary').filter({ hasText: /^Departments and access$/ }).evaluate(node => { node.parentElement.open = true; });
     await page.getByRole('button', { name: 'View work in Operations', exact: true }).click();
     await page.getByRole('region', { name: 'Department work review' }).waitFor();

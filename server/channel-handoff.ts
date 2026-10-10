@@ -1,3 +1,4 @@
+import { replaceChartBlocksWithText } from "../shared/chat-chart.ts";
 import type { RemoteChannelAdapter } from "./remote-decisions.ts";
 import type { Message, Store } from "./store.ts";
 
@@ -44,7 +45,8 @@ export function buildHandoffPayload(
       target = [...messages].reverse().find((m) => m.role === "bot");
       if (!target) return { ok: false, error: "There is no saved reply in this conversation yet." };
     }
-    const body = target.text!.trim();
+    // phones get a chart as readable lines, never its raw data block
+    const body = replaceChartBlocksWithText(target.text!).trim();
     const header = bot.busy
       ? "Bud is still working. Saved reply from Ask:"
       : "Reply from Ask:";
@@ -60,7 +62,7 @@ export function buildHandoffPayload(
   }
   const lines = recent.map((m) => {
     const who = m.role === "user" ? "You" : "Bud";
-    const body = stripChannelStamp(m.text!).replace(/\s+/g, " ").trim();
+    const body = stripChannelStamp(replaceChartBlocksWithText(m.text!)).replace(/\s+/g, " ").trim();
     const short = body.length > 220 ? `${body.slice(0, 220)}…` : body;
     return `${who}: ${short}`;
   });
