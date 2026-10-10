@@ -123,7 +123,8 @@ try {
         assert.ok(await page.getByRole('button', { name: 'Open the page again', exact: true }).isVisible());
       } else {
         action = page.getByRole('button', { name: 'Connect with this code', exact: true });
-        if (name === 'revoked') await page.getByText('This computer was removed from your office. Connect it again to continue.', { exact: true }).waitFor();
+        // The heading says it once; the card doesn't repeat it.
+        if (name === 'revoked') assert.equal(await page.getByText('This computer was removed from your office.', { exact: false }).count(), 0);
         if (name === 'computer-limit') {
           await page.getByRole('textbox', { name: 'Link code' }).fill(CODE);
           await action.click();

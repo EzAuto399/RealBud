@@ -42,6 +42,8 @@ describe('office link screen', () => {
     const html = render(true);
     expect(html).toContain('>This computer was disconnected from your office</h1>');
     expect(html).toContain('Everything saved here is kept. Reconnect to use Bud and your workflows.');
+    // Said once, in the heading; the card doesn't repeat it.
+    expect(html).not.toContain('was removed from your office');
     expect(html).toContain('>Connect with this code</button>');
     expect(html).toContain('>Open saved work without Bud</button>');
     expect(html).not.toContain('Explore the sample desk');

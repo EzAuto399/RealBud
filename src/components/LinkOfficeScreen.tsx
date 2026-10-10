@@ -29,7 +29,7 @@ export function LinkOfficeScreen({ revoked, onLeave }: { revoked: boolean; onLea
               {revoked ? "Everything saved here is kept. Reconnect to use Bud and your workflows." : "Bud and your office’s workflows start once it’s connected."}
             </p>
           </header>
-          <Card><ConnectOfficeView {...view} /></Card>
+          <Card><ConnectOfficeView {...view} revokedShown={revoked} /></Card>
           <button type="button" onClick={onLeave} className="pm-control self-center rounded border border-line bg-sheet px-3 text-[13px] text-ink hover:bg-selected">
             {revoked ? "Open saved work without Bud" : "Explore the sample desk"}
           </button>

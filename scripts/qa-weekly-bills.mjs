@@ -162,7 +162,8 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   const panel = page.getByRole('region', { name: 'Source-linked bills and calendar' }); await panel.waitFor();
 
   const resultPanel = panel.getByRole('region', { name: 'Latest weekly bills result' });
-  await resultPanel.getByText('Latest weekly bills review', { exact: true }).waitFor();
+  await resultPanel.getByText('Latest weekly bills review:', { exact: true }).waitFor();
+  await resultPanel.getByText('What this review checked', { exact: true }).click();
   assert.ok((await resultPanel.innerText()).includes('fictional-bills'));
   await page.screenshot({ path: join(output, 'weekly-result.png'), fullPage: true });
   await panel.locator(`[data-review-id="${drafts[0].id}"]`).getByRole('button', { name: 'Continue saved review', exact: true }).click();
