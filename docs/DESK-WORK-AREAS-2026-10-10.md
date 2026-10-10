@@ -190,7 +190,7 @@ Also in this bundle:
 - The office link comes first. An unlinked or revoked computer opens on "Connect this computer to your office" before Bud's setup screen.
   - Recovery never waits behind that screen.
   - The link step can no longer be skipped.
-  - A session-only exit opens the sample desk, or saved work once the computer is disconnected.
+  - There is no way past it except recovery (owner decision, 10 Oct). See [Office link gate](OFFICE-LINK-GATE-2026-10-10.md).
 
 Evidence:
 - Full suite at `b1148c26`: 11,068 passed. Five failed for an environment reason: the PDF worker under `node --permission` through a symlinked `node_modules`. They pass with a real install. `pnpm check:electron`: 34/34.
@@ -213,4 +213,3 @@ Limits:
 - The link screen:
   - A computer whose link read is still in flight shows Desk briefly first.
   - There is no team-seat exemption, because the renderer has no reliable seat signal.
-  - Whether to keep the exit is the owner's call.

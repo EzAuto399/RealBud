@@ -26,9 +26,10 @@
   - An unlinked or revoked computer opens on "Connect this computer to your office" before Bud's setup. The screen is laid out like Bud's setup screen.
   - Recovery never waits behind it.
   - The link step can no longer be skipped.
-  - An exit for this app session opens the sample desk, or saved work once the computer is disconnected.
+  - There is no way past it except recovery (owner decision, 10 Oct). The sample-desk exits in first run are gone. Spec: [Office link gate](OFFICE-LINK-GATE-2026-10-10.md).
 
 ## Upgrade notes
+- **Every computer must be linked.** After updating, a computer that isn't linked to its office opens on the link screen and stays there until it is. Before updating an office, check each computer is linked, or have a link code ready for it. Offices are limited to 5 computers.
 - **Desk layouts move to v3 on first save.** Bank references is appended. A layout RealBud applied automatically and nobody changed gets the work-area tabs back once, at startup. An older core that opens a v3 layout sends it to recovery.
 - **The pre-rename data folder** is moved only into the default `~/.realbud`, never into a custom `REALBUD_DATA_DIR`.
 - **A pack that declares `desk`** needs core 0.1.50. Packs have no minimum-core field yet. Only the three built-in pack ids can be the office pack, and none of them ships `desk` yet, so every office sees the core Desk preset.
