@@ -170,6 +170,28 @@ describe('Needs you: jobs', () => {
     expect(withoutBank.items.map(item => item.key).sort()).toEqual(['loop:arrears-wait', 'loop:bank-wait', 'loop:maintenance-wait']);
     expect(withoutBank.items.find(item => item.key === 'loop:bank-wait')).toMatchObject({ area: 'bank', level: 'review', next: 'Review the run in Schedule' });
   });
+
+  it('shows one row per event: the area item at the same level wins, and a failed run is never hidden', async () => {
+    const failed = [loopRun('bank-fail', { loopId: 'bank-references', loopName: 'Bank references' }),
+      loopRun('mail-fail', { loopId: 'inbound-triage', loopName: 'Morning priorities' }), loopRun('bills-fail', { loopId: 'weekly-bills', loopName: 'Weekly bills' })];
+    const held = await read({ loops: loops(failed), weeklyBills: () => weekly(['gap']),
+      w1Status: w1({ run: w1Run({ step: 'fetch', attention: { reason: 'fetch_failed', message: 'The bank transactions could not be fetched. Try again.' } }) }) });
+    expect(held.items.map(item => item.key).sort()).toEqual(['bank:w1run_fictional', 'bills:coverage', 'loop:mail-fail']);
+    expect(held.items.find(item => item.area === 'bank')).toMatchObject({ level: 'problem', reason: 'The bank transactions could not be fetched. Try again.' });
+    const review = await read({ loops: loops(failed.slice(0, 1)), w1Status: w1({ run: w1Run() }) });
+    expect(review.items.map(item => [item.key, item.level])).toEqual([['loop:bank-fail', 'problem'], ['bank:w1run_fictional', 'review']]);
+  });
+
+  it('sends a job whose area the office does not show to Schedule', async () => {
+    const run = [loopRun('bank-fail', { loopId: 'bank-references', loopName: 'Bank references' })];
+    const w1Status = vi.fn(w1({ run: w1Run() }));
+    const notSelected = await read({ selectedWorkflows: async () => ['bills-calendar'], loops: loops(run), w1Status });
+    expect(w1Status).not.toHaveBeenCalled();
+    expect(notSelected.items).toEqual([expect.objectContaining({ key: 'loop:bank-fail', area: 'schedule', level: 'problem' })]);
+    const unknown = await read({ selectedWorkflows: async () => { throw new Error('fictional setup failure'); }, loops: loops(run) });
+    expect(unknown.unavailable).toEqual([{ area: 'bank', reason: "Bank references couldn't be checked." }]);
+    expect(unknown.items).toEqual([expect.objectContaining({ key: 'loop:bank-fail', area: 'schedule' })]);
+  });
 });
 
 describe('Needs you: order, limits and failures', () => {

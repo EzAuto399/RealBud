@@ -2,7 +2,7 @@
 // projected on each read from each workflow's own store (shared/needs-you.ts).
 // Read-only. Each source is read on its own: one that fails is listed as
 // unavailable with a fixed sentence, never as empty, and its error text is never forwarded.
-import { areaForLoop } from '../shared/desk-areas.ts';
+import { areaForLoop, coreOfficeDesk } from '../shared/desk-areas.ts';
 import { mailWorkGroup, type MailScanReceipt, type MailScanStatus, type MailTaskPage, type MailTaskPageQuery } from '../shared/mail-ingestion.ts';
 import { readBillFollowUpPage, type BillFollowUp } from '../shared/bill-followups.ts';
 import { NEEDS_YOU_AREA_LIMIT, parseNeedsYouSnapshot, type NeedsYouArea, type NeedsYouItem, type NeedsYouLevel, type NeedsYouSnapshot } from '../shared/needs-you.ts';
@@ -41,7 +41,7 @@ const LOOP_PROBLEM: Partial<Record<LoopRunStatus, string>> = {
   failed: 'A run of this job failed.', missed: 'A run of this job was missed, so it checked nothing.',
   interrupted: 'A run of this job stopped before it finished.', partial: "A run of this job didn't check everything.",
 };
-/** Jobs whose approval wait is their area's own items read here, so it shows once. */
+/** Jobs whose runs are also their area's own items read here: one event shows as one row. */
 const OWN_LOOPS = new Set(['inbound-triage', 'weekly-bills', 'bank-references']);
 
 const malformed = (): never => { throw new Error('Malformed source.'); };
@@ -94,9 +94,10 @@ function coverageItems(result: RoutineResult | null): NeedsYouItem[] {
     reason: "Some mail wasn't covered, so bills may be missing from the last weekly check.", next: 'Review the gaps in Bills and calendar', foundAt: iso(result.finishedAt) }] : [];
 }
 
-async function bankItems(deps: NeedsYouDeps): Promise<NeedsYouItem[]> {
-  if (!(await deps.selectedWorkflows()).includes('bank-references')) return [];
-  const { run, working, ask, signIn } = await deps.w1Status();
+async function bankItems(selected: readonly string[] | null, w1Status: NeedsYouDeps['w1Status']): Promise<NeedsYouItem[]> {
+  if (!selected) return malformed();
+  if (!selected.includes('bank-references')) return [];
+  const { run, working, ask, signIn } = await w1Status();
   // As w1View (src/components/schedule/BankReferenceReview.tsx): an open ask, a REI sign-in wait or a held run waits for a person; work in flight does not.
   if (!run || !(ask || (working ? signIn : run.step !== 'done'))) return [];
   const level: NeedsYouLevel = ask ? 'review' : working ? 'problem' : !run.attention || BANK_REVIEW.has(run.attention.reason) ? 'review' : 'problem';
@@ -107,7 +108,9 @@ async function bankItems(deps: NeedsYouDeps): Promise<NeedsYouItem[]> {
   return [{ key: key('bank', run.id), area: 'bank', level, ...view, foundAt: iso(run.updatedAt) }];
 }
 
-function loopItems(schedule: ReturnType<NeedsYouDeps['loops']>, ownAreas: ReadonlySet<NeedsYouArea>): NeedsYouItem[] {
+function loopItems(schedule: ReturnType<NeedsYouDeps['loops']>, own: ReadonlySet<string>, selected: readonly string[] | null): NeedsYouItem[] {
+  // An area the office doesn't show (Bank references not selected) can't open the row: it goes to Schedule.
+  const shown = new Set<NeedsYouArea>(coreOfficeDesk(selected ?? []).areas.filter(area => area.available).map(area => area.id));
   const startedAt = (run: LoopRun) => run.startedAt ?? run.createdAt;
   const picked = new Map<string, { run: LoopRun; level: NeedsYouLevel }>();
   for (const run of schedule.listRuns()) {
@@ -119,8 +122,9 @@ function loopItems(schedule: ReturnType<NeedsYouDeps['loops']>, ownAreas: Readon
   }
   const items: NeedsYouItem[] = [];
   for (const { run, level } of picked.values()) {
-    const area = areaForLoop(run.loopId) ?? 'schedule';
-    if (level === 'review' && OWN_LOOPS.has(run.loopId) && ownAreas.has(area)) continue;
+    const found = areaForLoop(run.loopId), area = found && shown.has(found) ? found : 'schedule';
+    // The area's own item at the same level says it more specifically; with none there, the job row stays.
+    if (OWN_LOOPS.has(run.loopId) && own.has(`${area}:${level}`)) continue;
     items.push({ key: key('loop', run.id), area, level, title: clip(run.loopName, 300, 'A scheduled job'),
       reason: LOOP_PROBLEM[run.status] ?? 'A run of this job is waiting for your approval.',
       next: level === 'problem' ? 'Open the run in Schedule' : 'Review the run in Schedule', foundAt: iso(run.finishedAt ?? startedAt(run)) });
@@ -143,14 +147,15 @@ const order = (a: NeedsYouItem, b: NeedsYouItem) => (a.level === b.level ? 0 : a
 
 export async function readNeedsYou(deps: NeedsYouDeps): Promise<NeedsYouSnapshot> {
   const checkedAt = new Date((deps.now ?? Date.now)()).toISOString();
+  const selected = deps.selectedWorkflows().catch(() => null);
   const sources = await Promise.all([
     settle('mail', () => mailItems(deps.mail)),
     settle('bills', () => followUpItems(deps.billFollowUps)),
     settle('bills', () => coverageItems(deps.weeklyBills())),
-    settle('bank', () => bankItems(deps)),
+    settle('bank', async () => bankItems(await selected, deps.w1Status)),
   ]);
-  const ownAreas = new Set(sources.flatMap(source => source.items ?? []).map(item => item.area));
-  sources.push(await settle('schedule', () => loopItems(deps.loops(), ownAreas)));
+  const own = new Set(sources.flatMap(source => source.items ?? []).map(item => `${item.area}:${item.level}`));
+  sources.push(await settle('schedule', async () => loopItems(deps.loops(), own, await selected)));
   const counts: NeedsYouSnapshot['counts'] = {}, shown = new Map<NeedsYouArea, number>();
   const items = sources.flatMap(source => source.items ?? []).sort(order).filter(item => {
     (counts[item.area] ??= { problem: 0, review: 0 })[item.level]++;
