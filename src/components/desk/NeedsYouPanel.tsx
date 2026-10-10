@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { DESK_SECTION_LABELS, type DeskArea } from "@shared/workspace-tabs";
-import type { DeskAreaId } from "@shared/desk-areas";
+import { AREA_LOOPS, type DeskAreaId } from "@shared/desk-areas";
 import type { NeedsYouArea, NeedsYouItem, NeedsYouLevel } from "@shared/needs-you";
 import { refreshNeedsYou, type NeedsYouState } from "@/lib/needs-you";
 import { openDeskArea } from "@/lib/desk-view-state";
 import { useStore } from "@/state/store";
 import { StatusLabel } from "../pm";
+import { areaStatus } from "./AreaStatusLine";
 
 const FIRST_ROWS = 5;
 const SEEN_KEY = "realbud.needsYouSeenAt";
@@ -39,7 +40,7 @@ export function NeedsYouPanel({ state, active, areas, onShowArea, inert }: {
   onShowArea: (area: DeskAreaId) => void;
   inert?: boolean;
 }) {
-  const { dispatch } = useStore();
+  const { state: app, dispatch } = useStore();
   const { snapshot, error, checking } = state;
   const [expanded, setExpanded] = useState(false);
   const [seenAt, setSeenAt] = useState(readNeedsYouSeen);
@@ -72,7 +73,9 @@ export function NeedsYouPanel({ state, active, areas, onShowArea, inert }: {
       const area = item.area as DeskAreaId;
       return { next: item.next, action: <button type="button" className="pm-control needs-you-action" onClick={() => onShowArea(area)}>Show {titleOf(area)} on my Desk</button> };
     }
-    return { action: <button type="button" className="pm-control needs-you-action" onClick={() => item.area === "schedule" ? dispatch({ type: "showRoutines" }) : openDeskArea(item.area)}>{item.next}</button> };
+    // Short verb-first labels repeat across rows; the name says which item (visible label first).
+    return { action: <button type="button" className="pm-control needs-you-action" aria-label={`${item.next}: ${item.title}`}
+      onClick={() => item.area === "schedule" ? dispatch({ type: "showRoutines" }) : openDeskArea(item.area)}>{item.next}</button> };
   };
   const rows: Row[] = snapshot ? [
     ...snapshot.unavailable.map((source): Row => ({ key: `unavailable:${source.area}`, area: source.area, level: "problem", title: `Couldn't check ${titleOf(source.area)}`,
@@ -82,6 +85,18 @@ export function NeedsYouPanel({ state, active, areas, onShowArea, inert }: {
   ].sort((a, b) => (a.level === b.level ? 0 : a.level === "problem" ? -1 : 1)) : [];
   const listed = expanded ? rows : rows.slice(0, FIRST_ROWS);
   const checked = snapshot ? `checked ${clock(snapshot.checkedAt)}` : "";
+  // An empty list only means "nothing to review" for areas whose job has checked. A shown area whose
+  // job isn't set up or never ran is named; a schedule not read yet, or unreadable, is claimed neither way.
+  // A reload keeps the schedule already on screen, so the line doesn't flicker while it runs.
+  const scheduleRead = app.activityLoad.routines === "loading" && app.loops.length ? "ready" : app.activityLoad.routines;
+  const unchecked = snapshot && !rows.length ? areas.flatMap(area => {
+    const loopId = area.visible ? AREA_LOOPS[area.id]?.[0] : undefined;
+    if (!loopId) return [];
+    const { kind } = areaStatus({ area: area.id, title: area.title, loop: app.loops.find(loop => loop.id === loopId), runs: app.loopRuns,
+      read: scheduleRead, timeZone: app.desk?.book?.agency.timezone || undefined, now: Date.now() });
+    return kind === "not-set-up" || kind === "never" ? [{ title: area.title, setup: kind === "not-set-up" }] : [];
+  }) : [];
+  const finishSetup = () => { location.hash = "schedule-agency"; dispatch({ type: "showRoutines" }); };
   const failure = error ? (
     <div role="alert" className="needs-you-error">
       <span>{error}</span>{tryAgain()}
@@ -129,14 +144,15 @@ export function NeedsYouPanel({ state, active, areas, onShowArea, inert }: {
     </section>
   ) : snapshot && !rows.length ? (
     <section className="needs-you needs-you-quiet" aria-label="From your workflows" inert={inert}>
-      <p>Nothing from your workflows needs you · {checked}</p>
+      <p>{unchecked.length ? `Nothing to review yet · Not checked yet: ${unchecked.map(row => row.title).join(", ")}` : `Nothing from your workflows to review · ${checked}`}</p>
+      {unchecked.some(row => row.setup) ? <button type="button" className="pm-control needs-you-action mt-2" onClick={finishSetup}>Finish setup</button> : null}
       {failure}
     </section>
   ) : (
     <section className="needs-you" aria-labelledby="needs-you-title" aria-busy={checking || undefined} inert={inert}>
       <div className="needs-you-head">
         <h2 id="needs-you-title">From your workflows</h2>
-        {snapshot ? <p>{rows.length} need{rows.length === 1 ? "s" : ""} you · {checked}</p> : null}
+        {snapshot ? <p>{rows.length} item{rows.length === 1 ? "" : "s"} · {checked}</p> : null}
       </div>
       {failure}
       {group("problem", "Problems")}

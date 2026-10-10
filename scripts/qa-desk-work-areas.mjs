@@ -121,12 +121,15 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   const deskRow = page.locator('.pm-desk-header').getByRole('navigation', { name: 'Desk workspace', exact: true });
   const rowTabs = async () => (await deskRow.locator('.desk-workspace-tabs > button').allTextContents()).map(text => text.replace(/[!\d]+$/, '').trim());
   const tasksTab = deskRow.getByRole('button', { name: /^Tasks(?:\s*\d+)?$/ });
-  const quiet = page.getByText(/^Nothing from your workflows needs you · checked \d{1,2}:\d{2} [ap]m$/);
+  // None of the office's area jobs is switched on yet (each is opt-in), so an empty read is not "nothing to review".
+  const quietSection = page.getByRole('region', { name: 'From your workflows', exact: true }).and(page.locator('.needs-you-quiet'));
+  const quiet = quietSection.getByText(/^Nothing to review yet · Not checked yet: Mail priorities, Bills and calendar, Bank references$/);
   await quiet.waitFor();
+  await quietSection.getByRole('button', { name: 'Finish setup', exact: true }).waitFor();
   assert.deepEqual(await rowTabs(), ['Tasks', 'Mail priorities', 'Bills and calendar', 'Bank references', 'Shared work', 'Hermios']);
   for (const name of ['Mail priorities', 'Bills and calendar', 'Bank references']) await deskRow.getByRole('button', { name, exact: true }).waitFor();
   await shot('01-needs-you-nothing-1280.png');
-  pass('After a full read that found nothing, Tasks says "Nothing from your workflows needs you · checked <time>" in one line; the area tabs carry no count, and Bank references is a tab for an office that runs it');
+  pass('After a full read that found nothing while no area job is set up, Tasks says "Nothing to review yet · Not checked yet: Mail priorities, Bills and calendar, Bank references" in one line with Finish setup, never "nothing from your workflows"; the area tabs carry no count, and Bank references is a tab for an office that runs it');
 
   // This computer last showed the panel now (a reload marks it); everything found after it is New.
   await page.reload();
@@ -157,11 +160,14 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   const first = await rows.first().innerText();
   assert.match(first, /^Problem\s+(New\s+)?Mail priorities\s+/);
   assert.ok(first.includes(problem.title) && first.includes(problem.reason));
-  await rows.first().getByRole('button', { name: problem.next, exact: true }).waitFor();
+  const problemAction = `${problem.next}: ${problem.title}`;
+  await rows.first().getByRole('button', { name: problemAction, exact: true }).waitFor();
+  assert.equal(await rows.first().getByRole('button', { name: problemAction, exact: true }).innerText(), problem.next, 'The visible label starts the spoken name');
   assert.ok(await panel.getByText('New', { exact: true }).count() >= 1, 'Items found since the panel was last shown are New');
   const announced = await page.locator('p.sr-only[aria-live="polite"]').filter({ hasText: /new items from your workflows|^New from / }).count();
   assert.equal(announced, 1, 'Arrivals are announced once through a polite live region');
   const total = needs.items.length + needs.unavailable.length;
+  assert.match(await panel.locator('.needs-you-head > p').innerText(), new RegExp(`^${total} items · checked \\d{1,2}:\\d{2} [ap]m$`));
   const more = panel.getByRole('button', { name: `Show all ${total}`, exact: true });
   assert.equal(await more.getAttribute('aria-expanded'), 'false');
   const mailName = `Mail priorities, ${mailCounts.problem + mailCounts.review} need you, 1 problem`;
@@ -174,9 +180,9 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   assert.equal(await rows.count(), total);
   await panel.getByRole('button', { name: 'Show fewer', exact: true }).click();
   assert.equal(await rows.count(), 5);
-  pass(`Needs you lists the problem first, then To review, five rows then "Show all ${total}"; each row names its workflow, what was found, why and a button named after the next step; New marks items found since the panel was last shown and a polite live region announces them; the Mail priorities tab reads "${mailName}" with a visible "!"`);
+  pass(`Needs you lists the problem first, then To review, five rows then "Show all ${total}"; the head counts "${total} items"; each row names its workflow, what was found, why and a button showing the next step and named "<next step>: <item>"; New marks items found since the panel was last shown and a polite live region announces them; the Mail priorities tab reads "${mailName}" with a visible "!"`);
 
-  await rows.first().getByRole('button', { name: problem.next, exact: true }).click();
+  await rows.first().getByRole('button', { name: problemAction, exact: true }).click();
   await page.locator('.desk-area-surface[data-other-work="mail"]').waitFor();
   assert.equal(await mailTab.getAttribute('aria-pressed'), 'true');
   await tasksTab.click();
@@ -264,7 +270,7 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   await unreadable.waitFor();
   assert.equal(await panel.getByRole('alert').count(), 0, 'A good read clears the error');
   assert.match(await unreadable.innerText(), /^Problem\s+Bills and calendar\s+Couldn't check Bills and calendar/);
-  assert.equal(await page.getByText(/^Nothing from your workflows/).count(), 0);
+  assert.equal(await page.getByText(/^Nothing (from your workflows|to review yet)/).count(), 0);
   await deskRow.getByRole('button', { name: 'Bills and calendar, 1 needs you, 1 problem', exact: true }).waitFor();
   await shot('07-needs-you-unavailable-1280.png');
   await page.unroute('**/api/needs-you');

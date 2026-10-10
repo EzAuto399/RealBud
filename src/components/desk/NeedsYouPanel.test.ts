@@ -1,12 +1,14 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { coreOfficeDesk } from "@shared/desk-areas";
 import { defaultDeskSections, effectiveDeskAreas } from "@shared/workspace-tabs";
+import type { Loop, LoopId, LoopRun } from "@shared/contracts";
 import type { NeedsYouItem, NeedsYouSnapshot } from "@shared/needs-you";
 import type { NeedsYouState } from "@/lib/needs-you";
 
-vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ state: {}, dispatch: vi.fn() }) }));
+const store = vi.hoisted(() => ({ state: {} as Record<string, unknown> }));
+vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ state: store.state, dispatch: vi.fn() }) }));
 import { NeedsYouPanel } from "./NeedsYouPanel";
 
 const at = (hour: number, minute = 0) => new Date(2026, 9, 10, hour, minute).toISOString();
@@ -19,7 +21,15 @@ const areas = (hidden: string[] = []) => effectiveDeskAreas(defaultDeskSections(
 const render = (value: NeedsYouState, hidden: string[] = []) =>
   renderToStaticMarkup(createElement(NeedsYouPanel, { state: value, active: true, areas: areas(hidden), onShowArea: vi.fn() }));
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
+// Fictional schedule: the jobs behind Mail priorities and Bills and calendar, with runs relative to now.
+const HOUR = 3_600_000;
+const loop = (id: LoopId, fields: Partial<Loop> = {}): Loop => ({ id, name: `Fictional ${id}`, description: "", available: true, enabled: true,
+  schedule: { type: "daily", time: "08:00", weekdays: [1, 2, 3, 4, 5] }, revision: 1, nextRunAt: null, evaluatorId: id, evaluatorVersion: 1, ...fields });
+const run = (loopId: LoopId, fields: Partial<LoopRun> = {}): LoopRun => ({ id: `run:${loopId}`, loopId, loopName: `Fictional ${loopId}`, scheduledFor: Date.now() - 2 * HOUR,
+  status: "completed", manual: false, startedAt: Date.now() - 2 * HOUR, finishedAt: Date.now() - HOUR, createdAt: Date.now() - 2 * HOUR, ...fields });
+const schedule = (fields: Record<string, unknown> = {}) => { store.state = { loops: [], loopRuns: [], activityLoad: { jobs: "ready", routines: "ready" }, desk: null, ...fields }; };
 
+beforeEach(() => { schedule(); });
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("Needs you on the Tasks tab", () => {
@@ -38,12 +48,29 @@ describe("Needs you on the Tasks tab", () => {
       item("bill:1", { area: "bills", title: "Oak St · Water", next: "Assign or resolve it in Bills and calendar" }),
     ], counts: { schedule: { problem: 1, review: 0 }, bills: { problem: 0, review: 1 } } }) }));
     const plain = text(html);
-    expect(plain).toContain("From your workflows 2 need you · checked 9:14 am");
+    expect(plain).toContain("From your workflows 2 items · checked 9:14 am");
     expect(html.indexOf(">Problems</h3>")).toBeLessThan(html.indexOf(">To review</h3>"));
     expect(plain).toMatch(/Problem Scheduled jobs Morning money check A run of this job failed\. Open the run in Schedule/);
     expect(plain).toMatch(/Bills and calendar Oak St · Water Fictional reason\. Assign or resolve it in Bills and calendar/);
-    expect(html).toMatch(/<button type="button" class="pm-control needs-you-action">Open the run in Schedule<\/button>/);
-    expect(html).toMatch(/<button type="button" class="pm-control needs-you-action">Assign or resolve it in Bills and calendar<\/button>/);
+    expect(html).toMatch(/<button type="button" class="pm-control needs-you-action" aria-label="Open the run in Schedule: Morning money check">Open the run in Schedule<\/button>/);
+    expect(html).toMatch(/<button type="button" class="pm-control needs-you-action" aria-label="Assign or resolve it in Bills and calendar: Oak St · Water">Assign or resolve it in Bills and calendar<\/button>/);
+  });
+
+  it("counts what it lists as items, not as Needs you, which is the task queue's own filter", () => {
+    expect(text(render(state({ snapshot: snapshot({ items: [item("mail:1")] }) })))).toContain("From your workflows 1 item · checked 9:14 am");
+    const three = text(render(state({ snapshot: snapshot({ items: [item("mail:1"), item("mail:2")], unavailable: [{ area: "bills", reason: "Fictional." }] }) })));
+    expect(three).toContain("From your workflows 3 items · checked 9:14 am");
+    expect(three).not.toMatch(/needs? you/);
+  });
+
+  it("names each row's button after its next step, then the item, so repeated short labels stay distinct", () => {
+    const html = render(state({ snapshot: snapshot({ items: [item("mail:1", { title: "Leak at 4 Fictional St", next: "Review it" }), item("mail:2", { title: "Keys for 9 Example Rd", next: "Review it" })],
+      unavailable: [{ area: "bills", reason: "Fictional." }] }) }));
+    expect(html).toContain('aria-label="Review it: Leak at 4 Fictional St">Review it</button>');
+    expect(html).toContain('aria-label="Review it: Keys for 9 Example Rd">Review it</button>');
+    expect(html).toMatch(/<button type="button" class="pm-control needs-you-action">Try again<\/button>/);
+    const hidden = render(state({ snapshot: snapshot({ items: [item("bill:1", { area: "bills", next: "Assign or resolve it" })] }) }), ["bills"]);
+    expect(hidden).toMatch(/<button type="button" class="pm-control needs-you-action">Show Bills and calendar on my Desk<\/button>/);
   });
 
   it("shows five rows, then Show all N", () => {
@@ -62,11 +89,38 @@ describe("Needs you on the Tasks tab", () => {
     expect(plain).not.toContain("Nothing from your workflows");
   });
 
-  it("says nothing needs you in one quiet line only after a full read found nothing", () => {
+  it("says nothing to review in one quiet line only when every shown area's job has checked", () => {
+    schedule({ loops: [loop("inbound-triage"), loop("weekly-bills")], loopRuns: [run("inbound-triage"), run("weekly-bills", { status: "failed", finishedAt: undefined })] });
     const html = render(state({ snapshot: snapshot() }));
-    expect(text(html).trim()).toBe("Nothing from your workflows needs you · checked 9:14 am");
+    expect(text(html).trim()).toBe("Nothing from your workflows to review · checked 9:14 am");
     expect(html).toContain('aria-label="From your workflows"');
     expect(html).not.toContain("<h2");
+    expect(html).not.toContain("Finish setup");
+    // A schedule still being read, or unreadable, is claimed neither way.
+    for (const routines of ["loading", "error"]) {
+      schedule({ activityLoad: { jobs: "ready", routines } });
+      expect(text(render(state({ snapshot: snapshot() }))).trim()).toBe("Nothing from your workflows to review · checked 9:14 am");
+    }
+  });
+
+  it("names shown areas whose job isn't set up, with Finish setup, instead of saying nothing needs review", () => {
+    schedule({ loops: [loop("inbound-triage", { enabled: false }), loop("weekly-bills", { available: false })] });
+    const html = render(state({ snapshot: snapshot() }));
+    expect(text(html).trim()).toBe("Nothing to review yet · Not checked yet: Mail priorities, Bills and calendar Finish setup");
+    expect(html).toContain('<button type="button" class="pm-control needs-you-action mt-2">Finish setup</button>');
+    expect(text(render(state({ snapshot: snapshot() }), ["bills"])).trim()).toBe("Nothing to review yet · Not checked yet: Mail priorities Finish setup");
+    // A reload keeps the schedule already on screen, so the line doesn't flicker back to "nothing".
+    schedule({ loops: [loop("inbound-triage", { enabled: false })], activityLoad: { jobs: "loading", routines: "loading" } });
+    expect(text(render(state({ snapshot: snapshot() }), ["bills"])).trim()).toBe("Nothing to review yet · Not checked yet: Mail priorities Finish setup");
+  });
+
+  it("names shown areas whose job never ran, without Finish setup when every job is set up", () => {
+    schedule({ loops: [loop("inbound-triage"), loop("weekly-bills")], loopRuns: [run("weekly-bills")] });
+    const html = render(state({ snapshot: snapshot() }));
+    expect(text(html).trim()).toBe("Nothing to review yet · Not checked yet: Mail priorities");
+    expect(html).not.toContain("Finish setup");
+    schedule({ loops: [loop("inbound-triage")] });
+    expect(text(render(state({ snapshot: snapshot() }))).trim()).toBe("Nothing to review yet · Not checked yet: Mail priorities, Bills and calendar Finish setup");
   });
 
   it("keeps the last snapshot after a failed read, with the error and Try again", () => {

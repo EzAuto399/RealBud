@@ -62,7 +62,7 @@ function snapshot(partial: Partial<DeskSnapshot> = {}): DeskSnapshot {
 }
 
 function render(desk: DeskSnapshot): string {
-  store.state = { desk, connected: true, bots: [], deskBookNonce: 0, hermes: null };
+  store.state = { desk, connected: true, bots: [], deskBookNonce: 0, hermes: null, loops: [], loopRuns: [], activityLoad: { jobs: "ready", routines: "ready" } };
   return renderToStaticMarkup(createElement(DeskPage, { caseEdits: new Map() }));
 }
 
