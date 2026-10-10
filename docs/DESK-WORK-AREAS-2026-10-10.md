@@ -54,7 +54,7 @@ Every area uses the same four parts, so all workflows read alike:
 - choose its notice level;
 - choose list or calendar where both exist.
 
-Needs you is locked first. Below the rows are three actions: Save, Reset to office default, and Undo last change. The sheet says what it changes: "Changes only your view. Your office's workflows and permissions stay the same." **Bud arranges Desk through the same path.** One Bud tool changes the same layout through the same server route as the sheet (revision check, history). Because it changes only the person's own view, it applies at once and Ask shows a receipt with Undo; deleting a saved view keeps its approval card. The server announces every saved layout, so Desk re-reads at once whoever made the change. Bigger changes, such as a new area, come from the pack.
+Needs you is locked first. Below the rows are three actions: Save, Reset to office default, and Undo last change. The sheet says what it changes: "Changes this computer's Desk. Your office's workflows and permissions stay the same." (The layout is saved per computer, not per person.) **Bud arranges Desk through the same path.** One Bud tool changes the same layout through the same server route as the sheet (revision check, history). Because it changes only the person's own view, it applies at once and Ask shows a receipt with Undo; deleting a saved view keeps its approval card. The server announces every saved layout, so Desk re-reads at once whoever made the change. Bigger changes, such as a new area, come from the pack.
 
 ## 4. What a pack declares (preset only)
 
@@ -71,7 +71,7 @@ Rules:
 - A preset grants no access and starts no work.
 - A person's hides, order and notice choices survive pack upgrades.
 - A new area from an upgrade appears at the end of the list.
-- Unknown fields are ignored by older cores.
+- Older cores refuse a pack with a `desk` key (`server/customer-packs.ts` allowlists every field), so a pack that presets Desk needs core 0.1.50 or later.
 - v1 packs, which have no `desk` key, keep today's Desk.
 
 ## 5. State matrix (every area)
@@ -119,3 +119,48 @@ Edge paths:
 ## 9. Limits
 
 This document is a design. Nothing in it is built. The mockup is static HTML with fictional data, and the "now" screenshots are local fictional renders. Neither is customer evidence. No user testing has been done yet.
+
+## 10. Build decisions for slices 2–4 (10 Oct 2026)
+
+Facts from the source survey that change the plan:
+- Mail, bills and bank data load only when their panel opens; no server event carries them.
+- Notices come from the static `notify` flag in `shared/workflow-catalog.ts`. Bank references is off, and maintenance and inspections are on.
+- Bill findings also include `review-hold`.
+- A notice click always lands on Tasks.
+
+Contracts, written first so packets can build in parallel:
+- `shared/desk-areas.ts`:
+  - areas `mail`, `bills`, `bank`, `shared-work`;
+  - the layout registry and the layouts each area can render;
+  - notice levels Each new item / One summary per run / Problems only;
+  - area to pack workflow, and area to scheduled jobs;
+  - `OfficeDesk`, the office preset: from the active pack, else `coreOfficeDesk()`.
+- `shared/needs-you.ts`:
+  - `GET /api/needs-you` is projected on the server from each store, so Desk makes one read instead of opening every panel;
+  - problems come first;
+  - stable `<source>:<id>` keys;
+  - a source that can't be read is listed as unavailable, never shown as empty.
+- Layout file v3:
+  - adds the `bank` section (appended at the end);
+  - each area section may carry the person's own `notify` and `layout`; absent means the office preset;
+  - a missing known section is filled at the end instead of sending the file to recovery;
+  - an unknown section is still refused.
+
+Packets (each with its own worktree and file list):
+1. Layout v3, the office preset in the response, and Bud's `desk_arrange` choosing notice and layout.
+2. The Needs you server projection.
+3. Pack `desk.areas`: validation, preview, and the office preset from the active pack, proved with two fictional packs. Austin's pack is unchanged in this release.
+4. Area cleanup:
+   - setup and schedule controls folded into a collapsed "Setup" disclosure;
+   - one primary action per area;
+   - no zero-count filters;
+   - a common status line (last check, next check, Check now).
+5. Desk integration:
+   - Needs you on the Tasks tab;
+   - tab counts with a text problem marker;
+   - the Bank references area;
+   - Arrange Desk split into "Work areas" and "Cards on Tasks", with notice and layout choices, Reset to office default and Undo last change.
+6. Notices:
+   - levels per area;
+   - problems always notify;
+   - a click opens the area that sent the notice.
