@@ -1,4 +1,5 @@
 import type { CsvColumnMapping, LoopSchedule, Recipe } from './contracts.ts';
+import type { DeskLayoutName, NoticeLevel } from './desk-areas.ts';
 
 export type CustomerPackCheckId = 'worker' | 'mail-account' | 'browser-account' | 'bank-mapping' | 'bill-register' | 'input-coverage' | 'timezone' | 'workflow-acceptance';
 export type CustomerPackCheck = { id: CustomerPackCheckId | 'installation'; label: string; state: 'passed' | 'needed' | 'unknown'; detail: string; nextAction: string };
@@ -15,7 +16,12 @@ export interface CustomerPack {
   files?: Partial<Record<CustomerPackFile, string>>;
   /** RealBud publisher signature (server/pack-signing.ts). Built-in packs ship inside the signed app and carry none. */
   signature?: { algorithm: 'ed25519'; keyId: string; value: string };
+  /** The office's default Desk work areas, in tab order (server/desk-preset.ts). Display only:
+   * it grants no access, starts no work and enables no schedule. A person's own Desk choices win. */
+  desk?: { areas: PackDeskArea[] };
 }
+/** One Desk work area a pack presets: a workflow of this pack, shown with an approved layout (shared/desk-areas.ts). */
+export type PackDeskArea = { workflow: string; title: string; layout: DeskLayoutName; notify: NoticeLevel };
 /** The only data files a pack may carry. */
 export const CUSTOMER_PACK_FILES = ['rei/recipes.json', 'rei/site-map.json', 'office/settings.json'] as const;
 export type CustomerPackFile = typeof CUSTOMER_PACK_FILES[number];
@@ -54,6 +60,8 @@ export interface CustomerPackChangePreview {
   recipes: { id: string; action: 'add' | 'update' | 'preserve' | 'retire'; before: CustomerPackRecipe | null; after: CustomerPackRecipe }[];
   skills: { id: string; action: 'add' | 'update' | 'preserve' | 'retire'; overrideKept: boolean }[];
   instructions: { key: string; before: string | null; after: string | null }[];
+  /** Plain lines for how the office's default Desk changes; empty when it doesn't. */
+  desk: string[];
   conflicts: string[]; canApply: boolean;
 }
 
