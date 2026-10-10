@@ -2,6 +2,23 @@
 // this narrow surface (window.ogb), never Node or ipcRenderer itself.
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
+// Before an update restarts RealBud, main asks whether the window holds unsaved
+// work. Without a handler nothing answers, and main's 2 s timeout decides: the
+// automatic restart waits, "Restart now" goes ahead. A handler that fails or
+// answers anything but false keeps the work.
+let unsavedCheck = null;
+ipcRenderer.on("update:query-unsaved", async (_event, id) => {
+  const check = unsavedCheck;
+  if (!check) return;
+  let unsaved = true;
+  try {
+    unsaved = (await check()) !== false;
+  } catch {
+    /* can't tell: keep the work */
+  }
+  ipcRenderer.invoke("update:unsaved-reply", id, { unsaved }).catch(() => {});
+});
+
 contextBridge.exposeInMainWorld("ogb", {
   /** Host platform ("darwin" | "win32" | "linux") — for platform-aware UI. */
   platform: process.platform,
@@ -93,12 +110,28 @@ contextBridge.exposeInMainWorld("ogb", {
 
   /** In-app auto-update. State object:
    *  { status: "idle"|"checking"|"available"|"downloading"|"downloaded"|"error",
-   *    version?, percent?, message? }. onState fires immediately with the
-   *    current state, then on every transition. Dormant in dev (no bridge). */
+   *    version?, percent?, message?, deferred?, restart?, installFailed?,
+   *    updatedFrom? } (docs/UPDATES-2026-10-10.md). onState fires immediately
+   *    with the current state, then on every transition. Dormant in dev. */
   updater: {
     check: () => ipcRenderer.invoke("update:check"),
     download: () => ipcRenderer.invoke("update:download"),
+    /** Main asks onQueryUnsaved's handler first and holds the install for unsaved work. */
     install: () => ipcRenderer.invoke("update:install"),
+    /** Holds the automatic restart for 4 hours; resolves false when main refuses (required, or nothing waiting). */
+    later: () => ipcRenderer.invoke("update:later"),
+    /** The countdown's "Not now". */
+    cancelCountdown: () => ipcRenderer.invoke("update:cancel-countdown"),
+    /** Clears the "Updated to" or "didn't install" note. */
+    dismissNote: () => ipcRenderer.invoke("update:dismiss-note"),
+    /** The one answer to main's "does this window hold unsaved work?" (true =
+     * unsaved). A newer handler replaces the last; returns an unsubscribe. */
+    onQueryUnsaved: (handler) => {
+      unsavedCheck = handler;
+      return () => {
+        if (unsavedCheck === handler) unsavedCheck = null;
+      };
+    },
     onState: (cb) => {
       ipcRenderer
         .invoke("update:get-state")

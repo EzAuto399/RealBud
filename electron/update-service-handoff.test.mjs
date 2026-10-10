@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { APP_VERSION, prepareServiceForUpdate, retireIncompatibleService, serviceCompatible } from "./update-service-handoff.mjs";
+import { APP_VERSION, prepareServiceForUpdate, readServiceActivity, retireIncompatibleService, serviceCompatible } from "./update-service-handoff.mjs";
 import { servicePidPath } from "./service-lifecycle.mjs";
 
 const INSTANCE = "a".repeat(32);
@@ -15,7 +15,7 @@ const dirs = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
 /** One fictional office service on 8799, driven only through its HTTP surface. */
-function office({ busy = false, refuseStop = false, exits = true, recorded = true } = {}) {
+function office({ busy = false, refuseStop = false, exits = true, recorded = true, health = {} } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "realbud-handoff-")); dirs.push(dir);
   if (recorded) writeFileSync(servicePidPath(dir), JSON.stringify({ version: 1, pid: 4242, port: 8799, instanceId: INSTANCE, startedAt: 1, controlToken: CONTROL }));
   // The session token reaches its owner only through the service's private file.
@@ -27,7 +27,7 @@ function office({ busy = false, refuseStop = false, exits = true, recorded = tru
     const { pathname } = new URL(String(url));
     if (!state.up) throw new Error("connection refused");
     if (pathname === "/api/health") return json({ app: "realbud", static: true, instanceId: INSTANCE, pid: 4242, version: "0.0.1-old",
-      controlId: createHash("sha256").update(CONTROL).digest("hex"), busy: state.busy });
+      controlId: createHash("sha256").update(CONTROL).digest("hex"), busy: state.busy, ...health });
     if (pathname === "/api/service/stop") {
       if (new Headers(init.headers).get("x-realbud-session") !== SESSION) return json({ error: "unauthorized" }, 401);
       state.stops.push(JSON.parse(String(init.body)));
@@ -51,7 +51,8 @@ describe("handing the office service over to an update", () => {
 
   it("stops an idle service through its control route, proves it gone, then allows the install", async () => {
     const { dir, state, options } = office();
-    expect(await prepareServiceForUpdate(options)).toEqual({ ready: true });
+    // Stopped by this handoff: an install that then does not go ahead starts it again.
+    expect(await prepareServiceForUpdate(options)).toEqual({ ready: true, stopped: true });
     expect(state.stops).toEqual([expect.objectContaining({ pid: 4242, instanceId: INSTANCE, ifIdle: true })]);
     expect(existsSync(servicePidPath(dir))).toBe(false);
   });
@@ -77,7 +78,34 @@ describe("handing the office service over to an update", () => {
   it("allows the install when nothing of ours is running or holding its port", async () => {
     const { state, options } = office({ recorded: false });
     state.up = false;
-    expect(await prepareServiceForUpdate(options)).toEqual({ ready: true });
+    // Nothing was stopped, so nothing is started again if the install does not go ahead.
+    expect(await prepareServiceForUpdate(options)).toEqual({ ready: true, stopped: false });
+  });
+});
+
+describe("what the office is doing, for an automatic restart", () => {
+  it("reports an idle office with the approvals waiting", async () => {
+    const { options } = office({ health: { waitingApprovals: 2 } });
+    expect(await readServiceActivity(options)).toEqual({ running: true, busy: false, waitingApprovals: 2 });
+  });
+
+  it("reads a service from before waitingApprovals as none waiting", async () => {
+    const { options } = office();
+    expect(await readServiceActivity(options)).toEqual({ running: true, busy: false, waitingApprovals: 0 });
+  });
+
+  it("counts a service that does not say it is idle as busy, and an unreadable count as one waiting", async () => {
+    expect(await readServiceActivity(office({ busy: true }).options)).toMatchObject({ busy: true });
+    expect(await readServiceActivity(office({ health: { busy: undefined } }).options)).toMatchObject({ busy: true });
+    expect(await readServiceActivity(office({ health: { waitingApprovals: "2" } }).options)).toMatchObject({ waitingApprovals: 1 });
+    expect(await readServiceActivity(office({ health: { waitingApprovals: Number.NaN } }).options)).toMatchObject({ waitingApprovals: 1 });
+  });
+
+  it("says when nothing of ours answers", async () => {
+    const { state, options } = office();
+    state.up = false;
+    expect(await readServiceActivity(options)).toEqual({ running: false });
+    expect(await readServiceActivity(office({ health: { instanceId: "b".repeat(32) } }).options)).toEqual({ running: false });
   });
 });
 

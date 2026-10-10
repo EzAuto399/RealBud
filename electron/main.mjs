@@ -1620,9 +1620,19 @@ app.whenReady().then(async () => {
   // Unpackaged runs open their window here. A launch window closed during the
   // wait stays closed; the Dock (activate) opens a new one.
   if (!app.isPackaged) win = createWindow();
-  // in-app auto-update (packaged only) — checks GitHub releases, downloads on
-  // the user's click, installs on "Restart to update". It always tells the live window.
-  startUpdater(() => (win && !win.isDestroyed() ? win : BrowserWindow.getAllWindows()[0] ?? null));
+  // in-app auto-update (packaged only): checks GitHub releases, downloads in the
+  // background and installs at a safe moment or on "Restart now". It always tells the live window.
+  startUpdater(() => (win && !win.isDestroyed() ? win : BrowserWindow.getAllWindows()[0] ?? null), {
+    // An install that stopped the office service and then did not go ahead starts it again,
+    // with the watchdog's own checks: never against a Stop or a quit.
+    startService: async () => {
+      if (serviceStopRequested || appQuitting()) return false;
+      serviceAdopted = false;
+      const ok = await startOrAdoptOfficeService();
+      if (ok) serverReady = true;
+      return ok;
+    },
+  });
 });
 
 app.on("window-all-closed", () => {
