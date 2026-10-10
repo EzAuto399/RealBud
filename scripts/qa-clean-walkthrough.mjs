@@ -348,9 +348,7 @@ try {
     // Arrange Desk: Show/Hide, Move up/down, Reset to recommended.
     await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: /^Tasks\s*\d*$/ }).click();
     await openMore();
-    const options = more.locator('details.desk-options');
-    if (!await options.evaluate(el => el.open)) await options.locator(':scope > summary').click();
-    await options.getByRole('button', { name: 'Arrange Desk', exact: true }).click();
+    await more.getByRole('group', { name: 'More Desk tools', exact: true }).getByRole('button', { name: 'Arrange Desk', exact: true }).click();
     const panel = page.getByRole('dialog', { name: 'Arrange Desk', exact: true });
     await panel.waitFor();
     assert.equal(await panel.getByRole('checkbox', { name: 'Needs you always shows', exact: true }).isDisabled(), true, 'the safety section cannot be hidden');

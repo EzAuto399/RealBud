@@ -80,13 +80,13 @@ try {
   const rulesState = await call('/api/inspection-rules');
   await call('/api/inspection-rules', 'PUT', { expectedRevision: rulesState.revision, rules: RULES });
 
-  // Desk → Bills → Inspections.
-  await page.getByRole('tablist', { name: 'Desk views', exact: true }).getByRole('tab', { name: /^Bills/ }).click();
+  // Desk → Bills and calendar → Inspections.
+  await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: 'Bills and calendar', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Inspections', exact: true });
   await panel.waitFor();
   await panel.getByText('Draft plan · not booked in Property Inspect').waitFor();
   await panel.getByText('fictional-inspector-A and fictional-inspector-B', { exact: false }).waitFor();
-  pass('Desk → Bills shows Inspections with the "not booked in Property Inspect" label and the rules summary');
+  pass('Desk → Bills and calendar shows Inspections with the "not booked in Property Inspect" label and the rules summary');
 
   // 1. Import history CSV through the file control: one unmatched row held, never guessed.
   await panel.locator('input[type="file"]').setInputFiles({ name: 'fictional-history.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });

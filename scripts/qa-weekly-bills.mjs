@@ -151,16 +151,14 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   page = await context.newPage(); page.on('request', request => { if (request.method() === 'GET') readPaths.push(new URL(request.url()).pathname); }); page.on('pageerror', error => errors.push(error.message));
   await page.goto(base + '/#/desk');
   // New private workspaces use Simple desk. Show this workflow through the
-  // normal layout controls before expecting its Other work entry to be present.
+  // normal layout controls before expecting its Desk tab to be present.
   await page.locator('.desk-more > summary').filter({ hasText: /^More$/ }).click();
-  await page.locator('.desk-options > summary').click();
-  await page.locator('.desk-options-body').getByRole('button', { name: 'Arrange Desk', exact: true }).click();
+  await page.getByRole('group', { name: 'More Desk tools', exact: true }).getByRole('button', { name: 'Arrange Desk', exact: true }).click();
   const arrange = page.getByRole('dialog', { name: 'Arrange Desk', exact: true });
   const showBills = arrange.getByLabel('Show Bills and calendar on my Desk', { exact: true });
   if (!await showBills.isChecked()) { await showBills.check(); await arrange.getByRole('button', { name: 'Save', exact: true }).click(); await arrange.getByText('Desk arrangement saved.', { exact: true }).waitFor(); }
   await arrange.getByRole('button', { name: 'Close Arrange Desk', exact: true }).click();
-  await page.locator('.desk-other-work > summary').click();
-  await page.getByRole('group', { name: 'Other work', exact: true }).getByRole('button', { name: 'Bills and calendar', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: 'Bills and calendar', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Source-linked bills and calendar' }); await panel.waitFor();
 
   const resultPanel = panel.getByRole('region', { name: 'Latest weekly bills result' });

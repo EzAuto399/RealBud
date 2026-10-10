@@ -95,25 +95,39 @@ try {
   await page.keyboard.press(`${modifier}+1`); await page.waitForURL(url => url.hash === '#/desk');
   pass('Rail buttons, ⌘/Ctrl 1–4 and a #you-connected-apps deep link reach their screens with aria-current kept');
 
-  // 3. One tab row on Desk: Desk's Tasks / Hermios buttons share the row with the shell tabs.
+  // 3. One tab row on Desk: Tasks, the work areas and Hermios share the row with the shell tabs.
   const tab = name => tabs.getByRole('tab', { name: new RegExp(`^${name}`) });
   const deskRow = page.locator('.pm-desk-header').getByRole('navigation', { name: 'Desk workspace', exact: true });
   assert.equal(await deskRow.getByRole('tablist', { name: 'Desk views', exact: true }).count(), 1, 'Shell tabs sit inside the Desk row');
   assert.equal(await page.locator('.rb-shell-tabbar').count(), 0, 'No second tab row on Desk');
-  assert.equal(await tab('Today').count() + await tab('Tasks').count(), 0, 'Tasks is a Desk button, not a duplicate tab');
-  await deskRow.getByRole('button', { name: /^Tasks/ }).waitFor(); await deskRow.getByRole('button', { name: 'Hermios', exact: true }).waitFor();
+  assert.equal(await tab('Today').count() + await tab('Tasks').count() + await tab('Bills').count() + await tab('Mail').count(), 0, 'Tasks and the work areas are Desk buttons, not duplicate tabs');
+  assert.deepEqual((await deskRow.locator('.desk-workspace-tabs > button').allTextContents()).map(text => text.replace(/\d+$/, '').trim()), ['Tasks', 'Mail priorities', 'Bills and calendar', 'Shared work', 'Hermios']);
+  await deskRow.getByRole('button', { name: 'Bills and calendar', exact: true }).click();
+  await page.locator('[data-other-work="bills"]').waitFor();
+  assert.equal(await deskRow.getByRole('button', { name: 'Bills and calendar', exact: true }).getAttribute('aria-pressed'), 'true');
+  // A saved view saved elsewhere joins the tabs without a reload; arrows keep focus as the row moves off Desk and back.
+  const seeded = await views();
+  assert.equal((await call('/api/workspace-tabs', 'PUT', { version: 2, expectedRevision: seeded.revision, tabs: [{ id: 'view-fictional-due', label: 'Due bills', visible: true, view: { kind: 'bills', filter: 'due-soon' } }], desk: seeded.desk })).status, 200);
+  await tab('Due bills').waitFor();
   await tab('Properties').click();
   await page.getByRole('heading', { name: 'Properties', exact: true }).waitFor();
   await tab('Properties').focus();
+  const focused = async name => (await tab(name).getAttribute('aria-selected')) === 'true' && await tab(name).evaluate(element => element === document.activeElement);
   await page.keyboard.press('ArrowRight');
-  await until(async () => await tab('Bills').getAttribute('aria-selected') === 'true', 'ArrowRight selects Bills');
-  await page.locator('[data-other-work="bills"]').waitFor();
+  await until(() => focused('Due bills'), 'ArrowRight selects and focuses Due bills');
+  await page.keyboard.press('ArrowLeft');
+  await until(() => focused('Properties'), 'ArrowLeft returns to and focuses Properties');
+  await page.keyboard.press('End');
+  await until(() => focused('Due bills'), 'End selects the last tab');
+  // Off Desk the row starts with Tasks, so Home goes back to Desk's Tasks.
   await page.keyboard.press('Home');
-  await until(async () => await tab('Properties').getAttribute('aria-selected') === 'true', 'Home returns to Properties');
-  assert.equal(await tabs.locator('[role="tab"][tabindex="0"]').count(), 1);
-  await deskRow.getByRole('button', { name: /^Tasks/ }).click();
   await page.getByRole('heading', { name: 'Task queue', exact: true }).waitFor();
-  pass('Desk shows one tab row: Tasks / Hermios plus Properties / Bills tabs that move with ArrowRight and Home');
+  assert.equal(await deskRow.getByRole('button', { name: /^Tasks/ }).getAttribute('aria-pressed'), 'true');
+  const cleared = await views();
+  assert.equal((await call('/api/workspace-tabs', 'PUT', { version: 2, expectedRevision: cleared.revision, tabs: [], desk: cleared.desk })).status, 200);
+  await tab('Due bills').waitFor({ state: 'detached' });
+  assert.equal(await tabs.locator('[role="tab"][tabindex="0"]').count(), 1);
+  pass('Desk shows one row: Tasks, Mail priorities, Bills and calendar, Shared work and Hermios, then Properties; a saved view arrives and leaves without reload, and ArrowRight/ArrowLeft/End move with focus and Home returns to Tasks');
 
   // 4. Panel width persists per member across reload.
   const handle = panel.getByRole('separator', { name: 'Resize side panel', exact: true });

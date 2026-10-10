@@ -575,8 +575,7 @@ try {
   assert.equal(restoredScans.total,2);assert.deepEqual(restoredScans.items[0],billFixture.mail.metadata.latestScan);
   await page.goto(origin+'/#/desk');
   await page.locator('.desk-more > summary').filter({hasText:/^More$/}).click();
-  await page.locator('.desk-options > summary').click();
-  await page.locator('.desk-options-body').getByRole('button',{name:'Arrange Desk',exact:true}).click();const arrange=page.getByRole('dialog',{name:'Arrange Desk',exact:true});
+  await page.getByRole('group',{name:'More Desk tools',exact:true}).getByRole('button',{name:'Arrange Desk',exact:true}).click();const arrange=page.getByRole('dialog',{name:'Arrange Desk',exact:true});
   let changedDeskLayout=false;
   for(const label of ['Show Mail priorities on my Desk','Show Bills and calendar on my Desk']){
     const visible=arrange.getByLabel(label,{exact:true});
@@ -584,8 +583,7 @@ try {
   }
   if(changedDeskLayout){await arrange.getByRole('button',{name:'Save',exact:true}).click();await arrange.getByText('Desk arrangement saved.',{exact:true}).waitFor();}
   await arrange.getByRole('button',{name:'Close Arrange Desk',exact:true}).click();
-  await page.locator('.desk-other-work > summary').click();
-  await page.getByRole('group',{name:'Other work',exact:true}).getByRole('button',{name:'Mail priorities',exact:true}).click();
+  await page.getByRole('navigation',{name:'Desk workspace',exact:true}).getByRole('button',{name:'Mail priorities',exact:true}).click();
   const mailPanel=page.getByRole('region',{name:'Mail priorities and follow-ups',exact:true});
   await mailPanel.getByRole('button',{name:'Done (1)',exact:true}).click();
   await mailPanel.getByText('Your note: '+billFixture.mail.item.note,{exact:true}).waitFor();
@@ -600,8 +598,7 @@ try {
   const countProposalPost = request => { if (new URL(request.url()).pathname === '/api/bill-proposals' && request.method() === 'POST') proposalPosts++; };
   page.on('request', countProposalPost);
   await page.getByRole('navigation',{name:'Desk workspace',exact:true}).getByRole('button',{name:/^Tasks\s*\d*$/}).click();
-  await page.locator('.desk-other-work > summary').click();
-  await page.getByRole('group',{name:'Other work',exact:true}).getByRole('button',{name:'Bills and calendar',exact:true}).click();
+  await page.getByRole('navigation',{name:'Desk workspace',exact:true}).getByRole('button',{name:'Bills and calendar',exact:true}).click();
   const billsPanel = page.getByRole('region', { name: 'Source-linked bills and calendar', exact: true });
   await billsPanel.locator(`[data-review-id="${retainedDraft.id}"]`).getByRole('button', { name: 'Continue saved review', exact: true }).click();
   const reviewForm = billsPanel.getByRole('form', { name: 'Review source bill', exact: true });

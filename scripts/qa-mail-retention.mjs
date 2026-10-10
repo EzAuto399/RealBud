@@ -79,15 +79,13 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));page.on('request',request=>{if(request.method()==='GET')readUrls.push(new URL(request.url()).pathname+new URL(request.url()).search);});
   await page.goto(base+'/#/desk');
   await page.getByRole('heading',{name:'Desk',exact:true}).waitFor();
-  assert.equal(readUrls.some(url=>url.startsWith('/api/mail-workspace/items?')),false,'Desk leaves mail conversations unloaded until Other work is opened');
+  assert.equal(readUrls.some(url=>url.startsWith('/api/mail-workspace/items?')),false,'Desk leaves mail conversations unloaded until the Mail priorities tab is opened');
   await page.locator('.desk-more > summary').filter({hasText:/^More$/}).click();
-  await page.locator('.desk-options > summary').click();
-  await page.locator('.desk-options-body').getByRole('button',{name:'Arrange Desk',exact:true}).click();const arrange=page.getByRole('dialog',{name:'Arrange Desk',exact:true});
+  await page.getByRole('group',{name:'More Desk tools',exact:true}).getByRole('button',{name:'Arrange Desk',exact:true}).click();const arrange=page.getByRole('dialog',{name:'Arrange Desk',exact:true});
   const showMail=arrange.getByLabel('Show Mail priorities on my Desk',{exact:true});
   if(!await showMail.isChecked()){await showMail.check();await arrange.getByRole('button',{name:'Save',exact:true}).click();await arrange.getByText('Desk arrangement saved.',{exact:true}).waitFor();}
   await arrange.getByRole('button',{name:'Close Arrange Desk',exact:true}).click();
-  await page.locator('.desk-other-work > summary').click();
-  await page.getByRole('group',{name:'Other work',exact:true}).getByRole('button',{name:'Mail priorities',exact:true}).click();
+  await page.getByRole('navigation',{name:'Desk workspace',exact:true}).getByRole('button',{name:'Mail priorities',exact:true}).click();
   const panel=page.getByRole('region',{name:'Mail priorities and follow-ups',exact:true});await panel.waitFor();
   await panel.getByText('Showing 20 of 43 conversations',{exact:false}).waitFor();
   await panel.getByRole('button',{name:'Needs attention (43)',exact:true}).waitFor();
@@ -96,7 +94,7 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   assert.ok(readUrls.some(url=>url.startsWith('/api/mail-workspace/items?')&&new URL(url,base).searchParams.get('limit')==='20'));
   assert.equal(await panel.getByRole('button',{name:'Review or edit this item',exact:true}).count(),20);
   assert.equal(await panel.getByRole('heading',{name:oldest.subject,exact:true}).count(),0);
-  pass('Real HTTP metadata has global counts without tasks; Desk loads no mail rows until Other work opens the full mail view with twenty of43 open conversations');
+  pass('Real HTTP metadata has global counts without tasks; Desk loads no mail rows until the Mail priorities tab opens the full mail view with twenty of43 open conversations');
   const search=panel.getByLabel('Find a conversation',{exact:true});await search.fill(oldest.subject);
   await panel.getByText('Showing 1 of 1 conversations',{exact:false}).waitFor();
   await panel.getByRole('button',{name:'Review or edit this item',exact:true}).click();const editor=panel.getByRole('form',{name:'Review saved mail item',exact:true});

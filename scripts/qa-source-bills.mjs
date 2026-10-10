@@ -96,16 +96,14 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   page = await context.newPage(); page.on('request', request => { if (request.method() === 'GET') readPaths.push(new URL(request.url()).pathname); }); page.on('pageerror', error => errors.push(error.message));
   await page.goto(base + '/#/desk');
   // New private workspaces use Simple desk. Show this workflow through the
-  // normal layout controls before expecting its Other work entry to be present.
+  // normal layout controls before expecting its Desk tab to be present.
   await page.locator('.desk-more > summary').filter({ hasText: /^More$/ }).click();
-  await page.locator('.desk-options > summary').click();
-  await page.locator('.desk-options-body').getByRole('button', { name: 'Arrange Desk', exact: true }).click();
+  await page.getByRole('group', { name: 'More Desk tools', exact: true }).getByRole('button', { name: 'Arrange Desk', exact: true }).click();
   const arrange = page.getByRole('dialog', { name: 'Arrange Desk', exact: true });
   const showBills = arrange.getByLabel('Show Bills and calendar on my Desk', { exact: true });
   if (!await showBills.isChecked()) { await showBills.check(); await arrange.getByRole('button', { name: 'Save', exact: true }).click(); await arrange.getByText('Desk arrangement saved.', { exact: true }).waitFor(); }
   await arrange.getByRole('button', { name: 'Close Arrange Desk', exact: true }).click();
-  await page.locator('.desk-other-work > summary').click();
-  await page.getByRole('group', { name: 'Other work', exact: true }).getByRole('button', { name: 'Bills and calendar', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: 'Bills and calendar', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Source-linked bills and calendar' }); await panel.waitFor();
   const preManualScanCalls = scanCalls;
   await panel.getByRole('button', { name: 'Check inbox for bills', exact: true }).click();
@@ -117,7 +115,7 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   await collection.getByText('Collection account and source gaps (1)', { exact: true }).waitFor();
   assert.equal(scanCalls, preManualScanCalls + 1); const mail = await request('/api/mail-workspace');
   assert.equal(mail.latestScan.status, 'partial'); assert.deepEqual(mail.latestScan.gaps, ['Attachment contents were not read. Any decision needing an attachment must stay held.']); assert.equal(mail.counts.total, 1); assert.equal(Object.hasOwn(mail, 'items'), false); const itemId = (await request('/api/mail-workspace/items?group=all&limit=20')).items[0].id;
-  pass('Other work opens the full bills view and collects only the real HTTP host-reviewed fictional Gmail scope without enabling a schedule; the unread invoice attachment keeps the receipt partial with that one gap');
+  pass('The Bills and calendar Desk tab opens the full bills view and collects only the real HTTP host-reviewed fictional Gmail scope without enabling a schedule; the unread invoice attachment keeps the receipt partial with that one gap');
   await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: /^Tasks\s*\d*$/ }).click();
   // Saved views are managed by Bud. Seed the route through the revisioned API
   // so reload, two-window and unmount/hydration checks still use a durable view.

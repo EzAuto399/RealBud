@@ -172,8 +172,7 @@ try {
   const beforeDeskMail = await views();
   assert.equal(beforeDeskMail.desk.sections.find(section => section.id === 'mail')?.visible, true, 'The unlinked sample fixture keeps the default Mail priorities section');
   const openDeskMail = async () => {
-    await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).locator('summary').filter({ hasText: /^Other work$/ }).click();
-    await page.getByRole('group', { name: 'Other work', exact: true }).getByRole('button', { name: 'Mail priorities', exact: true }).click();
+    await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: 'Mail priorities', exact: true }).click();
   };
   await openDeskMail();
   const mailPanel = page.getByRole('region', { name: 'Mail priorities and follow-ups', exact: true });
