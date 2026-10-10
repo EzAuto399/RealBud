@@ -30,13 +30,14 @@ export type HermesEngineExec = (executable: string, args: string[], options: { e
  * a binary whose bytes changed since its packaging manifest was written. */
 export async function admitHermesEngine(folder: string): Promise<HermesEngineBundle> {
   const manifestFile = join(folder, "runtime.json");
-  const stat = await lstat(manifestFile);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4096) throw failed("The work browser bundle needs repair.");
+  // A missing or quarantined bundle needs repair; it is not a saved-files problem.
+  const stat = await lstat(manifestFile).catch(() => null);
+  if (!stat?.isFile() || stat.isSymbolicLink() || stat.size > 4096) throw failed("The work browser bundle needs repair.");
   const raw: unknown = JSON.parse(await readFile(manifestFile, "utf8"));
   if (!record(raw) || raw.engine !== "hermes-agent-browser" || raw.version !== HERMES_BROWSER_ENGINE_VERSION || raw.platform !== process.platform || raw.arch !== process.arch || typeof raw.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(raw.sha256)) throw failed("The work browser bundle is not compatible with this build.");
   const executable = join(folder, process.platform === "win32" ? "agent-browser.exe" : "agent-browser");
-  const binary = await lstat(executable);
-  if (!binary.isFile() || binary.isSymbolicLink() || binary.nlink !== 1 || binary.size > 100_000_000 || createHash("sha256").update(await readFile(executable)).digest("hex") !== raw.sha256) throw failed("The work browser executable does not match its reviewed bundle.");
+  const binary = await lstat(executable).catch(() => null);
+  if (!binary?.isFile() || binary.isSymbolicLink() || binary.nlink !== 1 || binary.size > 100_000_000 || createHash("sha256").update(await readFile(executable)).digest("hex") !== raw.sha256) throw failed("The work browser executable does not match its reviewed bundle.");
   return { executable, sha256: raw.sha256 };
 }
 

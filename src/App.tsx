@@ -40,7 +40,8 @@ import { useOfficeLinkView } from "@/lib/use-office-link";
 
 const ChatView = lazy(() => import('@/components/ChatView').then(module => ({ default: module.ChatView })));
 const RoutinesPage = lazy(() => import('@/components/RoutinesPage').then(module => ({ default: module.RoutinesPage })));
-const DeskPage = lazy(() => import('@/components/DeskPage').then(module => ({ default: module.DeskPage })));
+const loadDeskPage = () => import('@/components/DeskPage');
+const DeskPage = lazy(() => loadDeskPage().then(module => ({ default: module.DeskPage })));
 const YouPage = lazy(() => import('@/components/YouPage').then(module => ({ default: module.YouPage })));
 const Onboarding = lazy(() => import('@/components/Onboarding').then(module => ({ default: module.Onboarding })));
 const WorkspaceTabsManager = lazy(() => import('@/components/WorkspaceTabsManager').then(module => ({ default: module.WorkspaceTabsManager })));
@@ -132,6 +133,9 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
   const recovering = Boolean(state.desk?.recovery?.active);
   // The office link comes first; once linked, Bud's own setup cover takes over.
   const officeLink = useOfficeLinkView(state.connected);
+  // Desk is home: fetch its code while the service answers. The browser keeps a chunk that failed
+  // during an outage failed until reload, and the link gate no longer renders Desk first.
+  useEffect(() => { if (state.connected) void loadDeskPage().catch(() => {}); }, [state.connected]);
   const [leftLinkGate, setLeftLinkGate] = useState(linkGateLeft);
   const linkGate = officeLinkGate(officeLink, { connected: state.connected, bookRead: state.desk !== null, recovering, preview: Boolean(DESIGN_PREVIEW_REASON), left: leftLinkGate });
   // A check that never answers hands over to the link screen's Try again and recovery.

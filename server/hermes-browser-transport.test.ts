@@ -214,6 +214,14 @@ describe("admitted native browser bundle and endpoint", () => {
     expect((await admitHermesEngine(root)).executable).toBe(binary);
     await writeFile(binary, "fictional replacement"); await expect(admitHermesEngine(root)).rejects.toThrow(/reviewed bundle/);
   });
+  it("names a missing bundle as needing repair, not as a saved-files failure", async () => {
+    const root = await tempRoot("rb-native-missing-");
+    // ENOENT carries a syscall, which the HTTP layer would report as "could not use its saved files".
+    await expect(admitHermesEngine(join(root, "absent"))).rejects.toThrow("The work browser bundle needs repair.");
+    await writeFile(join(root, "runtime.json"), JSON.stringify({ engine: "hermes-agent-browser", version: "0.26.0", platform: process.platform, arch: process.arch, sha256: "a".repeat(64) }));
+    await expect(admitHermesEngine(root)).rejects.toThrow(/reviewed bundle/);
+    await expect(admitHermesEngine(root)).rejects.not.toHaveProperty("syscall");
+  });
   it.skipIf(process.platform === "win32")("rejects a symlinked executable", async () => {
     const root = await tempRoot("rb-native-link-"); await mkdir(join(root, "bundle"));
     const binary = join(root, "other"); await writeFile(binary, "fictional");
