@@ -30,6 +30,8 @@ import { HermesAgentDriver } from "./drivers/acp/hermes.ts";
 import { recordEvents } from "./testing/events.ts";
 import { clearManagedAccess, FICTIONAL_GRANTED_KEY, grantManagedAccess } from "./testing/managed-grant.ts";
 import { privateFixtureRoot } from "./testing/private-profile-fixture.ts";
+import { askTurnOutcome, oplogAskTurn, setOpLogPath } from "./oplog.ts";
+import type { RuntimeEvent } from "./contracts.ts";
 import { MANAGED_MODEL_CHOICES, type ManagedModelChoiceId } from "../shared/managed-model-choices.ts";
 
 type Seen = { method: string; url: string; headers: IncomingHttpHeaders; body: Record<string, unknown>; closed: Promise<boolean> };
@@ -822,6 +824,10 @@ describe.runIf(Boolean(nativeCli) && process.platform !== "win32")("context wind
 });
 
 describe("Ask model relay usage", () => {
+  /** The relay's timing for `modelCalls` exchanges, `upstreamErrors` of them non-2xx or unanswered. */
+  const relayed = (modelCalls: number, upstreamErrors = 0) => ({ modelCalls, upstreamErrors,
+    modelMs: expect.any(Number), modelMaxMs: expect.any(Number), headersMaxMs: expect.any(Number) });
+
   it("counts each forwarded request's Modelvia id, and tokens only from a non-streamed JSON answer", async () => {
     const stream = 'data: {"choices":[],"usage":{"prompt_tokens":99,"completion_tokens":99}}\n\ndata: [DONE]\n\n';
     const root = home(), gateway = await upstream((response, seen) => {
@@ -840,7 +846,7 @@ describe("Ask model relay usage", () => {
     // A stream passes byte for byte and is not read for usage.
     expect(await (await post(relay, { model, messages, stream: true }, token, { accept: "text/event-stream" })).text()).toBe(stream);
     expect(gateway.seen[1]!.body.stream_options).toBeUndefined();
-    expect(lease.takeUsage()).toEqual({ requestIds: ["req-fictional-json", "req-fictional-stream"], calls: 2, inputTokens: 7, outputTokens: 3 });
+    expect(lease.takeUsage()).toEqual({ requestIds: ["req-fictional-json", "req-fictional-stream"], calls: 2, inputTokens: 7, outputTokens: 3, timing: relayed(2) });
     expect(lease.takeUsage()).toEqual({ requestIds: [], calls: 0 });
   });
 
@@ -853,7 +859,7 @@ describe("Ask model relay usage", () => {
     grantManagedAccess(root, { baseUrl: gateway.url });
     const { relay, token, lease } = await relayFor(root);
     expect((await post(relay, { model: "deepseek-v4.1-flash", messages }, token)).status).toBe(409);
-    expect(lease.takeUsage()).toEqual({ requestIds: ["req-fictional-original"], calls: 1 });
+    expect(lease.takeUsage()).toEqual({ requestIds: ["req-fictional-original"], calls: 1, timing: relayed(1, 1) });
   });
 
   it("counts a Jev decision on the lease's usage, taken with the turn's calls", () => {
@@ -879,7 +885,41 @@ describe("Ask model relay usage", () => {
       const relayUrl = JSON.parse(readFileSync(join(env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8")).providers.realbud.base_url;
       expect((await fetch(`${relayUrl}/chat/completions`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${env.REALBUD_MODEL_API_KEY}` }, body: JSON.stringify({ model: "deepseek-v4.1-flash", messages }) })).status).toBe(200);
     }, { usage });
-    expect(usage).toEqual({ requestIds: ["req-fictional-once"], calls: 1 });
+    expect(usage).toEqual({ requestIds: ["req-fictional-once"], calls: 1, timing: relayed(1) });
+  });
+
+  it("puts each exchange's headers wait and full duration on the lease's usage, counting refused and unanswered ones", async () => {
+    const wait = (ms: number) => new Promise(done => setTimeout(done, ms));
+    let calls = 0;
+    const root = home(), gateway = await upstream(async (response) => {
+      calls += 1;
+      if (calls === 1) {
+        await wait(120);
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.write("data: {\"n\":1}\n\n");
+        await wait(150);
+        response.end("data: [DONE]\n\n");
+      } else if (calls === 2) {
+        response.writeHead(500, { "content-type": "application/json" });
+        response.end("{}");
+      } // the third never answers
+    });
+    grantManagedAccess(root, { baseUrl: gateway.url });
+    const { relay, token, lease } = await relayFor(root, { timeoutMs: 1_000 });
+    const model = "deepseek-v4.1-flash";
+    await (await post(relay, { model, messages, stream: true }, token)).text();
+    const streamed = lease.takeUsage().timing!;
+    expect(streamed).toEqual(relayed(1));
+    expect(streamed.headersMaxMs).toBeGreaterThanOrEqual(100);
+    expect(streamed.modelMs).toBeGreaterThanOrEqual(streamed.headersMaxMs + 130);
+    expect(streamed.modelMaxMs).toBe(streamed.modelMs);
+    expect((await post(relay, { model, messages }, token)).status).toBe(500);
+    expect((await post(relay, { model, messages }, token)).status).toBe(504);
+    const refused = lease.takeUsage().timing!;
+    expect(refused).toEqual(relayed(2, 2));
+    // The 504 waited out the relay's own timeout: its time counts, its headers never came.
+    expect(refused.modelMaxMs).toBeGreaterThanOrEqual(900);
+    expect(refused.headersMaxMs).toBeLessThan(900);
   });
 });
 
@@ -912,6 +952,61 @@ describe("Ask worker key custody", () => {
     expect((await post(relay, { model: "claude-sonnet-5.5", messages }, turnToken)).status).toBe(200);
     const second = await instance.adapter.sendTurn({ threadId: "usage", text: "again" });
     expect(await settled(second.turnId)).toMatchObject({ type: "turn.completed", usage: { requestIds: ["req-fictional-turn"], calls: 1, inputTokens: 10, outputTokens: 5 } });
+  }, 30_000);
+
+  it("writes one content-free timing line per Ask turn, cold and then warm", async () => {
+    const root = home(), gateway = await upstream((response) => {
+      response.writeHead(200, { "content-type": "application/json", "x-request-id": "req-fictional-timing" });
+      response.end("{}");
+    });
+    grantManagedAccess(root, { baseUrl: gateway.url, choice: "sonnet-high" });
+    const { relay } = await relayFor(root);
+    chmodSync(FAKE_CLI, 0o755);
+    const dump = join(root, "fake-acp-dump.json"), log = join(root, "realbud.log");
+    const reply = "Fictional tenant Pat Example owes $1,234.";
+    Object.assign(process.env, { FAKE_ACP_DUMP: dump, FAKE_ACP_REPLY: reply, FAKE_ACP_UPDATES: JSON.stringify([
+      { sessionUpdate: "tool_call", toolCallId: "tc-shell", title: "terminal: cat /synthetic/tenant-ledger.csv", rawInput: { command: "cat /synthetic/tenant-ledger.csv" } },
+      { sessionUpdate: "tool_call", toolCallId: "tc-read", title: "mcp__realbud-workroom__read_file", rawInput: { path: "/synthetic/notes.txt" } },
+      { sessionUpdate: "tool_call", toolCallId: "tc-search", title: "web search: fictional tenant arrears" },
+    ]) });
+    setOpLogPath(log);
+    cleanups.push(() => { for (const key of ["FAKE_ACP_DUMP", "FAKE_ACP_REPLY", "FAKE_ACP_UPDATES"]) delete process.env[key]; setOpLogPath(""); });
+    const instance = await HermesAgentDriver.create({
+      instanceId: "fictional-ask", displayName: "Bud", enabled: true,
+      environment: { REALBUD_HERMES_HOME: root }, config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    const recorder = recordEvents(instance.adapter);
+    cleanups.push(async () => { recorder.stop(); await instance.dispose(); });
+    // What the server does when a product Ask turn completes (server/index.ts `turn.completed`).
+    const finish = async (turnId: string) => {
+      const done = await recorder.until(event => (event.type === "turn.completed" && event.turnId === turnId) || event.type === "runtime.error") as Extract<RuntimeEvent, { type: "turn.completed" }>;
+      expect(done.type).toBe("turn.completed");
+      oplogAskTurn({ outcome: askTurnOutcome({ ok: done.ok, stopReason: done.stopReason }), preludeMs: 25, totalMs: 900, timing: done.usage?.timing });
+      return done.usage!.timing!;
+    };
+
+    const first = await instance.adapter.sendTurn({ threadId: "timing-thread", text: "what does the fictional tenant owe?" });
+    const cold = await finish(first.turnId);
+    expect(cold).toMatchObject({ warm: false, toolCalls: 4, tools: ["terminal", "mcp__realbud-workroom__read_file", "run"], modelCalls: 0, upstreamErrors: 0 });
+    expect(cold.readyMs).toBeGreaterThan(0);
+    expect(cold.firstTextMs).toBeGreaterThanOrEqual(cold.readyMs!);
+    // The warm worker's model call lands on its next turn.
+    const turnToken = (JSON.parse(readFileSync(dump, "utf8")) as { env: Record<string, string> }).env.REALBUD_MODEL_API_KEY!;
+    expect((await post(relay, { model: "claude-sonnet-5.5", messages }, turnToken)).status).toBe(200);
+    const second = await instance.adapter.sendTurn({ threadId: "timing-thread", text: "and next month?" });
+    const warm = await finish(second.turnId);
+    expect(warm).toMatchObject({ warm: true, readyMs: 0, toolCalls: 4, modelCalls: 1, upstreamErrors: 0 });
+    expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(2);
+
+    const lines = readFileSync(log, "utf8").trim().split("\n");
+    expect(lines).toHaveLength(2);
+    expect(lines.map(line => JSON.parse(line))).toMatchObject([
+      { event: "turn", outcome: "completed", warm: false, preludeMs: 25, modelCalls: 0, totalMs: 900 },
+      { event: "turn", outcome: "completed", warm: true, readyMs: 0, modelCalls: 1, tools: ["terminal", "mcp__realbud-workroom__read_file", "run"] },
+    ]);
+    for (const text of [reply, "Pat Example", "/synthetic", "cat ", "web search", "fictional tenant", "timing-thread", first.turnId, second.turnId, "req-fictional-timing", turnToken]) {
+      expect(lines.join("\n")).not.toContain(text);
+    }
   }, 30_000);
 
   it("launches Ask with the relay token and overlay, never the office key, and never writes the key to the profile", async () => {

@@ -7,7 +7,7 @@
  *
  * Nothing here logs a request, a response body or the key.
  */
-import type { RunDecisionUsage, RunUsage } from "../shared/contracts.ts";
+import type { RunDecisionUsage, RunTiming, RunUsage } from "../shared/contracts.ts";
 import { modelviaRefusal, parseModelviaReceipt, type ModelviaReceipt } from "../shared/modelvia-receipt.ts";
 
 /** A run keeps at most this many request ids; a full list may be incomplete. */
@@ -40,6 +40,21 @@ export function noteModelviaRequest(usage: RecordedRunUsage, requestId: string |
   usage.calls += 1;
   if (usableId(requestId)) addRequestId(usage, requestId);
   else usage.unidentified = (usage.unidentified ?? 0) + 1;
+}
+
+export function emptyRunTiming(): RunTiming { return { modelCalls: 0, modelMs: 0, modelMaxMs: 0, headersMaxMs: 0, upstreamErrors: 0 }; }
+
+/** One chat exchange the model relay forwarded, into the run's `timing`: `ms`
+ * from sending it to its last byte, `headersMs` to the AI service's response
+ * headers (absent when it never answered), `status` that answer's status. */
+export function noteModelExchange(usage: RunUsage, exchange: { ms: number; headersMs?: number; status?: number }): void {
+  const timing = usage.timing ??= emptyRunTiming();
+  const ms = Math.max(0, Math.round(exchange.ms));
+  timing.modelCalls += 1;
+  timing.modelMs += ms;
+  timing.modelMaxMs = Math.max(timing.modelMaxMs, ms);
+  if (exchange.headersMs !== undefined) timing.headersMaxMs = Math.max(timing.headersMaxMs, Math.max(0, Math.round(exchange.headersMs)));
+  if (exchange.status === undefined || exchange.status < 200 || exchange.status > 299) timing.upstreamErrors += 1;
 }
 
 /** A non-streamed JSON answer: its token `usage`, and on a 409

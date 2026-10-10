@@ -17,12 +17,14 @@ export const APP_VERSION = /** @type {string} */ (createRequire(import.meta.url)
 
 /**
  * May this app adopt the answering service? Identity says "this office";
- * compatibility says "the same runtime this window was built for". A service
- * that predates version reporting is not compatible.
+ * compatibility says "the same runtime this window was built for". Only
+ * `runtimeVersion` counts: services before 0.1.49 sent just `version`, read
+ * from disk on each request, so after a manual install an old service claimed
+ * the new version. A service without `runtimeVersion` is retired, never adopted.
  * @param {unknown} body @param {import('./service-instance.mjs').ServiceIdentity} identity @param {string} [version]
  */
 export function serviceCompatible(body, identity, version = APP_VERSION) {
-  return isOurService(body, identity) && /** @type {Record<string, unknown>} */ (body).version === version;
+  return isOurService(body, identity) && /** @type {Record<string, unknown>} */ (body).runtimeVersion === version;
 }
 
 /**

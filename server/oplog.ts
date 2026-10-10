@@ -8,12 +8,13 @@ import { dirname, join } from "node:path";
 import { createEmptyFileSync, mkdirPrivateSync, restrictNewSync } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { redactSecretsInText } from "./redact.ts";
+import type { RunTiming } from "../shared/contracts.ts";
 
 /** Rotate at 1 MB, keep one previous file. A desk log is for the last few
  * mornings, not forever. */
 const MAX_BYTES = 1_000_000;
 
-export type OpEvent = "boot" | "shutdown" | "routine" | "crash" | "rejection" | "seat" | "storage";
+export type OpEvent = "boot" | "shutdown" | "routine" | "crash" | "rejection" | "seat" | "storage" | "connector" | "turn";
 
 let logPath: string | null = null;
 
@@ -78,6 +79,48 @@ export function oplog(event: OpEvent, detail: string, extra?: Record<string, unk
   // Packaged builds pipe the server's stderr into the app log, so a crash is
   // visible there too without the user finding the data dir.
   if (event === "crash" || event === "rejection") process.stderr.write(`${line}\n`);
+}
+
+export type AskTurnOutcome = "completed" | "stopped" | "failed" | "timeout";
+/** A tool name the turn line may keep: a bare identifier, never a title with values. */
+export const TURN_TOOL_NAME = /^[A-Za-z0-9_.:-]{1,64}$/;
+export const MAX_TURN_TOOLS = 20;
+
+/** How an Ask turn ended. `stopped`: RealBud or the person stopped it;
+ * `timedOut`: the turn watchdog ended it for time (a stall or its deadline). */
+export function askTurnOutcome(turn: { ok: boolean; stopReason?: string | null; stopped?: boolean; timedOut?: boolean }): AskTurnOutcome {
+  if (turn.timedOut) return "timeout";
+  if (turn.stopped || turn.stopReason === "cancelled" || turn.stopReason === "interrupted") return "stopped";
+  return turn.ok ? "completed" : "failed";
+}
+
+/**
+ * One line per finished Ask turn, so a slow answer can be explained from the
+ * person's own computer: where the time went before the worker (`preludeMs`),
+ * starting it (`readyMs`), in the model (`model*`) and in tools. Only these
+ * named numbers, booleans and tool names are written, whatever else the
+ * caller's objects carry: never a thread, message, argument, account or
+ * request id, or model output.
+ */
+export function oplogAskTurn(turn: { outcome: AskTurnOutcome; preludeMs: number; totalMs: number; timing?: RunTiming }): void {
+  const whole = (value: unknown): number => typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
+  const timing = turn.timing;
+  const tools = Array.isArray(timing?.tools) ? timing.tools.filter(name => typeof name === "string" && TURN_TOOL_NAME.test(name)).slice(0, MAX_TURN_TOOLS) : [];
+  oplog("turn", "Ask turn finished.", {
+    outcome: turn.outcome,
+    warm: timing?.warm === true,
+    preludeMs: whole(turn.preludeMs),
+    readyMs: whole(timing?.readyMs),
+    firstTextMs: typeof timing?.firstTextMs === "number" ? whole(timing.firstTextMs) : null,
+    toolCalls: whole(timing?.toolCalls),
+    tools,
+    modelCalls: whole(timing?.modelCalls),
+    modelMs: whole(timing?.modelMs),
+    modelMaxMs: whole(timing?.modelMaxMs),
+    headersMaxMs: whole(timing?.headersMaxMs),
+    upstreamErrors: whole(timing?.upstreamErrors),
+    totalMs: whole(turn.totalMs),
+  });
 }
 
 /** The process must survive a stray async throw. Electron forks this server as

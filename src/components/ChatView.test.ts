@@ -2,12 +2,16 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { askNextActions } from "@/lib/ask-next";
-import { AskNextActionPanel, MessagesList } from "./ChatView";
+import { flushedStream, toolStartedStream, type StreamState } from "@/state/store";
+import { AskNextActionPanel, ChatStreamTail, MessagesList } from "./ChatView";
 
 // This panel has no native dependencies; importing ChatView also imports
 // the composer's desktop-capability context, which expects a browser.
 vi.mock("./DesktopCapabilities", () => ({ useDesktopCapabilities: vi.fn() }));
-vi.mock("@/state/store", async importOriginal => ({ ...await importOriginal<object>(), useStore: () => ({ dispatch: vi.fn(), state: {} }), api: vi.fn() }));
+// The live tail reads the stream context; tests set it through this holder.
+const live = vi.hoisted(() => ({ stream: { streaming: {}, reasoning: {}, step: {} } as StreamState }));
+vi.mock("@/state/store", async importOriginal => ({ ...await importOriginal<object>(), useStore: () => ({ dispatch: vi.fn(), state: {} }), api: vi.fn(),
+  useStreaming: () => live.stream }));
 // The task card's own rendering has its tests; here only what ChatView hands it.
 const cards = vi.hoisted(() => [] as Array<Record<string, any>>);
 vi.mock("./BrowserTaskCard", () => ({ BrowserTaskCard: (props: Record<string, any>) => { cards.push(props); return null; }, useBrowserTasks: vi.fn() }));
@@ -118,5 +122,36 @@ describe("Work step chips after Stop", () => {
     const html = render(true, [ask, done, open, next]);
     expect(html).toContain("reading a page · stopped");
     expect(html).not.toContain("animate-spin");
+  });
+});
+
+describe("Ask working line names the current step", () => {
+  const tail = (busy = true) => renderToStaticMarkup(createElement(ChatStreamTail, {
+    threadId: "t-desk", busy, productAsk: true, since: Date.now(), onGrowth: vi.fn(),
+  }));
+
+  it("shows the step a tool start set, keeps the seconds out of the live region, and clears it when the answer streams", () => {
+    const started = toolStartedStream({ streaming: { "t-desk": "Let me check" }, reasoning: {}, step: {} }, "t-desk",
+      "mcp__bank_source__bank_transactions_list: acct-fictional");
+    live.stream = started;
+    const working = tail();
+    expect(working).toContain("Reading the bank feed…");
+    expect(working).not.toContain("acct-fictional");
+    expect(working).not.toContain("Let me check");
+    expect(working).toContain('aria-hidden="true"></span>');
+    expect(working).not.toContain("sr-only");
+
+    live.stream = flushedStream(started, [["t-desk", { text: "Here is", reasoning: "" }]]);
+    const answering = tail();
+    expect(answering).not.toContain("Reading the bank feed…");
+    expect(answering).toContain("Here is");
+  });
+
+  it("keeps the plain working line for an unknown tool", () => {
+    live.stream = toolStartedStream({ streaming: {}, reasoning: {}, step: { "t-desk": "Checking Gmail…" } }, "t-desk", "python3 /synthetic/sum.py");
+    const html = tail();
+    expect(html).not.toContain("Checking Gmail…");
+    expect(html).toContain('<span class="sr-only">Working</span>');
+    expect(tail(false)).toBe("");
   });
 });

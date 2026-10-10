@@ -82,20 +82,32 @@ describe("handing the office service over to an update", () => {
 });
 
 describe("adopting only a compatible service", () => {
-  const health = (over = {}) => ({ app: "realbud", static: true, instanceId: INSTANCE, version: APP_VERSION, ...over });
+  const health = (over = {}) => ({ app: "realbud", static: true, instanceId: INSTANCE, version: APP_VERSION, runtimeVersion: APP_VERSION, ...over });
   it("accepts this office's service running this app's version", () => {
     expect(serviceCompatible(health(), IDENTITY)).toBe(true);
   });
-  it.each([[{ version: "0.0.1-old" }], [{ version: undefined }], [{ instanceId: "b".repeat(32) }]])("refuses %j", (over) => {
+  it.each([[{ runtimeVersion: "0.0.1-old" }], [{ version: undefined, runtimeVersion: undefined }], [{ instanceId: "b".repeat(32) }]])("refuses %j", (over) => {
     expect(serviceCompatible(health(over), IDENTITY)).toBe(false);
+  });
+  it("refuses a pre-0.1.49 service that reports the newly installed version from disk", () => {
+    // 10 Oct: an office PC kept running 0.1.46 through two installs, because
+    // its health read the replaced version file and claimed the new version.
+    expect(serviceCompatible(health({ runtimeVersion: undefined }), IDENTITY)).toBe(false);
   });
 });
 
 describe("an older service found at launch", () => {
   it("adopts a service already running this app's version without asking it to stop", async () => {
     const { state, options } = office();
-    expect(await retireIncompatibleService({ body: { app: "realbud", static: true, instanceId: INSTANCE, version: APP_VERSION } }, options)).toEqual({ adopt: true });
+    expect(await retireIncompatibleService({ body: { app: "realbud", static: true, instanceId: INSTANCE, version: APP_VERSION, runtimeVersion: APP_VERSION } }, options)).toEqual({ adopt: true });
     expect(state.stops).toEqual([]);
+  });
+
+  it("stops an older service that claims this version without proving it was started with it", async () => {
+    const { state, options } = office();
+    expect(await retireIncompatibleService({ body: { app: "realbud", static: true, instanceId: INSTANCE, version: APP_VERSION } }, options)).toEqual({ adopt: false, problem: null });
+    expect(state.stops).toEqual([expect.objectContaining({ ifIdle: true })]);
+    expect(state.up).toBe(false);
   });
 
   it("stops an idle older service through its control route so the matching one can start", async () => {

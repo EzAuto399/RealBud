@@ -10,6 +10,7 @@ import { Document, isMap, isScalar, isSeq, parseDocument, visit, YAMLMap } from 
 
 import { ensureProfileDirectories, ensureProfileDirectory, readProfileFile, readProfileFiles, writeProfileFile, writeProfileFiles, type ProfileFileWrite } from "./hermes-profile-storage.ts";
 import { HERMES_PIN } from "./hermes-pin.ts";
+import { oplog } from "./oplog.ts";
 import { HERMES_RELEASES } from "./hermes-releases.ts";
 import { hermesHome, runtimeCli } from "./hermes-paths.ts";
 import { readRuntimeSelection, releaseHome, runtimeCommit, selectedHermesCli } from "./hermes-runtime-selection.ts";
@@ -224,20 +225,57 @@ function skillPlan(source: string, destination: string, plan: SkillPlan, depth =
   }
 }
 
-/** Startup initializes a new profile. For an existing one it only brings
- * SOUL/skills up to a changed pack where the office left them as shipped;
- * config and everything else change through Repair. */
+/** Startup initializes a new profile. For an existing one it brings SOUL/skills
+ * up to a changed pack where the office left them as shipped, and sets the one
+ * owned config key a running office must not wait for Repair to get:
+ * `tools.tool_search.enabled: off` (`startupConfig`). Everything else in config
+ * changes through Repair. */
 export function ensurePropertyPack(root?: string): { dir: string; wrote: string[]; kept: string[] } {
   if (!packInstalled(root)) return { ...applyPropertyPack(root), kept: [] };
-  const { dir, record } = prepareProfile(root);
+  const { dir, config, record } = prepareProfile(root);
   ensurePrivateRootAuth(root);
+  // A refused write must not cost this boot its SOUL/skills sync; readiness
+  // still asks for Repair while the key is missing.
+  let configWrote: string[] = [];
+  try { configWrote = writeStartupConfig(dir, config) ? ["config.yaml"] : []; }
+  catch { oplog("boot", "Bud's settings could not take up the startup change; Repair Bud finishes it."); }
   const shipped = shippedPack(root);
-  if (readShippedRecord(record).pack === shipped.digest) return { dir, wrote: [], kept: [] };
+  if (readShippedRecord(record).pack === shipped.digest) return { dir, wrote: configWrote, kept: [] };
   const { soul, record: recordBytes, skills } = prepareProfile(root, shipped.plan);
   const sync = shippedWrites(dir, shipped.files, [soul, ...skills], recordBytes, shipped.digest, new Set());
   writeProfileFiles([...sync.writes, sync.record]);
   if (sync.kept.length) console.info(`[pack] kept ${sync.kept.length} office-edited Bud file(s): ${sync.kept.join(", ")}`);
-  return { dir, wrote: sync.wrote, kept: sync.kept };
+  return { dir, wrote: [...configWrote, ...sync.wrote], kept: sync.kept };
+}
+
+/** The startup-owned config change for the current worker profile (the base
+ * profile, or a seat's under withWorkerProfile). Returns whether it wrote. */
+export function ensureStartupConfig(root?: string): boolean {
+  const dir = propertyProfileDir(root);
+  return writeStartupConfig(dir, readProfileFile(join(dir, "config.yaml")));
+}
+
+function writeStartupConfig(dir: string, config: Buffer | null): boolean {
+  const next = startupConfig(config);
+  if (next === null) return false;
+  writeProfileFile(join(dir, "config.yaml"), next, true, config);
+  return true;
+}
+
+/** An existing profile with tool search not yet off (one written by RealBud
+ * 0.1.48 or earlier, or an office that switched it back on), with only
+ * `tools.tool_search.enabled` changed, or null when nothing changes. Startup
+ * runs before any readiness read, so an upgraded office never reads as needing
+ * Repair for this key. Only where `tools.tool_search` is already a mapping
+ * (every Install and Repair since the deferral list writes one); an unreadable
+ * or older profile is left as it is, and readiness already asks Repair for it. */
+function startupConfig(existing: Buffer | null): string | null {
+  if (!existing) return null;
+  let doc: Document;
+  try { doc = policyDocument(existing.toString("utf8")); } catch { return null; }
+  if (toolSearchOff(doc) || !isMap(doc.getIn(["tools", "tool_search"]))) return null;
+  doc.setIn(["tools", "tool_search", "enabled"], "off");
+  return doc.toString();
 }
 
 /** Indented YAML map under `key:` (Hermes config style). */
@@ -383,8 +421,8 @@ export function mergePropertyPolicy(existing: string, defaults: string): string 
   // native-browser refusal covers. Other browser settings stay the office's.
   for (const [key, value] of Object.entries(WORKER_BROWSER_POLICY)) result.setIn(["browser", key], value);
   // Own only the listed compression, curator, login-policy, ACP-selection and
-  // keyless-web keys and the tool-search deferral list; every other setting in
-  // those sections (other platforms' toolsets included) stays the office's.
+  // keyless-web keys and the tool-search switch and deferral list; every other
+  // setting in those sections (other platforms' toolsets included) stays the office's.
   for (const key of ["compression", "curator", "tools", "auth", "platform_toolsets", "vault", "web"]) {
     if (result.has(key) && !isMap(result.get(key))) throw new Error(UNREADABLE_PROFILE);
     if (!result.has(key)) result.set(key, new YAMLMap(result.schema));
@@ -392,14 +430,11 @@ export function mergePropertyPolicy(existing: string, defaults: string): string 
   for (const [key, subkeys] of Object.entries(OWNED_SUBKEYS)) {
     for (const subkey of subkeys) if (policy.hasIn([key, subkey])) result.setIn([key, subkey], policy.getIn([key, subkey]));
   }
-  const search = result.getIn(["tools", "tool_search"]);
-  if (!isMap(search)) {
-    // Upstream reads a bare `false` here as `enabled: off` and anything else as
-    // auto (tools/tool_search.py `ToolSearchConfig.from_raw`); keep that meaning.
-    const map = new YAMLMap(result.schema);
-    if (search === false) map.set("enabled", "off");
-    result.setIn(["tools", "tool_search"], map);
-  }
+  // Tool search is off whatever the office had: a bare `true`/`false` (upstream's
+  // legacy form, tools/tool_search.py `ToolSearchConfig.from_raw`), `auto` or
+  // `on` all become a map with `enabled: off`, so every broker tool is direct.
+  if (!isMap(result.getIn(["tools", "tool_search"]))) result.setIn(["tools", "tool_search"], new YAMLMap(result.schema));
+  result.setIn(["tools", "tool_search", "enabled"], "off");
   // Hermes Connectors stay off; the rest of `tools.connectors` stays the office's.
   if (!isMap(result.getIn(["tools", "connectors"]))) result.setIn(["tools", "connectors"], new YAMLMap(result.schema));
   result.setIn(["tools", "connectors", "enabled"], false);
@@ -454,10 +489,22 @@ export const WORKER_DISABLED_TOOLSETS = ["browser", "computer_use", "connections
  * default (tools/tool_search.py `_DEFAULT_DEFERRED_TOOLS`, 0.21.3 and 0.21.5). */
 export const WORKER_DIRECT_TOOLS = ["todo_list", "session_search", "process_manage"] as const;
 
+/** Owned `tools.tool_search.enabled: off` (10 Oct 2026). Upstream defers every
+ * MCP tool, RealBud's per-turn brokers included, behind the tool_search bridge
+ * (tools/tool_search.py `is_deferrable_tool_name`); "off" is the only switch
+ * (`should_activate`, model_tools.py `get_tool_definitions`), so nothing defers
+ * and each turn skips the extra model call per tool family. Hermes reads the
+ * value through `_tri_state`, so a YAML `false` is off too. */
+function toolSearchOff(doc: Document): boolean {
+  const enabled = doc.getIn(["tools", "tool_search", "enabled"]);
+  return enabled === "off" || enabled === false;
+}
+
 /** Owned `tools.tool_search.defer`. An explicit list replaces upstream's
  * curated default wholesale, so this is that default (0.21.3) minus
- * `WORKER_DIRECT_TOOLS`: core tools defer only when named, so those three
- * become directly visible, and MCP and plugin tools still defer as before.
+ * `WORKER_DIRECT_TOOLS`. While tool search is off it defers nothing; it is
+ * kept so turning the bridge back on restores the earlier eager set (those
+ * three core tools direct; MCP and plugin tools deferred).
  * 0.21.5's default is the same set without `setup_mcp`, a tool it no longer
  * has; naming it there defers nothing. Promoting a release whose default
  * differs needs this list reviewed again. */
@@ -611,6 +658,7 @@ export function workerLimitsReady(root?: string): boolean {
       integer(["compression", "proactive_prune_tokens"], 1, 64_000) &&
       // Upstream reads 0 as no timeout and floors a positive value at 30 s.
       integer(["delegation", "child_timeout_seconds"], 1, 900) &&
+      toolSearchOff(doc) &&
       deferred !== null && WORKER_DEFERRED_TOOLS.every(name => deferred.has(name)) &&
       WORKER_DIRECT_TOOLS.every(name => !deferred.has(name)) &&
       // Upstream reads `bool(value)`, so only a real YAML false refuses borrowing.

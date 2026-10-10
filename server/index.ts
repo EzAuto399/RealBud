@@ -211,7 +211,7 @@ import type { HandoffTask, HumanHandoff } from "./human-handoffs.ts";
 import type { WorkflowRecord } from "./workflow-database.ts";
 import { BROWSER_LEGACY_JOB_ORIGIN, type BrowserTaskGrant } from "../shared/browser-task.ts";
 import { browserApprovalCardFrom, stopBrowserApprovalCards } from "./browser-approval-card.ts";
-import { applyPropertyPack, ensurePropertyPack, MANAGED_MODEL_KEY_ENV, propertyProfileDir, shippedProfileDigests } from "./hermes-pack.ts";
+import { applyPropertyPack, ensurePropertyPack, ensureStartupConfig, MANAGED_MODEL_KEY_ENV, packInstalled, propertyProfileDir, shippedProfileDigests } from "./hermes-pack.ts";
 import { importLegacyProfileFacts, keepAsideForRepair, MEMORY_HELD_MESSAGE, memoryHeldForLaunch, projectProfileFacts, retireRepairedArtifacts, workerFactsHeld, workerScope } from "./worker-state.ts";
 import { legacyProposalContextIdentity } from "./hermes-memory-review.ts";
 import { ensureWorkspaceMemorySigning } from "./hermes-memory-signing.ts";
@@ -238,7 +238,7 @@ import { importRuntimeSelection } from "./hermes-runtime-selection.ts";
 import { cancelWorkerRemoval, completeWorkerRemoval, requestWorkerRemoval, workerRemovalPending, workerRemovalStatus } from "./worker-removal.ts";
 import { createWorkerAutoSetup } from "./worker-auto-setup.ts";
 import { readPrivateJson, writePrivateJson } from "./private-json.ts";
-import { installCrashHandlers, oplog } from "./oplog.ts";
+import { askTurnOutcome, installCrashHandlers, oplog, oplogAskTurn } from "./oplog.ts";
 import { createCompanyInstallation } from "./company-installation.ts";
 import { normalizeCompanyWorkflowTemplate } from "./company/workflow-template.ts";
 import { managedService, serviceInstallationBinding } from "./managed-service.ts";
@@ -246,7 +246,7 @@ import { createServiceGrantRenewal } from "./service-entitlement-renewal.ts";
 import { isPrivilegedServiceMutation } from "./service-admin.ts";
 import { serviceControl } from "./service-control.ts";
 import { careCredentialsLocked, careStatus, lockCare, unlockCare, serviceAdmin } from "./care-unlock.ts";
-import { CANONICAL_BUD_ID, CANONICAL_BUD_NAME, productDenied, productRuntimeEventVisible, productTurnLimits } from "./product-mode.ts";
+import { broadcastRuntimeEvent, CANONICAL_BUD_ID, CANONICAL_BUD_NAME, productDenied, productRuntimeEventVisible, productTurnLimits } from "./product-mode.ts";
 import { hostTimezone, morningCheckResult, ownerLetterResult, LoopManager, recipeIdFromLoopId, type LoopId, type LoopExecuteResult } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { dispatchLoop, evaluatorForLoop } from "../shared/workflow-catalog.ts";
@@ -1104,6 +1104,8 @@ function productTurnStopMessage(
 }
 
 const expectedStoppedThreads = new Set<string>();
+/** Threads whose turn the watchdog ended for time (a stall or its deadline): the turn's timing line says `timeout`. */
+const timedOutThreads = new Set<string>();
 // Setup can be waiting on app access before the adapter owns a session. A
 // thread-wide stop bit can be cleared by a replacement; this identity cannot.
 const pendingTurnDispatches = new Map<string, symbol>();
@@ -1135,6 +1137,7 @@ const watchdog = new TurnWatchdog({
   checkMs: 30_000,
   ...productTurnLimits(),
   onStall: (turn, reason) => {
+    if (reason === "stall" || reason === "deadline") timedOutThreads.add(turn.threadId);
     const bot = store.bot(turn.botId);
     const instance = bot ? registry.get(bot.modelSelection.instanceId) : null;
     const besideYou = Boolean(fenceContextFor(turn.threadId));
@@ -1161,7 +1164,10 @@ watchdog.start();
 // once can collide on a bare id and patch each other's messages.
 const toolMessageByItem = new Map<string, string>(); // threadId:itemId -> messageId
 const toolNameByItem = new Map<string, string>(); // threadId:itemId -> tool title (history)
-const turnStartedAt = new Map<string, number>(); // threadId:turnId -> started ms
+// threadId:turnId -> started ms, and for a product Ask turn when RealBud received it and its prelude
+const turnStartedAt = new Map<string, { at: number; receivedAt?: number; preludeMs?: number }>();
+/** A product Ask turn about to be handed to the driver: when RealBud received it and how long it took to get there. */
+const askTurnDispatch = new Map<string, { receivedAt: number; preludeMs: number }>(); // threadId -> timing
 const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> messageId
 /** A paired phone's answer: who and where, and the line its receipts show. */
 type PhoneAnswer = { by: ToolCardAnswerer; line: string };
@@ -1300,7 +1306,7 @@ bus.subscribe((raw: RuntimeEvent) => {
     return;
   }
   if (intentionallyStopped && event.type !== "request.resolved" && event.type !== "turn.completed") return;
-  if (productRuntimeEventVisible(event) || event.type === "turn.started") broadcast({ kind: "runtime", event });
+  if (productRuntimeEventVisible(event) || event.type === "turn.started") broadcast({ kind: "runtime", event: broadcastRuntimeEvent(event) });
 
   const pushMessage = (m: Omit<Message, "id" | "at">) => {
     const message = store.appendMessage(event.threadId, group && m.role === "bot" ? { ...m, from: speaker } : m);
@@ -1317,7 +1323,9 @@ bus.subscribe((raw: RuntimeEvent) => {
     case "turn.started":
       if (bot && isProductBud(bot.id) && event.turnId) {
         const started = Date.parse(event.createdAt);
-        turnStartedAt.set(`${event.threadId}:${event.turnId}`, Number.isFinite(started) ? started : Date.now());
+        const dispatch = askTurnDispatch.get(event.threadId);
+        askTurnDispatch.delete(event.threadId);
+        turnStartedAt.set(`${event.threadId}:${event.turnId}`, { at: Number.isFinite(started) ? started : Date.now(), ...dispatch });
       }
       break;
     case "item.completed":
@@ -1661,6 +1669,7 @@ bus.subscribe((raw: RuntimeEvent) => {
     case "turn.completed": {
       // "Allow for this task" read grants end with the task.
       taskReadGrants.clear(event.threadId);
+      const timedOut = timedOutThreads.delete(event.threadId);
       settleAttendedTurn(event.threadId, intentionallyStopped
         ? { ok: false, stopReason: "cancelled", detail: "Stopped by you. Check the last result before running again." }
         : { ok: Boolean(event.ok), stopReason: event.stopReason });
@@ -1670,9 +1679,12 @@ bus.subscribe((raw: RuntimeEvent) => {
         if (turnKey) turnStartedAt.delete(turnKey);
         const ended = Date.parse(event.createdAt);
         const durationMs =
-          started != null && Number.isFinite(started) && Number.isFinite(ended) && ended >= started
-            ? ended - started
+          started != null && Number.isFinite(started.at) && Number.isFinite(ended) && ended >= started.at
+            ? ended - started.at
             : undefined;
+        // The turn's timing rides on its usage; the history row keeps usage only for calls or tokens, as before.
+        const usage = event.usage;
+        const counted = usage && (usage.calls || usage.inputTokens !== undefined || usage.outputTokens !== undefined) ? usage : undefined;
         try {
           appendHistory({
             kind: "turn",
@@ -1682,11 +1694,18 @@ bus.subscribe((raw: RuntimeEvent) => {
             threadId: event.threadId,
             turnId: event.turnId,
             ...(durationMs !== undefined ? { durationMs } : {}),
-            ...(event.usage ? { usage: event.usage } : {}),
+            ...(counted ? { usage: counted } : {}),
           });
         } catch {
           /* history must not take the desk down */
         }
+        const finishedAt = Number.isFinite(ended) ? ended : Date.now();
+        oplogAskTurn({
+          outcome: askTurnOutcome({ ok: Boolean(event.ok), stopReason: event.stopReason, stopped: intentionallyStopped, timedOut }),
+          preludeMs: started?.preludeMs ?? 0,
+          totalMs: finishedAt - (started?.receivedAt ?? started?.at ?? finishedAt),
+          timing: usage?.timing,
+        });
         if (!event.ok) {
           publishWorkerIssue({
             source: "ask",
@@ -1775,10 +1794,12 @@ async function finalScreenFrame(botId: string): Promise<Frame | null> {
 
 // ── turn dispatch (upstream ProviderCommandReactor, miniature) ──────────
 async function startTurn(...args: Parameters<typeof startSeatTurn>) {
+  // An Ask turn's prelude (its timing line) starts when RealBud receives it, before admission.
+  const [botId, text, opts] = args, receivedAt = Date.now();
   try {
     return await workspaceActivity.run(() => {
       if (privateRestoreLocked || shuttingDown) throw Object.assign(new Error('The service is held for restore or shutdown. Restart RealBud before starting work.'), {status:409});
-      return withWorkerProfile(desk.memberKeyForWorker(), () => startSeatTurn(...args));
+      return withWorkerProfile(desk.memberKeyForWorker(), () => startSeatTurn(botId, text, { ...opts, receivedAt }));
     });
   } finally {
     // A follow-up queued while Jev routed has no turn end to drain it when the route answered directly.
@@ -1814,6 +1835,8 @@ async function startSeatTurn(
     /** Set only by the session-authenticated desktop task Start route: the person pressed Start on their own card here.
      * Gates pick_control on that task's turn (personDesktopTurn); never the Ask pre-route or `decide`. */
     startedByPerson?: boolean;
+    /** Set by `startTurn`: when RealBud received this turn, for its timing line. */
+    receivedAt?: number;
   },
 ) {
   const bot = store.bot(botId);
@@ -2170,7 +2193,11 @@ async function startSeatTurn(
   };
   store.patchBot(bot.id, { busy: true, unread: false });
   expectedStoppedThreads.delete(threadId);
+  timedOutThreads.delete(threadId);
   watchdog.watch(threadId, bot.id);
+  const receivedAt = opts?.receivedAt ?? Date.now();
+  // Set just before the driver takes the turn; `turn.started` moves it onto the turn.
+  let dispatchTiming: { receivedAt: number; preludeMs: number } | undefined;
   broadcast({ kind: "bot", bot: store.bot(bot.id) });
 
   void (async () => {
@@ -2323,6 +2350,7 @@ async function startSeatTurn(
       }
       assertDispatch();
       managedService.assertCapability("reasoning");
+      if (isProductBud(bot.id)) askTurnDispatch.set(threadId, dispatchTiming = { receivedAt, preludeMs: Date.now() - receivedAt });
       await instance.adapter.sendTurn({
         threadId,
         text: turnText,
@@ -2342,6 +2370,19 @@ async function startSeatTurn(
       assertDispatch();
       if (rewound) store.patchBot(bot.id, { rewound: false, resumeCursors: {} });
     } catch (e) {
+      // A product Ask turn that never reached the driver still gets its one
+      // timing line; one that did gets it when its turn completes.
+      if (isProductBud(bot.id) && (!dispatchTiming || askTurnDispatch.get(threadId) === dispatchTiming)) {
+        if (dispatchTiming) askTurnDispatch.delete(threadId);
+        const now = Date.now();
+        // A newer request on this thread owns its timeout flag.
+        const timedOut = turnDispatchGenerations.get(threadId) === dispatchAttempt && timedOutThreads.delete(threadId);
+        oplogAskTurn({
+          outcome: askTurnOutcome({ ok: false, stopReason: "error", stopped: !ownsDispatch() || expectedStoppedThreads.has(threadId), timedOut }),
+          preludeMs: dispatchTiming?.preludeMs ?? now - receivedAt,
+          totalMs: now - receivedAt,
+        });
+      }
       // Stop/new work owns its own busy state and watchdog. A late setup
       // failure must never settle or report an error into that replacement.
       if (!ownsDispatch()) {
@@ -5805,10 +5846,16 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     // installation's service that happens to serve the same API on the same
     // port. `instanceId` is a hash of this installation's data directory, so it
     // matches for this office only and discloses no path.
+    //
+    // `runtimeVersion` holds the same value as `version`; its presence says the
+    // version is the one this process started with. Services before 0.1.49
+    // re-read it from disk, so after a manual install they reported the new
+    // version while running the old code. The app adopts only a service that
+    // sends `runtimeVersion` (electron/update-service-handoff.mjs).
     if (method === "GET" && path === "/api/health") {
       if (!localSessionPublished) return json(res, 503, { error: "starting" });
       return json(res, 200, { app: "realbud", pid: process.pid, static: Boolean(STATIC_DIR), instanceId: SERVICE_INSTANCE_ID, controlId: SERVICE_CONTROL.id, version: appVersion(),
-        busy: serviceBusy() });
+        runtimeVersion: appVersion(), busy: serviceBusy() });
     }
 
     // ── provider instances (model picker) ──
@@ -6257,6 +6304,13 @@ bindSlackBridge({
 const workspaceIdentity = await companyHost.workspaceIdentity();
 const onboarding = createOnboardingHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, memberKey: () => desk.memberKeyForWorker() });
 desk.setMemberKey(workspaceIdentity.workerMemberKey ?? '');
+// The boot pack step above touched the base profile only; a seat's own worker
+// profile takes the same startup-owned config change, so an upgraded seat does
+// not read as needing Repair.
+if (desk.memberKeyForWorker()) {
+  try { withWorkerProfile(desk.memberKeyForWorker(), () => { if (packInstalled()) ensureStartupConfig(); }); }
+  catch { oplog("boot", "A seat's Bud settings could not take up the startup change; Repair Bud finishes it."); }
+}
 // Bud's memory, learning and office edits live in RealBud (D/worker-state); the
 // worker profile is a projection, so deleting or replacing the worker loses nothing.
 /** Every path that resets SOUL.md to the pack (Repair, Install, apply-pack,

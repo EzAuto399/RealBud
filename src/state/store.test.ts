@@ -1,6 +1,6 @@
 import { isValidElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, StoreProvider } from './store';
+import { api, clearedStream, flushedStream, StoreProvider, toolStartedStream } from './store';
 
 // Render StoreProvider once, without a DOM, to reach its real dispatch.
 const hook = vi.hoisted(() => ({ state: null as null | ((initial: unknown) => unknown), raw: [] as Array<{ type: string }> }));
@@ -66,5 +66,25 @@ describe('turn fallback polling', () => {
   });
   it('still polls while the live stream is down', async () => {
     expect(await sendWith(false)).toBeGreaterThan(0);
+  });
+});
+
+describe('Ask step line in the live stream', () => {
+  const empty = { streaming: {}, reasoning: {}, step: {} };
+  it('names the step at a tool start, keeps it through thinking, and drops it when answer text streams', () => {
+    const started = toolStartedStream({ ...empty, streaming: { t: 'Let me look' } }, 't', 'mcp__connected_apps__GMAIL_LIST_THREADS: inbox');
+    expect(started).toEqual({ streaming: {}, reasoning: {}, step: { t: 'Checking Gmail…' } });
+    const thinking = flushedStream(started, [['t', { text: '', reasoning: 'hmm' }]]);
+    expect(thinking.step).toEqual({ t: 'Checking Gmail…' });
+    const answering = flushedStream(thinking, [['t', { text: 'Two new', reasoning: '' }]]);
+    expect(answering.step).toEqual({});
+    expect(answering.streaming).toEqual({ t: 'Two new' });
+  });
+  it('replaces a step at the next tool, leaves none for an unknown one, and clears it with the turn', () => {
+    const bank = toolStartedStream(toolStartedStream(empty, 't', 'mcp__workroom__workroom_read'), 't', 'mcp__bank_source__bank_transactions_list');
+    expect(bank.step).toEqual({ t: 'Reading the bank feed…' });
+    expect(toolStartedStream(bank, 't', 'tool').step).toEqual({});
+    expect(clearedStream({ ...bank, step: { ...bank.step, other: 'Checking Gmail…' } }, 't').step).toEqual({ other: 'Checking Gmail…' });
+    expect(clearedStream(empty, 't')).toBe(empty);
   });
 });

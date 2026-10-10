@@ -44,8 +44,8 @@ from agent.skill_utils import parse_config_string_list
 from tools.registry import registry
 from tools.delegate_tool_toolsets import _resolve_child_toolsets
 config = load_config()
-names = lambda enabled, disabled: sorted(t["function"]["name"] for t in get_tool_definitions(
-    enabled_toolsets=enabled, disabled_toolsets=disabled, quiet_mode=True, skip_tool_search_assembly=True))
+names = lambda enabled, disabled, assemble=False: sorted(t["function"]["name"] for t in get_tool_definitions(
+    enabled_toolsets=enabled, disabled_toolsets=disabled, quiet_mode=True, skip_tool_search_assembly=not assemble))
 if "enabled_toolsets is None" in inspect.getsource(acp_session.SessionManager._make_agent):
     from hermes_cli.tools_config import _get_platform_tools, enabled_mcp_server_names
     resolved = _get_platform_tools(config, "acp")
@@ -68,6 +68,8 @@ for server, tool in servers:
     registry.register_toolset_alias(server, "mcp-" + server)
 mounted = acp_session._expand_acp_enabled_toolsets(enabled, mcp_server_names=[server for server, _ in servers])
 out["mounted"] = names(mounted, disabled)
+# What the model is sent, after the tool_search step (model_tools.py).
+out["assembled"] = names(mounted, disabled, True)
 class Parent: pass
 parent = Parent(); parent.enabled_toolsets = mounted; parent.disabled_toolsets = disabled
 out["children"] = {}
@@ -92,7 +94,7 @@ out["review_input_budget"] = background_review._review_input_token_budget(backgr
 print("PROBE " + json.dumps(out))
 `;
 
-type Probe = { enabled: string[]; parent: string[]; mounted: string[]; children: { inherit: string[]; ask: string[] }; adopt_external_logins: boolean | null;
+type Probe = { enabled: string[]; parent: string[]; mounted: string[]; assembled: string[]; children: { inherit: string[]; ask: string[] }; adopt_external_logins: boolean | null;
   vaults: Record<"onepassword" | "bitwarden", { installed: boolean; enabled: boolean }> | null; run_budget_seconds: number | null; review_input_budget: number | null };
 
 const scratch = mkdtempSync(join(tmpdir(), "realbud-acp-tools-"));
@@ -156,6 +158,10 @@ describe.runIf(Boolean(python && candidate) && process.platform !== "win32")("As
   it("keeps RealBud's mounted brokers", () => {
     expect(result.mounted).toEqual([...today, ...brokers].sort());
   });
+  it("sends the model every broker directly, with no tool_search bridge", () => {
+    expect(result.assembled).toEqual(result.mounted);
+    for (const bridge of ["tool_search", "tool_describe", "tool_call"]) expect(result.assembled).not.toContain(bridge);
+  });
   it("gives a subagent no excluded tool, even one it asks for, and never memory or delegation", () => {
     for (const tools of [result.children.inherit, result.children.ask]) {
       expect(tools.filter(excluded)).toEqual([]);
@@ -175,6 +181,8 @@ describe.runIf(Boolean(python && candidate) && process.platform !== "win32")("As
   it.runIf(Boolean(current))("matches 0.21.3's Ask tools apart from the Hermes browser and web tools 0.21.3 still advertises", () => {
     const older = probe(current!);
     expect(older.parent.filter(tool => !/^(?:browser_|web_)/.test(tool))).toEqual(result.parent);
+    // Tool search off holds there too: no broker is deferred behind the bridge.
+    expect(older.assembled).toEqual(older.mounted);
     expect(older.adopt_external_logins).toBeNull();
     expect(older.vaults).toEqual(result.vaults);
     expect(older.run_budget_seconds).toBe(840);

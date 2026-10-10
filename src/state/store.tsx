@@ -35,6 +35,7 @@ import { SERVICE_UNAVAILABLE_EVENT, isLocalServiceProxyFailure, localServiceErro
 import { notifyDeskNeedsYou } from "@/lib/notify-desktop";
 import { notifyRoutineRun } from '@/lib/notify-routine';
 import { STREAM_COMMIT_INTERVAL_MS } from "@/lib/chat-scroll";
+import { askStepLabel } from "@/lib/ask-step-label";
 import { parseLiveStreamSnapshot, restoredLiveStreams } from "@shared/live-stream";
 import { hydrateLiveSnapshot } from "@/lib/live-hydration";
 import { readWorkerIssues, type WorkerIssue } from "@/lib/worker-issues";
@@ -994,14 +995,48 @@ export async function api(path: string, init?: RequestInit, opts?: { timeoutMs?:
  * the components that read this hook (the chat's streaming tail), while every
  * useStore consumer — sidebar, mascots, pickers, the settled transcript —
  * keeps its render tree untouched during a stream. */
-interface StreamState {
+export interface StreamState {
   /** in-flight assistant text per threadId */
   streaming: Record<string, string>;
   /** in-flight extended thinking per threadId (ephemeral) */
   reasoning: Record<string, string>;
+  /** the plain step line per threadId while Bud uses a known tool (ask-step-label) */
+  step: Record<string, string>;
 }
-const EMPTY_STREAM: StreamState = { streaming: {}, reasoning: {} };
+const EMPTY_STREAM: StreamState = { streaming: {}, reasoning: {}, step: {} };
 const StreamContext = createContext<StreamState>(EMPTY_STREAM);
+
+/** One thread's live text, thinking and step line dropped. */
+export function clearedStream(prev: StreamState, threadId: string): StreamState {
+  if (!(threadId in prev.streaming) && !(threadId in prev.reasoning) && !(threadId in prev.step)) return prev;
+  const { [threadId]: _s, ...streaming } = prev.streaming;
+  const { [threadId]: _r, ...reasoning } = prev.reasoning;
+  const { [threadId]: _t, ...step } = prev.step;
+  return { streaming, reasoning, step };
+}
+
+/** Buffered deltas appended; answer text streaming again replaces the step line. */
+export function flushedStream(prev: StreamState, entries: Array<[string, { text: string; reasoning: string }]>): StreamState {
+  const streaming = { ...prev.streaming };
+  const reasoning = { ...prev.reasoning };
+  const step = { ...prev.step };
+  for (const [threadId, d] of entries) {
+    if (d.text) {
+      streaming[threadId] = (streaming[threadId] ?? "") + d.text;
+      delete step[threadId];
+    }
+    if (d.reasoning) reasoning[threadId] = (reasoning[threadId] ?? "") + d.reasoning;
+  }
+  return { streaming, reasoning, step };
+}
+
+/** A tool start drops pre-tool narration from the live bubble and names the
+ * step from the title's leading tool id only; an unknown tool leaves no line. */
+export function toolStartedStream(prev: StreamState, threadId: string, title: unknown): StreamState {
+  const cleared = clearedStream(prev, threadId);
+  const label = askStepLabel(title);
+  return label ? { ...cleared, step: { ...cleared.step, [threadId]: label } } : cleared;
+}
 
 export function useStreaming() {
   return useContext(StreamContext);
@@ -1052,12 +1087,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // is actually waiting, and the next block's deltas append onto the
     // duplicated tail instead of starting a fresh bubble.
     deltaBuffer.current.delete(threadId);
-    setStream((prev) => {
-      if (!(threadId in prev.streaming) && !(threadId in prev.reasoning)) return prev;
-      const { [threadId]: _s, ...streaming } = prev.streaming;
-      const { [threadId]: _r, ...reasoning } = prev.reasoning;
-      return { streaming, reasoning };
-    });
+    setStream((prev) => clearedStream(prev, threadId));
   };
   const flushDeltas = () => {
     if (deltaFlush.current !== null) {
@@ -1068,15 +1098,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (buf.size === 0) return;
     const entries = [...buf];
     buf.clear();
-    setStream((prev) => {
-      const streaming = { ...prev.streaming };
-      const reasoning = { ...prev.reasoning };
-      for (const [threadId, d] of entries) {
-        if (d.text) streaming[threadId] = (streaming[threadId] ?? "") + d.text;
-        if (d.reasoning) reasoning[threadId] = (reasoning[threadId] ?? "") + d.reasoning;
-      }
-      return { streaming, reasoning };
-    });
+    setStream((prev) => flushedStream(prev, entries));
   };
 
   // debounced PATCH per bot for text-field edits (name/title/description)
@@ -1435,7 +1457,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           deltaFlush.current = null;
           deltaBuffer.current.clear();
           const snapshot = parseLiveStreamSnapshot(frame.streams) ?? [];
-          setStream(restoredLiveStreams(snapshot));
+          setStream({ ...restoredLiveStreams(snapshot), step: {} });
           streamTurns.clear();
           for (const row of snapshot) streamTurns.set(row.threadId, row.turnId);
           break;
@@ -1574,8 +1596,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (event.turnId && !currentTurn) streamTurns.set(event.threadId, event.turnId);
           if (event.type === "item.started" && event.itemType === "tool") {
             // Drop pre-tool narration from the live bubble; the finished
-            // answer streams after the tool work.
-            clearStream(event.threadId);
+            // answer streams after the tool work. Meanwhile the working line
+            // names the step ("Reading the bank feed…") from the tool id.
+            deltaBuffer.current.delete(event.threadId);
+            setStream((prev) => toolStartedStream(prev, event.threadId, event.title));
             break;
           }
           if (event.type === "content.delta") {

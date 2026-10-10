@@ -11,6 +11,7 @@ import { ensureDirs, EVENTS_DIR, NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance, RuntimeEvent } from "../../contracts.ts";
 import { approvalUrl, browserApprovalDraft, legacyBrowserGrant } from "../../browser-authority.ts";
 import { EventBus } from "../../harness/bus.ts";
+import { broadcastRuntimeEvent } from "../../product-mode.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { removeFixture } from "../../testing/private-fixture.ts";
 import { HermesAgentDriver } from "./hermes.ts";
@@ -111,7 +112,8 @@ describe("browser approval card in the ACP core", () => {
     const started = recorder.events.flatMap(event => event.type === "item.started" ? [event] : []);
     expect(started.map(event => event.title)).toEqual([
       "Opened a page", "Opened a page", "Downloaded a file", "Opened the sign-in page", "Filled a field", "Uploaded a file",
-      "Used the work browser", "web search: https://fictional-other.example/a/b",
+      // Any other tool keeps only a bare identifier: a human title with values becomes "tool".
+      "Used the work browser", "tool",
     ]);
     // The repeat watchdog still tells two pages apart, from the real arguments.
     expect(started[0].toolFingerprint).toMatch(/^[a-f0-9]{64}$/);
@@ -123,10 +125,10 @@ describe("browser approval card in the ACP core", () => {
     const events = readFileSync(join(EVENTS_DIR, `${thread}.ndjson`), "utf8");
     const native = readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8");
     expect(events).not.toContain("toolFingerprint");
-    for (const log of [events, native]) {
-      expect(log).toContain("web search: https://fictional-other.example/a/b");
-      for (const value of values) expect(log).not.toContain(value);
-    }
+    // Only the private native log keeps another tool's title as Hermes sent it.
+    expect(native).toContain("web search: https://fictional-other.example/a/b");
+    expect(events).not.toContain("fictional-other.example");
+    for (const log of [events, native]) for (const value of values) expect(log).not.toContain(value);
     const calls = native.trim().split("\n").map(line => JSON.parse(line).msg?.params?.update).filter(update => update?.sessionUpdate === "tool_call");
     expect(calls).toEqual([
       { sessionUpdate: "tool_call", toolCallId: "tc-nav", tool: "browser_navigate", argumentKeys: ["tab_id", "url"] },
@@ -138,6 +140,26 @@ describe("browser approval card in the ACP core", () => {
       { sessionUpdate: "tool_call", toolCallId: "tc-new", tool: "browser_later_tool", argumentKeys: ["note"] },
       { sessionUpdate: "tool_call", toolCallId: "tc-other", title: "web search: https://fictional-other.example/a/b" },
     ]);
+  });
+
+  it("broadcasts and stores another tool's start with its identifier only, never the argument preview", async () => {
+    const preview = ["acct-fictional-90210", "2026-09-01", "cat ~/fictional-ledger.csv"];
+    process.env.FAKE_ACP_UPDATES = JSON.stringify([
+      { sessionUpdate: "tool_call", toolCallId: "tc-bank", title: `mcp_bank_source_list_transactions: {"account":"${preview[0]}","from":"${preview[1]}"}`,
+        rawInput: { account: preview[0], from: preview[1] } },
+      { sessionUpdate: "tool_call", toolCallId: "tc-shell", title: "terminal", rawInput: { command: preview[2] } },
+    ]);
+    await start();
+    await recorder.until(event => event.type === "item.started" && event.itemId === "tc-shell");
+    const started = recorder.events.flatMap(event => event.type === "item.started" ? [event] : []);
+    expect(started.map(event => event.title)).toEqual(["mcp_bank_source_list_transactions", "terminal"]);
+    const sent = JSON.stringify(started.map(broadcastRuntimeEvent));
+    expect(sent).not.toContain("toolFingerprint");
+    const bus = new EventBus();
+    for (const event of recorder.events) bus.publish(event);
+    const events = readFileSync(join(EVENTS_DIR, `${thread}.ndjson`), "utf8");
+    expect(events).toContain("mcp_bank_source_list_transactions");
+    for (const value of preview) for (const log of [sent, events]) expect(log).not.toContain(value);
   });
 
   it("strips content and output from a page call's untitled updates (browser and desktop) in the native log", async () => {
