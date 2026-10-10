@@ -9,11 +9,12 @@ const STATE_LABEL: Record<BillFollowUp['state'], string> = { 'coverage-hold': 'C
 
 export function BillRoutineResult({ result }: { result: RoutineResult }) {
   return <section aria-label="Latest weekly bills result" className="space-y-2 text-sm">
-    <h4 className="font-medium">Latest weekly bills review</h4>
-    <p>{result.detail}</p>
-    <p className="text-ink-secondary break-words">Checked account: {result.accountId} · {new Date(result.windowStartAt).toLocaleString()} to {new Date(result.windowEndAt).toLocaleString()}</p>
-    <p className="text-ink-secondary">Saved {new Date(result.finishedAt).toLocaleString()}. Continue candidates in Saved bill reviews. Received invoice dates and expected arrival windows remain separate in the calendar.</p>
+    <p><span className="font-medium">Latest weekly bills review:</span> {result.detail}</p>
     {result.gaps.length > 0 && <details open><summary className="min-h-11 cursor-pointer text-hold">Coverage needs review</summary><ul className="list-disc pl-5">{result.gaps.map((gap, i) => <li key={i} className="break-words">{gap}</li>)}</ul></details>}
+    <details><summary className="min-h-11 cursor-pointer">What this review checked</summary>
+      <p className="text-ink-secondary break-words">Checked account: {result.accountId} · {new Date(result.windowStartAt).toLocaleString()} to {new Date(result.windowEndAt).toLocaleString()}</p>
+      <p className="text-ink-secondary">Saved {new Date(result.finishedAt).toLocaleString()}. Continue candidates in Saved bill reviews. Received invoice dates and expected arrival windows remain separate in the calendar.</p>
+    </details>
   </section>;
 }
 
@@ -112,6 +113,6 @@ export function BillRoutineStatus() {
     return () => { alive = false; };
   }, [latest?.id, latest?.status]);
   if (error) return <p role="alert" className="text-sm text-hold">{error}</p>;
-  return result ? <div className="space-y-4"><BillRoutineResult result={result} /><BillFollowUps runId={result.runId} /></div>
-    : <p className="text-sm text-ink-secondary">Weekly bills review is available in Schedule after agency and invoice-plan review. No recurring run is confirmed yet.</p>;
+  // Follow-ups are the work; the run's summary sits under them. With no saved result the area's status line says why.
+  return result ? <div className="space-y-4"><BillFollowUps runId={result.runId} /><BillRoutineResult result={result} /></div> : null;
 }

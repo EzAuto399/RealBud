@@ -269,8 +269,11 @@ export function SharedWorkPanel({ initialDraft, initialExpanded = false, initial
   const evidencePreview = includeEvidence && <div className="mt-3 border-t border-line pt-3"><p className="font-medium">Evidence copy: {evidence.label}</p><p className={muted}>{evidence.sourceRef} · {evidence.sourceVersion}</p><p className="mt-2 whitespace-pre-wrap break-words text-sm">{evidence.text}</p></div>;
 
   return (
-    <section aria-label="Shared work" className="mt-5 border-t border-line bg-paper pt-4 break-words">
-      <button type="button" className={button} aria-expanded={expanded} aria-controls="shared-work-panel" onClick={() => setExpanded(open => !open)}>Shared work</button>
+    <section aria-labelledby="shared-work-heading" className="mt-5 border-t border-line bg-paper pt-4 break-words">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 id="shared-work-heading" className="text-[15px] font-medium text-ink">Shared work</h2>
+        <button type="button" className={button} aria-expanded={expanded} aria-controls="shared-work-panel" onClick={() => setExpanded(open => !open)}>{expanded ? 'Hide shared work' : 'Show shared work'}</button>
+      </div>
       {expanded && (
         <div id="shared-work-panel" className="mt-3" aria-busy={loading || busy}>
           <p className={muted}>Share a result or ask a colleague to review it. Only content you review and select is shared. Your chats and connected accounts stay private.</p>

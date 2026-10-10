@@ -2,7 +2,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ state: {}, dispatch: vi.fn() }) }));
+vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ dispatch: vi.fn(), refreshActivity: vi.fn(),
+  state: { connected: true, loops: [], loopRuns: [], activityLoad: { routines: "ready" }, scheduleRecovery: { active: false, detail: "" }, desk: null } }) }));
 
 import { accountLabel, BankReferenceReview, coverageLine, FirstPassReview, parseFirstPass, parseW1Status, W1RunStrip, W1Setup, w1View, type FirstPass, type W1Status } from "./BankReferenceReview";
 
@@ -133,5 +134,18 @@ describe("prepare a new export", () => {
     expect(html).toContain("REI tenant list (optional)");
     expect(html).toContain("Export Tenants from REI to put each tenant&#x27;s REI reference in the last column");
     expect(html).toMatch(/aria-label="Property reference directory"/);
+  });
+});
+
+describe("bank review as a Desk work area", () => {
+  it("shows its status line under its own heading and owns its scroll region; the Schedule drawer keeps neither", () => {
+    const area = renderToStaticMarkup(createElement(BankReferenceReview, { area: true }));
+    expect(area).toContain('<section class="space-y-4 min-h-0 overflow-y-auto" aria-labelledby="bank-review-title">');
+    expect(area).toContain('<h2 id="bank-review-title"');
+    expect(area.indexOf('aria-label="Bank references status"')).toBeGreaterThan(area.indexOf('bank-review-title">Prepare bank references'));
+    expect(area).toContain(">Check now</button>");
+    const drawer = renderToStaticMarkup(createElement(BankReferenceReview));
+    expect(drawer).toContain('<section class="space-y-4" aria-labelledby="bank-review-title"><div><h3 id="bank-review-title"');
+    expect(drawer).not.toContain("Bank references status");
   });
 });
