@@ -64,3 +64,4 @@ __pycache__/
 # Vercel CLI link for the website project
 .vercel
 .claude/worktrees/
+.env*
