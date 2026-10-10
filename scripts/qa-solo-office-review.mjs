@@ -51,30 +51,35 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(origin + '/#you-office');
   await page.getByRole('button', { name: 'Workspace', exact: true }).click();
-  const office = page.locator('details').filter({ has: page.getByText('Office details', { exact: true }) }).first();
+  const office = page.locator('details#you-office');
   await office.waitFor(); await office.evaluate(node => { node.open = true; });
-  const collaboration = page.getByRole('heading', { name: 'Local office collaboration', exact: true });
+  await office.getByText('This office', { exact: true }).first().waitFor();
+  const colleagues = page.locator('details#you-company');
+  await colleagues.evaluate(node => { node.open = true; });
+  const collaboration = page.getByRole('heading', { name: 'Office & colleagues', exact: true });
   await collaboration.waitFor();
-  const ordered = await page.locator('.settings-section-body').filter({ has: collaboration }).evaluate(node => {
-    const labels = ['This office', 'Local office collaboration'];
-    const positions = labels.map(label => node.textContent.indexOf(label));
-    return positions.every(position => position >= 0) && positions[0] < positions[1];
-  });
-  assert.ok(ordered, 'Office basics must appear before optional collaboration');
-  assert.equal(await office.getByText('Website account', { exact: true }).count(), 0);
+  assert.ok(await office.evaluate(node => Boolean(node.compareDocumentPosition(document.getElementById('you-company')) & Node.DOCUMENT_POSITION_FOLLOWING)), 'Office basics must appear before optional collaboration');
+  assert.equal(await office.getByText('RealBud account', { exact: true }).count(), 0);
+  assert.equal(await colleagues.getByText('RealBud account', { exact: true }).count(), 0);
+  // Rare office controls are folded into one closed Office settings disclosure.
+  const officeSettings = colleagues.locator('details[data-office-settings]');
+  assert.equal(await officeSettings.evaluate(node => node.open), false, 'Office settings starts collapsed');
+  const checkConnection = async () => { await officeSettings.evaluate(node => { node.open = true; }); await officeSettings.getByRole('button', { name: 'Check company status', exact: true }).click(); };
   const settings = page.locator('#you-settings');
   assert.equal(await settings.evaluate(node => node.open), false, 'Settings & help starts collapsed');
   await settings.locator(':scope > summary').click();
-  await settings.locator('#you-website').getByText('Website account', { exact: true }).waitFor();
+  await settings.locator('#you-website').getByText('RealBud account', { exact: true }).waitFor();
   assert.ok(await office.evaluate(node => Boolean(node.compareDocumentPosition(document.getElementById('you-settings')) & Node.DOCUMENT_POSITION_FOLLOWING)), 'Office details must appear before account settings');
   await settings.locator(':scope > summary').click();
-  assert.equal(await page.getByText(/Optional. Use RealBud on your own/).count(), 1);
-  await page.getByRole('button', { name: 'Use on my own', exact: true }).waitFor();
+  assert.equal(await page.getByText(/Optional. Work on your own/).count(), 1);
+  assert.equal(await page.getByRole('button', { name: 'Use on my own', exact: true }).count(), 0);
+  await page.getByRole('button', { name: 'Host the office on this computer', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Join an office', exact: true }).focus();
   await page.keyboard.press('Enter');
-  await page.getByLabel('Connect to an existing host', { exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Use on my own', exact: true }).click();
-  assert.equal(await page.getByLabel('Connect to an existing host', { exact: true }).count(), 0);
+  await page.getByLabel('Join code', { exact: true }).waitFor();
+  // Choosing it again returns to working on your own.
+  await page.getByRole('button', { name: 'Join an office', exact: true }).click();
+  assert.equal(await page.getByLabel('Join code', { exact: true }).count(), 0);
   await collaboration.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(output, 'solo-desktop.png') });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -86,8 +91,8 @@ try {
   // Exercise the real fetch/error mapping through the renderer with a rejected
   // synthetic join. It must explain the binding conflict, not blame a username.
   await page.route('**/api/company/status', route => route.fulfill({ json: { storageAvailable: true, configured: true, setupAllowed: false, transport: 'encrypted-company', limitations: [] } }));
-  await page.getByRole('button', { name: 'Check company status', exact: true }).click();
-  await page.getByRole('button', { name: 'Join company', exact: true }).click();
+  await checkConnection();
+  await page.getByRole('button', { name: 'Join with an invitation', exact: true }).click();
   await page.getByLabel(/^Private invitation/).fill('fixture_only_invitation_12345678901234567890');
   await page.getByLabel(/^Username/).fill('fixture.person');
   await page.getByLabel(/^Password/).fill('Fixture-only-password-2026');
@@ -120,12 +125,15 @@ try {
     const value = route.request().postDataJSON(); assert.equal(value.retireSource, false); assert.equal(value.passphrase, 'Synthetic backup passphrase'); backups++;
     return route.fulfill({ json: { backup: { format: 'realbud-office', fixture: true }, receipt: { sha256: 'a'.repeat(64) } } });
   });
-  await page.getByRole('button', { name: 'Check company status', exact: true }).click();
-  await page.getByText('Members, invitations and ownership', { exact: true }).click();
-  await page.getByRole('button', { name: 'Remove access', exact: true }).click();
-  await page.getByRole('group', { name: `Remove ${colleague.displayName}`, exact: true }).waitFor();
+  await checkConnection();
+  // The owner's people list is on the main view; Remove access names the person.
+  await page.getByRole('region', { name: 'People in this office', exact: true }).waitFor();
+  await page.getByRole('button', { name: `Remove access for ${colleague.displayName}`, exact: true }).click();
+  const removal = page.getByRole('group', { name: `Remove ${colleague.displayName}`, exact: true });
+  await removal.waitFor();
   assert.equal(removed, false, 'Opening confirmation must not revoke');
-  await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+  // The confirming button repeats the consequence it confirms.
+  await removal.getByRole('button', { name: `Remove ${colleague.displayName}`, exact: true }).click();
   await page.getByText(/Practice colleague with a longer display name · access removed/).waitFor();
   await page.getByText('Host backup and recovery', { exact: true }).click();
   const backupSection = page.locator('details').filter({ has: page.getByText('Host backup and recovery', { exact: true }) }).last();
@@ -143,8 +151,8 @@ try {
   await collaboration.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(output, 'owner-desktop.png') });
   hostMode = 'standby';
-  await page.getByRole('button', { name: 'Check company status', exact: true }).click();
-  await page.getByText('Office host on hold', { exact: true }).waitFor();
+  await checkConnection();
+  await page.getByText(/On hold for host recovery/).first().waitFor();
   assert.equal(await page.getByRole('button', { name: 'Create invitation', exact: true }).count(), 0);
   await backupSection.getByRole('button', { name: 'Activate verified host', exact: true }).waitFor();
   assert.equal(await backupSection.getByRole('button', { name: 'Activate verified host', exact: true }).isDisabled(), true);
@@ -155,7 +163,7 @@ try {
   const requestId = '44444444-4444-4444-8444-444444444444';
   await page.route('**/api/company/local-state', route => route.fulfill({ json: { remoteHost: true, pendingShare: archived ? null : { requestId, title: 'Synthetic invoice review', phase: 'pending' }, departure: null, enrollmentPending: false } }));
   await page.route('**/api/company/outbox/archive', route => { const body = route.request().postDataJSON(); assert.equal(body.requestId, requestId); assert.equal(body.acknowledgeUnknown, true); archived = true; return route.fulfill({ json: { ok: true } }); });
-  await page.getByRole('button', { name: 'Check company status', exact: true }).click();
+  await checkConnection();
   await page.getByText('Connection and work recovery', { exact: true }).click();
   await page.getByRole('button', { name: 'Refresh local recovery', exact: true }).click();
   await page.getByText(/Synthetic invoice review.*remote result not yet confirmed/).waitFor();
@@ -182,10 +190,10 @@ try {
   await joinPage.route('**/api/company/connect-host', route => { connectBodies.push(JSON.parse(route.request().postData() || '{}')); return route.fulfill({ json: { ok: true } }); });
   await joinPage.goto(origin + '/#you-office');
   await joinPage.getByRole('button', { name: 'Workspace', exact: true }).click();
-  const joinOffice = joinPage.locator('details').filter({ has: joinPage.getByText('Office details', { exact: true }) }).first();
+  const joinOffice = joinPage.locator('details#you-company');
   await joinOffice.waitFor(); await joinOffice.evaluate(node => { node.open = true; });
   await joinPage.getByRole('button', { name: 'Join an office', exact: true }).click();
-  const joinField = joinPage.getByLabel('Connect to an existing host', { exact: true });
+  const joinField = joinPage.getByLabel('Join code', { exact: true });
   await joinField.fill(joinCode.slice(0, -1) + (joinCode.endsWith('0') ? '1' : '0'));
   await joinPage.getByRole('button', { name: 'Connect to host', exact: true }).click();
   await joinPage.getByText(/incomplete or was changed/).first().waitFor();

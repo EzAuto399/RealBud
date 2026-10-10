@@ -61,9 +61,9 @@ try {
   page = await context.newPage(); page.setDefaultTimeout(12_000); page.on('pageerror', error => errors.push(error.message));
   const open = async () => {
     await page.goto(origin + '/#/you');
-    const section = page.locator('details').filter({ has: page.getByText('Office details', { exact: true }) }).first();
+    const section = page.locator('details#you-company');
     await section.waitFor(); await section.evaluate(node => { node.open = true; });
-    await page.getByRole('heading', { name: 'Local office collaboration', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Office & colleagues', exact: true }).waitFor();
     await page.locator('summary').filter({ hasText: /^Departments and access$/ }).evaluate(node => { node.parentElement.open = true; });
     await page.getByRole('button', { name: 'View work in Operations', exact: true }).click();
     await page.getByRole('region', { name: 'Department work review' }).waitFor();

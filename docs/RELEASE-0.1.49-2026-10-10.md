@@ -16,6 +16,8 @@ On 10 October Auston Realty's Windows PC exposed three problems.
 - **One timing line per Ask turn** in `realbud.log` (`event: "turn"`). It records: warm or cold, prelude, worker start, first text, tool count and names, model calls, model time, slowest call and time to headers, upstream errors, total, and outcome. Only numbers and tool names are logged, never a message, argument, account or request id.
 - **Ask names the step while Bud works**, for example "Reading the bank feed… · 12s". An unknown tool keeps "Working for Ns". A tool start now leaves the service, and enters the event log, with only the tool's name or a fixed browser or desktop label: never its arguments, a shell command or the repeat-check digest. The private native log is unchanged.
 
+- **Also on `main` since 0.1.48** ([#198](https://github.com/EzAuto399/RealBud/pull/198)): Ask can answer with a chart (a plain-text table on Telegram, Slack and Discord), and Workspace shows the office and its colleagues in one "Office & colleagues" layout.
+
 ## Upgrade notes
 - **Each upgraded office gets one automatic hands check** ("Testing Bud on this computer", one model call) after the startup profile write.
 - **An office service from 0.1.48 or earlier is stopped and restarted** when 0.1.49 opens. If it is busy, the window says so and waits; it never runs the two side by side.

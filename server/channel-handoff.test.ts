@@ -71,6 +71,20 @@ describe("channel handoff", () => {
     expect(built.text).toContain("ask-10");
   });
 
+  it("sends a chart to the phone as readable lines, never its raw data block", () => {
+    const chart = '```chart\n{"type":"bar","title":"Arrears by property","unit":"AUD","x":["14 Fictional St","9 Sample Ln","28 Example Ave"],"series":[{"name":"Arrears","values":[1200,450,0]}],"source":"Fictional ledger"}\n```';
+    const reply = `Arrears are concentrated at one property.\n\n${chart}\n\nChase 14 Fictional St first.`;
+    for (const mode of ["result", "summary"] as const) {
+      const built = buildHandoffPayload(store([{ role: "user", text: "show arrears" }, { role: "bot", text: reply }]), { mode });
+      expect(built).toMatchObject({ ok: true });
+      if (!built.ok) continue;
+      expect(built.text).toContain("Arrears by property");
+      expect(built.text).toContain("14 Fictional St: $1,200");
+      expect(built.text).toContain("Chase 14 Fictional St first.");
+      expect(built.text).not.toMatch(/```|"type"|\{"/);
+    }
+  });
+
   it("delivers only to a paired channel with sendDigest", async () => {
     const unpaired: RemoteChannelAdapter = {
       id: "discord",

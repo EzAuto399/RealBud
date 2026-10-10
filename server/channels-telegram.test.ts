@@ -238,6 +238,30 @@ describe("pairing and relay", () => {
     expect(sent).toEqual(["I'm Bud. What needs you?"]);
   });
 
+  it("relays a chart in a reply as readable lines, never its raw data block", async () => {
+    const store = new Store(() => ({ instanceId: "", model: "" }));
+    store.seedIfEmpty();
+    const bot = store.bot("bud")!;
+    telegram.saveChannel({
+      botToken: TOKEN,
+      botUsername: "realbud_bot",
+      pairedChatId: 111,
+      pairedName: "Sam",
+      offset: 0,
+      connectedAt: 1,
+      lastMessageAt: null,
+    });
+    const sent: string[] = [];
+    const startTurn = vi.fn(async () => {
+      store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: 'Arrears sit at one property.\n\n```chart\n{"type":"bar","title":"Arrears","unit":"AUD","x":["Oak St","Elm St","Ash St"],"series":[{"name":"Owing","values":[620,0,0]}]}\n```' });
+    });
+    const fetchFn = stubFetch({ onSend: (_chatId, text) => sent.push(text) });
+    await telegram.handleTelegramUpdates([update(1, 111, "who owes?", "Sam")], deps(store, startTurn, fetchFn));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain("Oak St: $620");
+    expect(sent[0]).not.toMatch(/```|"type"/);
+  });
+
   it("relays joined assistant text on turn.completed", async () => {
     const store = new Store(() => ({ instanceId: "", model: "" }));
     store.seedIfEmpty();

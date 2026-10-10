@@ -5,6 +5,8 @@ import { AskMessage } from "./AskMessage";
 
 vi.mock("@/state/store", () => ({ formatTime: () => "5:30 PM" }));
 vi.mock("./Avatar", () => ({ MausAvatar: () => null }));
+const copied = vi.hoisted(() => [] as string[]);
+vi.mock("@/lib/use-copy-text", () => ({ useCopyText: (text: string) => { copied.push(text); return { state: "idle", copy: async () => {} }; } }));
 
 const render = (text: string, extra = {}) => renderToStaticMarkup(createElement(AskMessage, {
   text, at: 1757403000000, user: true, children: "Assistant content", onEdit: vi.fn(), ...extra,
@@ -43,6 +45,16 @@ describe("Ask conversation clarity", () => {
     expect(html).toContain("2 of 2");
     expect(html).toMatch(/aria-label="Next request version" disabled=""/);
     expect(html).not.toMatch(/aria-label="Previous request version" disabled/);
+  });
+  it("copies a reply's chart as readable lines, not its raw data block", () => {
+    copied.length = 0;
+    const reply = 'Collections improved.\n\n```chart\n{"type":"line","title":"Rent collected","unit":"AUD","x":["Jul","Aug","Sep"],"series":[{"name":"Collected","values":[41000,43500,44200]}]}\n```';
+    render(reply, { user: false });
+    expect(copied.at(-1)).toContain("Rent collected");
+    expect(copied.at(-1)).toContain("Sep: $44,200");
+    expect(copied.at(-1)).not.toMatch(/```|"type"/);
+    render("```chart\n{not a chart}\n```");
+    expect(copied.at(-1)).toContain("```chart");
   });
   it("handles unavailable timestamps", () => {
     expect(render("Request", { at: NaN })).toContain("Time unavailable");

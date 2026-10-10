@@ -166,7 +166,7 @@ try {
   await putViews(tabs => [...tabs, view('view-fictional-handovers', 'Office handovers', 'shared-work', 'with-me')]);
   await refreshViews();
   await page.getByRole('button', { name: 'Open Office handovers', exact: true }).click();
-  await page.getByText('Sign in through Workspace → Office details if needed, then refresh shared work.', { exact: true }).waitFor();
+  await page.getByText('Sign in through Workspace → Office & colleagues if needed, then refresh shared work.', { exact: true }).waitFor();
   await page.screenshot({ animations: 'disabled', path: join(output, 'shared-work-saved-view-mobile.png') });
   await nav().getByRole('button', { name: 'Desk', exact: true }).click();
   const beforeDeskMail = await views();

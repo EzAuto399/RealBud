@@ -44,14 +44,15 @@ async function stopService() {
 async function openOffice(page) {
   await page.getByRole('button', { name: 'Workspace', exact: true }).click();
   // The Workspace page mounts after the click; wait for the section rather than skipping it.
-  const summary = page.locator('summary').filter({ has: page.getByText('Office details', { exact: true }) }).first();
+  const summary = page.locator('#you-company > summary');
   await summary.waitFor();
   await summary.evaluate(node => { node.parentElement.open = true; });
-  await page.getByRole('heading', { name: 'Local office collaboration', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Office & colleagues', exact: true }).waitFor();
 }
 async function expand(page, text) {
+  // Folded sections (for example Office settings → Connection and work recovery) open with their parents.
   const summary = page.locator('summary').filter({ hasText: text }).first();
-  await summary.evaluate(node => { node.parentElement.open = true; });
+  await summary.evaluate(node => { for (let element = node; element; element = element.parentElement) if (element.tagName === 'DETAILS') element.open = true; });
 }
 try {
   fixture = await startCompanyPostgresFixture({ outputDirectory: temp, postgresBinDirectory: process.env.REALBUD_TEST_POSTGRES_BIN || '/opt/homebrew/opt/postgresql@16/bin' });
