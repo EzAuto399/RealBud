@@ -101,7 +101,7 @@ try {
   assert.equal(await deskRow.getByRole('tablist', { name: 'Desk views', exact: true }).count(), 1, 'Shell tabs sit inside the Desk row');
   assert.equal(await page.locator('.rb-shell-tabbar').count(), 0, 'No second tab row on Desk');
   assert.equal(await tab('Today').count() + await tab('Tasks').count() + await tab('Bills').count() + await tab('Mail').count(), 0, 'Tasks and the work areas are Desk buttons, not duplicate tabs');
-  assert.deepEqual((await deskRow.locator('.desk-workspace-tabs > button').allTextContents()).map(text => text.replace(/\d+$/, '').trim()), ['Tasks', 'Mail priorities', 'Bills and calendar', 'Shared work', 'Hermios']);
+  assert.deepEqual((await deskRow.locator('.desk-workspace-tabs > button').allTextContents()).map(text => text.replace(/[!\d]+$/, '').trim()), ['Tasks', 'Mail priorities', 'Bills and calendar', 'Shared work', 'Hermios']);
   await deskRow.getByRole('button', { name: 'Bills and calendar', exact: true }).click();
   await page.locator('[data-other-work="bills"]').waitFor();
   assert.equal(await deskRow.getByRole('button', { name: 'Bills and calendar', exact: true }).getAttribute('aria-pressed'), 'true');
@@ -176,7 +176,7 @@ try {
   assert.ok(saveBox && saveBox.y >= 0 && saveBox.y + saveBox.height <= 640, `Save is visible on a 640 px window (${JSON.stringify(saveBox)})`);
   await shot('03b-arrange-desk-short-window.png');
   await page.setViewportSize({ width: 1440, height: 940 });
-  await sheet.getByRole('button', { name: 'Reset to recommended', exact: true }).click();
+  await sheet.getByRole('button', { name: 'Reset to office default', exact: true }).click();
   await sheet.getByRole('button', { name: 'Save', exact: true }).click();
   await sheet.getByText('Desk arrangement saved.', { exact: true }).waitFor();
   const restored = await views();
@@ -188,7 +188,7 @@ try {
   await page.getByRole('group', { name: 'Morning brief options', exact: true }).getByRole('button', { name: 'Hide', exact: true }).waitFor();
   await page.keyboard.press('Escape');
   await panel.getByRole('region', { name: 'Today', exact: true }).waitFor();
-  pass('Hide saves the Morning brief as hidden (its menu then offers Show on my Desk) and removes the Today panel; Arrange Desk → Reset to recommended → Save restores both and keeps the width');
+  pass('Hide saves the Morning brief as hidden (its menu then offers Show on my Desk) and removes the Today panel; Arrange Desk → Reset to office default → Save restores both and keeps the width');
 
   // 6. Safety cards cannot be hidden: UI offers no Hide and the API refuses.
   await page.locator('summary[aria-label="Needs you options"]').click();

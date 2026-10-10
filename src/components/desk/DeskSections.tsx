@@ -1,19 +1,6 @@
-import { Fragment, useState, type MouseEvent, type ReactNode } from "react";
-import { DESK_SECTION_LABELS, deskSectionsOrDefault, type DeskSectionId } from "@shared/workspace-tabs";
+import { useState, type MouseEvent, type ReactNode } from "react";
 import { DESK_AREAS, type DeskOtherWork } from "@/lib/desk-view-state";
 import { StatusLabel } from "../pm";
-
-/** Renders Desk content sections in the saved order, skipping hidden ones.
- * An absent or invalid layout renders today's order. Needs you always shows. */
-export function DeskSections({ sections, render }: { sections: unknown; render: Record<DeskSectionId, ReactNode> }) {
-  return (
-    <>
-      {deskSectionsOrDefault(sections).map(section =>
-        section.visible || section.id === "queue" ? <Fragment key={section.id}>{render[section.id]}</Fragment> : null,
-      )}
-    </>
-  );
-}
 
 export const LICENSEE_BADGE = "Needs licensee review";
 export const LICENSEE_EXPLANATION =
@@ -72,11 +59,14 @@ export function DeskRemindersDisclosure({ children, initialOpen = false }: { chi
 export function DeskWorkArea({
   active,
   opened,
+  title,
   tasks,
   panels,
 }: {
   active: DeskOtherWork | null;
   opened: ReadonlySet<DeskOtherWork>;
+  /** The area's name as this office calls it. */
+  title: (id: DeskOtherWork) => string;
   tasks: ReactNode;
   panels: Record<DeskOtherWork, ReactNode>;
 }) {
@@ -85,7 +75,7 @@ export function DeskWorkArea({
       <div className="desk-work-tasks" hidden={active !== null}>{tasks}</div>
       {DESK_AREAS.map(id =>
         opened.has(id) || active === id ? (
-          <section key={id} className="desk-other-work-surface" data-other-work={id} hidden={active !== id} aria-label={DESK_SECTION_LABELS[id]}>
+          <section key={id} className="desk-area-surface" data-other-work={id} hidden={active !== id} aria-label={title(id)}>
             {panels[id]}
           </section>
         ) : null,

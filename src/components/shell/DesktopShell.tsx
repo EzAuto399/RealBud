@@ -5,10 +5,11 @@ import { Sidebar } from "../Sidebar";
 import { useStore } from "@/state/store";
 import { useWorkspaceTabs } from "@/lib/workspace-tabs";
 import { queueCounts } from "@/lib/desk-queue";
-import { visibleDeskAreas } from "@/lib/desk-view-state";
-import { DESK_SECTION_LABELS } from "@shared/workspace-tabs";
+import { useNeedsYou } from "@/lib/needs-you";
+import { coreOfficeDesk } from "@shared/desk-areas";
+import { deskSectionsOrDefault, effectiveDeskAreas } from "@shared/workspace-tabs";
 import { ToastStack, useToasts } from "../ui/ToastStack";
-import { AreaTabs, type AreaTab } from "./AreaTabs";
+import { AreaTabs, areaTabBadge, type AreaTab } from "./AreaTabs";
 import { ContextSidebar } from "./ContextSidebar";
 import { ContextPanel } from "./ContextPanel";
 import { StatusBar } from "./StatusBar";
@@ -32,8 +33,9 @@ export function DesktopShell({ inert, children }: { inert: boolean; children: Re
   const nav = useDeskNav();
   const workspaceTabs = useWorkspaceTabs();
   const savedViews = workspaceTabs.data?.state?.tabs.filter(tab => tab.visible) ?? [];
-  // Bank references has no Desk surface yet (a later slice), so its tab is not offered.
-  const areas = visibleDeskAreas(workspaceTabs.data?.state?.desk.sections, workspaceTabs.office).filter(id => id !== "bank");
+  const areas = effectiveDeskAreas(deskSectionsOrDefault(workspaceTabs.data?.state?.desk.sections), workspaceTabs.office ?? coreOfficeDesk()).filter(area => area.visible);
+  // Desk reads Needs you; off Desk the tabs show its last answer and start no read of their own.
+  const needsYou = useNeedsYou(false).snapshot;
   const toasts = useToasts();
   useBudDeskReceipt(toasts);
   const browser = useShellBrowser();
@@ -47,7 +49,7 @@ export function DesktopShell({ inert, children }: { inert: boolean; children: Re
   const onDesk = state.activeView === "desk";
   useEffect(() => { if (!deskArea) setDrawer(false); }, [deskArea]);
   const deskTabs: AreaTab[] = [
-    ...(onDesk ? [] : [{ id: "today", label: "Tasks", count: queueCounts(nav.rows).now }, ...areas.map(id => ({ id, label: DESK_SECTION_LABELS[id] }))]),
+    ...(onDesk ? [] : [{ id: "today", label: "Tasks", count: queueCounts(nav.rows).now }, ...areas.map(area => ({ id: area.id, label: area.title, badge: areaTabBadge(area.title, needsYou, area.id) }))]),
     { id: "properties", label: "Properties" },
   ];
   const tabs: AreaTab[] = [...deskTabs, ...savedViews.map(tab => ({ id: tab.id, label: tab.label }))];

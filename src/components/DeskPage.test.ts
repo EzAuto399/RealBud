@@ -4,15 +4,19 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NEVER_ACTIONS, type DeskSnapshot } from "../../shared/contracts";
 import { defaultDeskSections } from "../../shared/workspace-tabs";
+import { coreOfficeDesk, type OfficeDesk } from "../../shared/desk-areas";
+import type { NeedsYouState } from "@/lib/needs-you";
 
-const store = vi.hoisted(() => ({ state: {} as Record<string, unknown>, sections: null as unknown }));
+const store = vi.hoisted(() => ({ state: {} as Record<string, unknown>, sections: null as unknown, office: null as OfficeDesk | null,
+  needsYou: { snapshot: null, error: null, checking: false } as NeedsYouState }));
 vi.mock("@/state/store", () => ({
   api: vi.fn(),
   useStore: () => ({ state: store.state, dispatch: vi.fn(), refreshHermes: vi.fn() }),
 }));
 vi.mock("@/lib/workspace-tabs", () => ({
-  useWorkspaceTabs: () => ({ data: store.sections ? { state: { desk: { sections: store.sections } } } : null, loading: false, saving: false, error: "", save: vi.fn() }),
+  useWorkspaceTabs: () => ({ data: store.sections ? { state: { desk: { sections: store.sections } } } : null, office: store.office, loading: false, saving: false, error: "", save: vi.fn() }),
 }));
+vi.mock("@/lib/needs-you", () => ({ useNeedsYou: () => store.needsYou, refreshNeedsYou: vi.fn() }));
 vi.mock("@/lib/workspace-preferences", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/workspace-preferences")>();
   return { ...actual, useWorkspacePreferences: () => ({ preferences: actual.DEFAULT_WORKSPACE, update: vi.fn(), saved: true }) };
@@ -62,7 +66,7 @@ function render(desk: DeskSnapshot): string {
   return renderToStaticMarkup(createElement(DeskPage, { caseEdits: new Map() }));
 }
 
-beforeEach(() => { openDeskTasks(); store.sections = null; });
+beforeEach(() => { openDeskTasks(); store.sections = null; store.office = null; store.needsYou = { snapshot: null, error: null, checking: false }; });
 
 describe("Desk layout", () => {
   it("has one scroll owner: the queue, case and toolbar never scroll on their own", () => {
@@ -94,6 +98,30 @@ describe("Desk layout", () => {
     const sections = defaultDeskSections().map(section => ({ ...section, visible: section.id !== "bills" }));
     store.sections = ["brief", "shared-work", "mail", "bank", "go-live", "queue", "activity", "bills"].map(id => sections.find(section => section.id === id));
     expect(tabs(render(snapshot()))).toEqual(["Tasks", "Shared work", "Mail priorities", "Hermios"]);
+  });
+
+  it("counts what needs you on each area tab, with a text problem marker and a spoken name, and none while unread or at zero", () => {
+    const row = (html: string) => html.slice(html.indexOf('aria-label="Desk workspace"'), html.indexOf("desk-shell-tabs"));
+    expect(row(render(snapshot()))).not.toMatch(/need(s)? you/);
+    store.needsYou = { error: null, checking: false, snapshot: { checkedAt: new Date(0).toISOString(), items: [], unavailable: [],
+      counts: { mail: { problem: 1, review: 2 }, bills: { problem: 0, review: 1 }, schedule: { problem: 4, review: 0 } } } };
+    const html = row(render(snapshot()));
+    expect(html).toMatch(/<button type="button" aria-pressed="false" aria-label="Mail priorities, 3 need you, 1 problem">Mail priorities<span class="area-tab-problem" aria-hidden="true">!<\/span><span class="area-tab-count" aria-hidden="true">3<\/span><\/button>/);
+    expect(html).toContain('aria-label="Bills and calendar, 1 needs you">Bills and calendar<span class="area-tab-count" aria-hidden="true">1</span>');
+    expect(html).toMatch(/<button type="button" aria-pressed="false">Shared work<\/button>/);
+  });
+
+  it("offers Bank references as a tab only for an office that runs it", () => {
+    const tabs = (html: string) => html.slice(html.indexOf('aria-label="Desk workspace"'), html.indexOf("desk-shell-tabs"));
+    expect(tabs(render(snapshot()))).not.toContain("Bank references");
+    store.office = coreOfficeDesk(["bank-references"]);
+    expect(tabs(render(snapshot()))).toMatch(/>Bills and calendar<\/button><button[^>]*>Bank references<\/button><button[^>]*>Shared work</);
+  });
+
+  it("puts From your workflows on the Tasks tab, above the task queue", () => {
+    const html = render(snapshot());
+    expect(html.indexOf(">From your workflows<")).toBeGreaterThan(html.indexOf('class="desk-work-tasks"'));
+    expect(html.indexOf(">From your workflows<")).toBeLessThan(html.indexOf('aria-label="Case queue"'));
   });
 
   it("keeps nested scrolling out of the Desk stylesheet and the case", () => {
