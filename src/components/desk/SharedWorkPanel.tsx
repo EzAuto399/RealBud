@@ -34,7 +34,7 @@ function when(value: string): string {
   return Number.isFinite(time) ? new Date(time).toLocaleString() : value;
 }
 
-export function SharedWorkPanel({ initialDraft, initialExpanded = false, initialFilter = 'with-me' }: { initialDraft?: { title: string; summary: string }; initialExpanded?: boolean; initialFilter?: 'with-me' | 'by-me' } = {}) {
+export function SharedWorkPanel({ initialDraft, initialExpanded = false, initialFilter = 'with-me' }: { initialDraft?: { title: string; summary: string }; initialExpanded?: boolean; initialFilter?: 'with-me' | 'by-me' }) {
   const [expanded, setExpanded] = useState(initialExpanded);
   const [company, setCompany] = useState<CompanyStatus | null>(null);
   const [members, setMembers] = useState<SharedWorkPerson[]>([]);

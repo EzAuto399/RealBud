@@ -65,7 +65,7 @@ const firstPassDecision = (row: FirstPassRow, choice: "import" | "hold" | "exclu
  * (`area`: its status line on top and its own scroll region). Saved review history
  * loads only when the person opens Earlier reviews. `registerCloseGuard` lets the
  * surrounding detail ask before closing over unsaved work. */
-export function BankReferenceReview({ registerCloseGuard, area = false }: { registerCloseGuard?: (guard: () => boolean) => () => void; area?: boolean } = {}) {
+export function BankReferenceReview({ registerCloseGuard, area = false }: { registerCloseGuard?: (guard: () => boolean) => () => void; area?: boolean }) {
   const [source, setSource] = useState<BankSourceUpload | null>(null);
   const [readingFile, setReadingFile] = useState(false);
   const fileRead = useRef(0);
