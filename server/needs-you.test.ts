@@ -49,13 +49,18 @@ const loopRun = (id: string, over: Partial<LoopRun> = {}): LoopRun => ({ id, loo
 const jobRun = (id: string, over: Partial<JobRun> = {}): JobRun => ({ id, jobId: 'fictional-plan', jobTitle: 'Fictional plan', jobRevision: 1, mode: 'prepare', status: 'failed',
   trigger: 'schedule', scheduledFor: T, idempotencyKey: `fictional-${id}`, attempt: 1, spec: {} as JobRun['spec'], evidence: [], approvalRequests: [],
   detail: 'Fictional run.', createdAt: T, startedAt: T, finishedAt: T + 60_000, ...over });
+/** A schedule that lists every loop its runs belong to. */
+const schedule = (runs: LoopRun[], active = false): NeedsYouDeps['loops'] => () =>
+  ({ listLoops: () => [...new Set(runs.map(run => run.loopId))].map(id => ({ id, available: true })), listRuns: () => runs, recovery: { active } });
 /** Every work area this office runs, as readOfficeDesk returns it without a pack preset. */
 const allAreas = coreOfficeDesk(['bank-references', 'bills-calendar', 'morning-priorities']);
 
 const deps = (over: Partial<NeedsYouDeps> = {}): NeedsYouDeps => ({
   selectedWorkflows: async () => ['bank-references', 'bills-calendar', 'morning-priorities'], officeDesk: async () => allAreas,
   mail: mail([]), billFollowUps: bills([]), weeklyBills: () => null, w1Status: w1({}),
-  loops: () => ({ listRuns: () => [], recovery: { active: false } }), jobRuns: () => [], now: () => T + 3_600_000, ...over,
+  loops: () => ({ listLoops: () => [], listRuns: () => [], recovery: { active: false } }), jobRuns: () => [],
+  // Every job a test runs is saved unless the test says otherwise.
+  savedJobs: () => (over.jobRuns?.() ?? []).map(run => run.jobId), now: () => T + 3_600_000, ...over,
 });
 /** Every snapshot must pass the renderer's strict parser. */
 const read = async (over: Partial<NeedsYouDeps> = {}) => {
@@ -77,8 +82,8 @@ describe('Needs you: mail priorities', () => {
     expect(snapshot.items.map(item => item.key)).toEqual(['mail:scan', `mail:${hex(6)}`, `mail:${hex(5)}`, `mail:${hex(1)}`]);
     expect(snapshot.items[0]).toMatchObject({ level: 'problem', title: 'The last mail check was incomplete', foundAt: at(31) });
     expect(snapshot.items[3]).toEqual({ key: `mail:${hex(1)}`, area: 'mail', level: 'review', title: 'Fictional leak at 1 Example St',
-      reason: 'A fictional tenant reports a leak.', next: 'Call the fictional plumber', foundAt: at(1) });
-    expect(snapshot.items[1]).toMatchObject({ title: 'A conversation with no subject', next: 'Open it in Mail priorities' });
+      reason: 'A fictional tenant reports a leak.', next: 'Review it', foundAt: at(1) });
+    expect(snapshot.items[1]).toMatchObject({ title: 'A conversation with no subject', next: 'Review it' });
     // counts.needsReview (waiting for Bud to prepare) is never a person's review.
     expect(snapshot.counts).toEqual({ mail: { problem: 1, review: 3 } });
   });
@@ -139,7 +144,7 @@ describe('Needs you: bank references', () => {
 });
 
 describe('Needs you: jobs', () => {
-  const loops = (runs: LoopRun[], active = false): NeedsYouDeps['loops'] => () => ({ listRuns: () => runs, recovery: { active } });
+  const loops = (runs: LoopRun[], active = false): NeedsYouDeps['loops'] => schedule(runs, active);
 
   it('lists unseen problems in their area, else Schedule, and the schedule recovery hold', async () => {
     const snapshot = await read({ loops: loops([
@@ -174,7 +179,7 @@ describe('Needs you: jobs', () => {
     expect(withBank.items.map(item => item.key).sort()).toEqual(['bank:w1run_fictional', 'bill:b1', 'loop:arrears-wait', 'loop:maintenance-wait']);
     const withoutBank = await read({ loops: loops(waiting) });
     expect(withoutBank.items.map(item => item.key).sort()).toEqual(['loop:arrears-wait', 'loop:bank-wait', 'loop:maintenance-wait']);
-    expect(withoutBank.items.find(item => item.key === 'loop:bank-wait')).toMatchObject({ area: 'bank', level: 'review', next: 'Review the run in Schedule' });
+    expect(withoutBank.items.find(item => item.key === 'loop:bank-wait')).toMatchObject({ area: 'bank', level: 'review', next: 'Review it' });
   });
 
   it('shows one row per event: the area item at the same level, found during the run, wins', async () => {
@@ -221,7 +226,7 @@ describe('Needs you: jobs', () => {
       jobRun('rehearsal', { jobId: 'fictional-rehearsal', mode: 'shadow', status: 'completed' }),
     ] });
     expect(snapshot.items.map(item => [item.key, item.area, item.level])).toEqual([['job:older-stop', 'schedule', 'problem'], ['job:site', 'schedule', 'review']]);
-    expect(snapshot.items[1]).toMatchObject({ title: 'Fictional portal check', reason: 'A run of this job finished beside you. Check its result on the website.', next: 'Review the run in Schedule' });
+    expect(snapshot.items[1]).toMatchObject({ title: 'Fictional portal check', reason: "Bud did this with you on a website and can't confirm the result. Check the website.", next: 'Review the run in Schedule' });
   });
 
   it("shows a job run inside an area's loop run once, with that area's own items", async () => {
@@ -230,6 +235,27 @@ describe('Needs you: jobs', () => {
     // The mail item was found at 2, while the loop run collected and before its batch started: it still speaks for both.
     expect((await read({ loops: loops([triage]), jobRuns: () => [batch], mail: mail([mailItem(2)]) })).items.map(item => item.key)).toEqual([`mail:${hex(2)}`]);
     expect((await read({ loops: loops([triage]), jobRuns: () => [batch] })).items.map(item => [item.key, item.area])).toEqual([['loop:triage', 'mail'], ['job:batch', 'mail']]);
+  });
+
+  it('lists only runs Schedule has a row for: no deleted job, no removed loop, nothing past its newest job runs', async () => {
+    const kept = jobRun('kept', { createdAt: T + 200 });
+    const old = Array.from({ length: 100 }, (_, i) => jobRun(`newer-${i}`, { jobId: `fictional-ok-${i}`, status: 'completed', createdAt: T + 100 + i }));
+    const snapshot = await read({
+      // A deleted job's clock loop is no longer listed; an unavailable built-in loop has no Schedule row.
+      loops: () => ({ listLoops: () => [{ id: 'owner-letter', available: true }, { id: 'rei-supplier-check', available: false }],
+        listRuns: () => [loopRun('gone', { loopId: 'recipe-fictional-deleted' }), loopRun('off', { loopId: 'rei-supplier-check' }), loopRun('kept-loop', { loopId: 'owner-letter' })],
+        recovery: { active: false } }),
+      jobRuns: () => [kept, jobRun('deleted', { jobId: 'fictional-deleted', createdAt: T + 300 }), ...old, jobRun('too-old', { jobId: 'fictional-old', createdAt: T })],
+      savedJobs: () => ['fictional-plan', 'fictional-old', ...old.map(run => run.jobId)],
+    });
+    expect(snapshot.items.map(item => item.key).sort()).toEqual(['job:kept', 'loop:kept-loop']);
+  });
+
+  it("names the next step by where the row opens: the area's tab, or Schedule", async () => {
+    const run = loopRun('bills-fail', { loopId: 'weekly-bills', loopName: 'Weekly bills' });
+    expect((await read({ loops: loops([run]) })).items).toEqual([expect.objectContaining({ area: 'bills', next: 'See what happened' })]);
+    expect((await read({ loops: loops([run]), officeDesk: async () => ({ ...allAreas, areas: allAreas.areas.map(area => ({ ...area, available: area.id !== 'bills' })) }) })).items)
+      .toEqual([expect.objectContaining({ area: 'schedule', next: 'Open the run in Schedule' })]);
   });
 
   it('sends a job whose area the office does not show to Schedule', async () => {
@@ -256,7 +282,7 @@ describe('Needs you: order, limits and failures', () => {
   it('puts problems first, newest first with no time last, at most the limit per area, with full counts', async () => {
     const many = Array.from({ length: NEEDS_YOU_AREA_LIMIT + 5 }, (_, i) => mailItem(i + 1));
     const snapshot = await read({ mail: mail(many, scan('failed'), 10), billFollowUps: bills([followUp('b1', { firstSeenAt: T + 999 * 60_000 })]),
-      loops: () => ({ listRuns: () => [loopRun('r1')], recovery: { active: true } }) });
+      loops: schedule([loopRun('r1')], true) });
     expect(snapshot.items.slice(0, 3).map(item => item.key)).toEqual(['mail:scan', 'loop:r1', 'schedule:recovery']);
     expect(snapshot.items[3].key).toBe('bill:b1');
     const mailShown = snapshot.items.filter(item => item.area === 'mail');
@@ -281,7 +307,7 @@ describe('Needs you: order, limits and failures', () => {
       billFollowUps: async () => ({ status: 200, body: { version: 1, items: 'nope' } }),
       weeklyBills: () => { throw new Error('The saved routine result needs recovery.'); },
       w1Status: w1({ run: w1Run({ id: 42 as unknown as string }) }),
-      loops: () => ({ listRuns: () => [loopRun('r1', { loopName: 7 as unknown as string })], recovery: { active: false } }),
+      loops: schedule([loopRun('r1', { loopName: 7 as unknown as string })]),
     });
     expect(snapshot.unavailable.map(entry => entry.area)).toEqual(['bills', 'bank']);
     expect(snapshot.items).toEqual([expect.objectContaining({ key: 'loop:r1', title: 'A scheduled job' })]);

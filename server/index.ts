@@ -6556,7 +6556,7 @@ const needsYou = createNeedsYouHandler({
   mail: mailWorkspace, billFollowUps: billFollowUpsApi,
   weeklyBills: () => latestRoutineResult(workflowDatabase(), 'weekly-bills'),
   w1Status: async () => (await w1Host()).status(),
-  loops: () => loops!, jobRuns: () => jobRuns.list(),
+  loops: () => loops!, jobRuns: () => jobRuns.list(), savedJobs: () => listRecipes().map(recipe => recipe.id),
 });
 // Restore only the connection. An interrupted browser job always stays held.
 const sourceBillRegisters = new WeakMap<ReturnType<typeof workflowDatabase>, SourceBillRegister>();

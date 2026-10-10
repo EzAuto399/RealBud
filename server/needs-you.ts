@@ -7,7 +7,7 @@ import type { MailScanReceipt, MailScanStatus, MailTaskPage, MailTaskPageQuery }
 import { readBillFollowUpPage, type BillFollowUp } from '../shared/bill-followups.ts';
 import { NEEDS_YOU_AREA_LIMIT, parseNeedsYouSnapshot, type NeedsYouArea, type NeedsYouItem, type NeedsYouLevel, type NeedsYouSnapshot } from '../shared/needs-you.ts';
 import type { RoutineResult } from '../shared/routine-result.ts';
-import type { JobRun, JobRunStatus, LoopRun, LoopRunStatus } from '../shared/contracts.ts';
+import type { JobRun, JobRunStatus, Loop, LoopRun, LoopRunStatus } from '../shared/contracts.ts';
 import type { W1Run } from './w1-state.ts';
 
 export type NeedsYouDeps = {
@@ -24,9 +24,11 @@ export type NeedsYouDeps = {
   /** The W1 host's /api/w1/status. */
   w1Status: () => Promise<{ run: Pick<W1Run, 'id' | 'step' | 'attention' | 'updatedAt'> | null; working: boolean; ask: unknown; signIn: string | null }>;
   /** The schedule behind /api/loops. */
-  loops: () => { listRuns(): readonly LoopRun[]; readonly recovery: { active: boolean } };
+  loops: () => { listLoops(): readonly Pick<Loop, 'id' | 'available'>[]; listRuns(): readonly LoopRun[]; readonly recovery: { active: boolean } };
   /** The job-run store behind /api/job-runs. */
   jobRuns: () => readonly JobRun[];
+  /** Saved job (recipe) ids: Schedule has a row for each. */
+  savedJobs: () => readonly string[];
   now?: () => number;
 };
 
@@ -48,6 +50,8 @@ const RUN_PROBLEM: Partial<Record<LoopRunStatus | JobRunStatus, string>> = {
 const WAITING = 'A run of this job is waiting for your approval.';
 /** Jobs whose runs are also their area's own items read here: one event shows as one row. */
 const OWN_LOOPS = new Set(['inbound-triage', 'weekly-bills', 'bank-references']);
+/** Schedule reads this many of the newest job runs (/api/job-runs default limit). */
+const SCHEDULE_JOB_RUNS = 100;
 
 const malformed = (): never => { throw new Error('Malformed source.'); };
 const clip = (value: unknown, max: number, fallback: string) => {
@@ -71,10 +75,10 @@ async function mailItems(mail: NeedsYouDeps['mail']): Promise<NeedsYouItem[]> {
   // The service filters by group (server/mail-ingestion.ts page). counts.needsReview is work waiting for Bud, not for a person.
   const items = open.map((item): NeedsYouItem => ({ key: key('mail', item.id), area: 'mail', level: 'review',
     title: clip(item.subject, 300, 'A conversation with no subject'), reason: clip(item.reason, 600, 'Bud marked this conversation for your review.'),
-    next: clip(item.nextAction, 200, 'Open it in Mail priorities'), foundAt: iso(item.firstSeenAt) }));
+    next: 'Review it', foundAt: iso(item.firstSeenAt) }));
   const scan = latestScan ? SCAN_PROBLEM[latestScan.status] : undefined;
   if (latestScan && scan) items.push({ key: 'mail:scan', area: 'mail', level: 'problem', title: scan, reason: 'Not all mail was checked, so this list may be missing conversations.',
-    next: 'Check mail again in Mail priorities', foundAt: iso(latestScan.completedAt ?? latestScan.startedAt) });
+    next: 'Check mail again', foundAt: iso(latestScan.completedAt ?? latestScan.startedAt) });
   return items;
 }
 
@@ -91,12 +95,12 @@ async function followUpItems(read: NeedsYouDeps['billFollowUps']): Promise<Needs
   return open.filter(item => item.status === 'open').map((item): NeedsYouItem => ({ key: key('bill', item.id), area: 'bills', level: 'review',
     title: clip(`${item.propertyId} · ${item.label}`, 300, 'A bill arrival'),
     reason: clip(`${item.reason}${item.active ? '' : ' Not in the latest review.'}`, 600, 'This bill arrival needs a follow-up.'),
-    next: 'Assign or resolve it in Bills and calendar', foundAt: iso(item.history.filter(entry => entry.action === 'recurred').at(-1)?.at ?? item.firstSeenAt) }));
+    next: 'Assign or resolve it', foundAt: iso(item.history.filter(entry => entry.action === 'recurred').at(-1)?.at ?? item.firstSeenAt) }));
 }
 
 function coverageItems(result: RoutineResult | null): NeedsYouItem[] {
   return result && result.gaps.length > 0 ? [{ key: 'bills:coverage', area: 'bills', level: 'problem', title: 'Weekly bills coverage needs review',
-    reason: "Some mail wasn't covered, so bills may be missing from the last weekly check.", next: 'Review the gaps in Bills and calendar', foundAt: iso(result.finishedAt) }] : [];
+    reason: "Some mail wasn't covered, so bills may be missing from the last weekly check.", next: 'Review the gaps', foundAt: iso(result.finishedAt) }] : [];
 }
 
 async function bankItems(selected: readonly string[] | null, w1Status: NeedsYouDeps['w1Status']): Promise<NeedsYouItem[]> {
@@ -106,10 +110,10 @@ async function bankItems(selected: readonly string[] | null, w1Status: NeedsYouD
   // As w1View (src/components/schedule/BankReferenceReview.tsx): an open ask, a REI sign-in wait or a held run waits for a person; work in flight does not.
   if (!run || !(ask || (working ? signIn : run.step !== 'done'))) return [];
   const level: NeedsYouLevel = ask ? 'review' : working ? 'problem' : !run.attention || BANK_REVIEW.has(run.attention.reason) ? 'review' : 'problem';
-  const view = ask ? { title: 'A bank import step needs your approval', reason: 'Bud waits for your answer before this step in REI.', next: 'Allow or decline it in Bank references' }
-    : working ? { title: 'REI Cloud needs you to sign in', reason: 'The bank import carries on by itself once you sign in.', next: 'Sign in to REI Cloud in the work browser' }
+  const view = ask ? { title: 'A bank import step needs your approval', reason: 'Bud waits for your answer before this step in REI.', next: 'Allow or decline it' }
+    : working ? { title: 'REI Cloud needs you to sign in', reason: 'Sign in to REI Cloud in the work browser. The bank import carries on by itself once you do.', next: 'Open the import' }
     : { title: level === 'problem' ? 'The bank import is held' : 'The bank import is waiting for you', reason: clip(run.attention?.message, 600, 'It goes no further until you continue.'),
-      next: 'Open the import in Bank references' };
+      next: 'Open the import' };
   return [{ key: key('bank', run.id), area: 'bank', level, ...view, foundAt: iso(run.updatedAt) }];
 }
 
@@ -126,13 +130,18 @@ function jobIssue(run: JobRun, acknowledged: boolean, loop: LoopRun | undefined)
   const attended = run.mode === 'attended', unverified = attended && ['completed', 'partial', 'unknown'].includes(run.status);
   const severity = unverified ? 0 : RUN_PROBLEM[run.status] ? 2 : !attended && run.status === 'awaiting-approval' ? 1 : null;
   if (severity === null) return null;
-  const reason = unverified ? 'A run of this job finished beside you. Check its result on the website.' : RUN_PROBLEM[run.status] ?? WAITING;
+  const reason = unverified ? "Bud did this with you on a website and can't confirm the result. Check the website." : RUN_PROBLEM[run.status] ?? WAITING;
   return { severity, reason, at: startOf(run), key: key('job', run.id), title: run.jobTitle, foundAt: run.finishedAt ?? startOf(run), loop };
 }
 
-function jobItems(schedule: ReturnType<NeedsYouDeps['loops']>, jobRuns: readonly JobRun[], own: ReadonlyMap<string, number>, office: OfficeDesk): NeedsYouItem[] {
+function jobItems(schedule: ReturnType<NeedsYouDeps['loops']>, allJobRuns: readonly JobRun[], savedJobs: readonly string[], own: ReadonlyMap<string, number>, office: OfficeDesk): NeedsYouItem[] {
   // An area the office doesn't show (Bank references not selected, or left out of its pack's preset) can't open the row: it goes to Schedule.
   const shown = new Set<NeedsYouArea>(office.areas.filter(area => area.available).map(area => area.id));
+  // Only runs Schedule has a row for (buildScheduleRows, src/lib/schedule-rows.ts): a listed loop's runs, and a saved job's runs among the newest
+  // Schedule reads. A deleted job's or an old run's row would open nothing.
+  const listed = new Set(schedule.listLoops().filter(loop => loop.available || loop.id === 'bank-references' || loop.id.startsWith('recipe-')).map(loop => loop.id));
+  const saved = new Set(savedJobs);
+  const jobRuns = [...allJobRuns].sort((a, b) => b.createdAt - a.createdAt).slice(0, SCHEDULE_JOB_RUNS).filter(run => saved.has(run.jobId));
   const loopRuns = schedule.listRuns(), loopById = new Map(loopRuns.map(run => [run.id, run])), jobById = new Map(jobRuns.map(run => [run.id, run]));
   // As buildRow (src/lib/schedule-rows.ts:155-170), one row per job: a saved job's clock run (recipe-<id>) that wraps a job run of
   // that job is judged by its job run; a job run counts as seen when it is, or when the loop run linking it is.
@@ -145,7 +154,7 @@ function jobItems(schedule: ReturnType<NeedsYouDeps['loops']>, jobRuns: readonly
   };
   for (const run of loopRuns) {
     const wrapped = run.jobRunId ? jobById.get(run.jobRunId) : undefined;
-    if (!wrapped || run.loopId !== `recipe-${wrapped.jobId}`) consider(run.loopId, loopIssue(run));
+    if (listed.has(run.loopId) && (!wrapped || run.loopId !== `recipe-${wrapped.jobId}`)) consider(run.loopId, loopIssue(run));
   }
   for (const run of jobRuns) consider(`recipe-${run.jobId}`, jobIssue(run, Boolean(run.seenAt) || linkedSeen.has(run.id), run.loopRunId ? loopById.get(run.loopRunId) : undefined));
   const items: NeedsYouItem[] = [];
@@ -156,7 +165,8 @@ function jobItems(schedule: ReturnType<NeedsYouDeps['loops']>, jobRuns: readonly
     // One found before the run started never hides it.
     if (issue.loop && OWN_LOOPS.has(issue.loop.loopId) && (own.get(`${area}:${level}`) ?? -Infinity) >= startOf(issue.loop)) continue;
     items.push({ key: issue.key, area, level, title: clip(issue.title, 300, 'A scheduled job'), reason: issue.reason,
-      next: level === 'problem' ? 'Open the run in Schedule' : 'Review the run in Schedule', foundAt: iso(issue.foundAt) });
+      next: area !== 'schedule' ? (level === 'problem' ? 'See what happened' : 'Review it') : level === 'problem' ? 'Open the run in Schedule' : 'Review the run in Schedule',
+      foundAt: iso(issue.foundAt) });
   }
   if (schedule.recovery.active) items.push({ key: 'schedule:recovery', area: 'schedule', level: 'problem', title: 'Scheduled work is paused for recovery',
     reason: 'Saved results are still available. No job runs until this is recovered.', next: 'Open Schedule for details', foundAt: null });
@@ -186,7 +196,7 @@ export async function readNeedsYou(deps: NeedsYouDeps): Promise<NeedsYouSnapshot
   // Newest dated item per area and level; an undated item never hides a job row.
   const own = new Map<string, number>();
   for (const item of sources.flatMap(source => source.items ?? [])) if (item.foundAt) own.set(`${item.area}:${item.level}`, Math.max(own.get(`${item.area}:${item.level}`) ?? -Infinity, Date.parse(item.foundAt)));
-  sources.push(await settle('schedule', async () => jobItems(deps.loops(), deps.jobRuns(), own, await deps.officeDesk())));
+  sources.push(await settle('schedule', async () => jobItems(deps.loops(), deps.jobRuns(), deps.savedJobs(), own, await deps.officeDesk())));
   const counts: NeedsYouSnapshot['counts'] = {}, shown = new Map<NeedsYouArea, number>();
   const items = sources.flatMap(source => source.items ?? []).sort(order).filter(item => {
     (counts[item.area] ??= { problem: 0, review: 0 })[item.level]++;
