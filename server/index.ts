@@ -5,6 +5,8 @@ import { LiveStreamRecovery } from "../shared/live-stream.ts";
 import { sendToSseClients } from "./sse-clients.ts";
 import { createWorkspaceTabsHandler } from "./workspace-tabs.ts";
 import { createNeedsYouHandler } from "./needs-you.ts";
+import { officeDesk } from "./desk-preset.ts";
+import { coreOfficeDesk } from "../shared/desk-areas.ts";
 import { createRemindersService } from "./reminders.ts";
 import { createOnboardingHandler } from "./onboarding.ts";
 import { createCustomerPackService } from "./customer-packs.ts";
@@ -6369,7 +6371,10 @@ setBankProvider({
   listBankTransactions: query => redbark.listBankTransactions(query),
 });
 // Every saved layout is announced, so an open Desk rereads at once whoever made the change.
-const workspaceTabs = createWorkspaceTabsHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, onSaved: change => broadcast({ kind: "workspace-tabs", ...change }) });
+// The office's Desk preset comes from its chosen workflow pack (server/desk-preset.ts). A damaged
+// setup or pack journal shows the core Desk here; Setup and Workspace report the damage themselves.
+const readOfficeDesk = () => officeDesk({ agency: async () => (await agencySetup.getConfiguration()).settings, installedPack: id => customerPacks.installedPack(id) }).catch(() => coreOfficeDesk());
+const workspaceTabs = createWorkspaceTabsHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, officeDesk: readOfficeDesk, onSaved: change => broadcast({ kind: "workspace-tabs", ...change }) });
 void workspaceTabs.addGetStartedToAutomaticSimpleDesk()
   .then(applied => { if (applied) oplog("boot", "desk: Get started added to the automatic simple layout"); })
   .catch(() => oplog("boot", "desk: Get started could not be added to the simple layout; the saved layout stays"));
