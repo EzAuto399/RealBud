@@ -143,7 +143,8 @@ describe("bank review as a Desk work area", () => {
     expect(area).toContain('<section class="space-y-4 min-h-0 overflow-y-auto" aria-labelledby="bank-review-title">');
     expect(area).toContain('<h2 id="bank-review-title"');
     expect(area.indexOf('aria-label="Bank references status"')).toBeGreaterThan(area.indexOf('bank-review-title">Prepare bank references'));
-    expect(area).toContain(">Check now</button>");
+    // The import strip's Start bank import is the one way to start an import here.
+    expect(area).not.toContain(">Check now</button>");
     const drawer = renderToStaticMarkup(createElement(BankReferenceReview));
     expect(drawer).toContain('<section class="space-y-4" aria-labelledby="bank-review-title"><div><h3 id="bank-review-title"');
     expect(drawer).not.toContain("Bank references status");

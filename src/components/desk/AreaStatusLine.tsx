@@ -80,8 +80,10 @@ export function areaStatus({ area, title, loop, runs, read, timeZone, now }: Sta
 
 /** Status line for one Desk work area: what ran, when, what runs next, and Check now.
  * Check now starts the area's job exactly as Schedule's Run now does: a request id kept on
- * this device and the schedule revision on screen, so a lost reply is checked, never repeated. */
-export function AreaStatusLine({ area, title, onStarted }: { area: DeskAreaId; title?: string; onStarted?: () => void }) {
+ * this device and the schedule revision on screen, so a lost reply is checked, never repeated.
+ * `checkNow={false}`: the area's own panel starts this work for the person at the desk (Bank's
+ * import strip), so only a lost Run now reply is offered here, as Check previous run. */
+export function AreaStatusLine({ area, title, onStarted, checkNow = true }: { area: DeskAreaId; title?: string; onStarted?: () => void; checkNow?: boolean }) {
   const { state, dispatch, refreshActivity } = useStore();
   const loopId = AREA_LOOPS[area]?.[0];
   const loop = state.loops.find(candidate => candidate.id === loopId);
@@ -112,6 +114,7 @@ export function AreaStatusLine({ area, title, onStarted }: { area: DeskAreaId; t
     : status.kind === 'checking' ? 'Already checking. Wait for this check to finish.'
     : !loop.enabled && !loop.waitingForPlan && !evaluatorForLoop(loop.id)?.runWhileOff ? 'Switch it on in Schedule first.'
     : null;
+  const offer = checkNow || Boolean(pending);
 
   const check = async () => {
     if (inFlight.current || !loop) return;
@@ -147,9 +150,9 @@ export function AreaStatusLine({ area, title, onStarted }: { area: DeskAreaId; t
     <div className="area-status-actions">
       {status.kind === 'not-set-up' && <button type="button" className={SECONDARY} onClick={finishSetup}>Finish setup</button>}
       {status.kind === 'unreadable' && <button type="button" className={SECONDARY} onClick={() => void refreshActivity()}>Try again</button>}
-      <button type="button" className={PRIMARY} disabled={Boolean(reason)} aria-describedby={reason ? reasonId : undefined} onClick={() => void check()}>{pending ? 'Check previous run' : 'Check now'}</button>
+      {offer && <button type="button" className={PRIMARY} disabled={Boolean(reason)} aria-describedby={reason ? reasonId : undefined} onClick={() => void check()}>{pending ? 'Check previous run' : 'Check now'}</button>}
     </div>
-    {reason && <p id={reasonId} className="area-status-reason">{reason}</p>}
+    {offer && reason && <p id={reasonId} className="area-status-reason">{reason}</p>}
     {error && <p role="alert" className="area-status-reason text-hold">{error}</p>}
     {notice && <p role="status" className="area-status-reason">{notice}</p>}
   </div>;

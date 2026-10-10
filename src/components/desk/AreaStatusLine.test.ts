@@ -65,9 +65,9 @@ describe('area status line states', () => {
 });
 
 describe('AreaStatusLine', () => {
-  const render = (state: Record<string, unknown>, area: 'mail' | 'bills' | 'bank' | 'shared-work' = 'bills') => {
+  const render = (state: Record<string, unknown>, area: 'mail' | 'bills' | 'bank' | 'shared-work' = 'bills', checkNow?: boolean) => {
     store.state = { connected: true, loops: [loop()], loopRuns: [run()], activityLoad: { routines: 'ready' }, scheduleRecovery: { active: false, detail: '' }, desk: { book: { agency: { timezone: tz } } }, ...state };
-    return renderToStaticMarkup(createElement(AreaStatusLine, { area }));
+    return renderToStaticMarkup(createElement(AreaStatusLine, { area, checkNow }));
   };
 
   it('offers Check now as the area’s one filled button', () => {
@@ -100,6 +100,12 @@ describe('AreaStatusLine', () => {
 
   it('shows a text label for a run that did not happen', () => {
     expect(render({ loopRuns: [run({ status: 'missed' })] })).toContain('<span class="area-status-label">Didn&#x27;t run</span>');
+  });
+
+  it('keeps the status but offers no Check now when the area starts its own work', () => {
+    const html = render({ loops: [loop({ id: 'bank-references', name: 'Bank reference review' })], loopRuns: [run({ loopId: 'bank-references' })] }, 'bank', false);
+    expect(html).toContain('Bank reference review · </span><span>Checked Tue 6 Oct, 8:03 am');
+    expect(html).not.toContain('<button');
   });
 
   it('renders nothing for an area without a scheduled job', () => {
