@@ -3,10 +3,10 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { BillDuplicateCheck } from '@shared/source-bills';
 import type { MailScanReceipt } from '@shared/mail-ingestion';
-import { BillCollectionReceipt, BillDuplicateReview, BillReferenceMatchNotice, PropertyRateNumbersSummary, billCollectionNotice, referenceKind } from './SourceBillsPanel';
+import { BillCollectionReceipt, BillDuplicateReview, BillReferenceMatchNotice, BillsLayoutFrame, PropertyRateNumbersSummary, SourceBillsPanel, billCollectionNotice, referenceKind } from './SourceBillsPanel';
 import type { PropertyBillReferenceView } from '@shared/source-bills';
 
-vi.mock('@/state/store', () => ({ api: vi.fn() }));
+vi.mock('@/state/store', () => ({ api: vi.fn(), useStore: () => ({ state: { loopRuns: [] } }) }));
 const check: BillDuplicateCheck = { version: 1, sourceDigest: 'a'.repeat(64), reviewDigest: 'b'.repeat(64), complete: true, candidates: [{ billId: `source-bill:${'e'.repeat(64)}`, revision: 3, matchedRevision: 1, sourceDigest: 'c'.repeat(64), subject: '<script>invoice</script>', receivedAt: 1,
   facts: { propertyId: 'property', kind: 'Water', vendor: 'Utility', currency: 'AUD', amountCents: 12500, invoiceDate: '2026-09-01', dueDate: '2026-10-01', note: '' } }] };
 const render = (overrides: Partial<Parameters<typeof BillDuplicateReview>[0]> = {}) => renderToStaticMarkup(createElement(BillDuplicateReview, {
@@ -136,5 +136,24 @@ describe('property rate numbers', () => {
     expect(referenceKind('Water')).toBe('water');
     expect(referenceKind('Strata levy')).toBe('levy');
     expect(referenceKind('Plumbing')).toBeNull();
+  });
+});
+
+describe('bills area layout', () => {
+  const frame = (layout: 'calendar' | 'review-list') => renderToStaticMarkup(createElement(BillsLayoutFrame, { layout, calendarTitle: 'October 2026',
+    calendar: createElement('section', { 'aria-label': 'Bill calendar' }), children: createElement('div', { 'data-list': '' }) }));
+  it('puts the calendar first by default and the bill list first, calendar collapsed beneath, for review-list', () => {
+    expect(frame('calendar')).toBe('<section aria-label="Bill calendar"></section><div data-list=""></div>');
+    const list = frame('review-list');
+    expect(list.indexOf('data-list')).toBeLessThan(list.indexOf('Bill calendar'));
+    expect(list).toContain('<details class="rounded-lg border border-line p-3"><summary class="min-h-11 cursor-pointer font-medium">Calendar · October 2026</summary><section aria-label="Bill calendar">');
+  });
+  it('keeps rate numbers, refresh, check inbox and caveats in a collapsed Setup after the work', () => {
+    const html = renderToStaticMarkup(createElement(SourceBillsPanel)), setup = html.indexOf('<details class="area-setup"><summary>Setup</summary>');
+    expect(setup).toBeGreaterThan(html.indexOf('aria-label="Property filter"'));
+    expect(setup).toBeGreaterThan(html.indexOf('Received bill records'));
+    for (const text of ['>Refresh bills and sources</button>', '>Check inbox for bills</button>', 'Property rate numbers', 'an expected arrival or expected payment is a forecast']) {
+      expect(html.indexOf(text)).toBeGreaterThan(setup);
+    }
   });
 });

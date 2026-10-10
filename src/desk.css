@@ -205,3 +205,17 @@
 .property-scope-banner { display:flex; flex-wrap:wrap; gap:8px; padding:12px; font-size:12px; background:var(--color-selected); overflow-wrap:anywhere; }
 .property-scope-banner strong, .property-scope-banner span { width:100%; }
 .property-group-tabs button:focus-visible, .property-group-card:focus-visible, .property-group-path button:focus-visible, .property-scope-banner button:focus-visible { outline:2px solid var(--color-agency); outline-offset:2px; }
+/* Work areas (docs/DESK-WORK-AREAS-2026-10-10.md §3): a status line, then the work, then a collapsed Setup. */
+.area-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding-bottom: 12px; border-bottom: 1px solid var(--color-line); font-size: 13px; line-height: 1.5; color: var(--color-ink-secondary-strong); }
+.area-status-text { flex: 1 1 18rem; min-width: 0; }
+.area-status-label { font-weight: 600; color: var(--color-hold); }
+.area-status-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.area-status-reason { flex-basis: 100%; }
+.area-setup { border-top: 1px solid var(--color-line); }
+.area-setup > summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; font-size: 14px; font-weight: 500; color: var(--color-ink); }
+.area-setup > summary:focus-visible { outline: 2px solid var(--color-agency); outline-offset: -2px; }
+.area-setup[open] > summary { margin-bottom: 8px; }
+@media (max-width: 719px) {
+  .area-status-actions { width: 100%; }
+  .area-status-actions > button { flex: 1 1 auto; }
+}
