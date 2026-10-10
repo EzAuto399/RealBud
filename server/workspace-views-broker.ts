@@ -34,15 +34,15 @@ const ID = { type: "string", pattern: "^view-[a-z0-9-]{1,64}$" };
 const NAME = { type: "string", minLength: 1, maxLength: 40 };
 const SECTIONS = {
   type: "array",
-  description: `The whole Desk layout in display order: every section exactly once as {id, visible}. 'queue' (Needs you) must stay visible. Optional notify, only for ${NOTICE_AREA_IDS.join(", ")}: each (a desktop notice per new item), summary (one per run) or off (problems only). Optional layout, only for ${LAYOUT_AREA_IDS.map(id => `${id} (${AREA_LAYOUTS[id].join(" or ")})`).join(", ")}. Leave notify or layout out to use the office's setting.`,
+  description: `The whole Desk layout in display order: every section exactly once as {id, visible}. 'queue' (Needs you) must stay visible. Optional notify, only for ${NOTICE_AREA_IDS.join(", ")}: each (a desktop notice per new item), summary (one per run) or off (problems only). Optional layout, only for ${LAYOUT_AREA_IDS.map(id => `${id} (${AREA_LAYOUTS[id].join(" or ")})`).join(", ")}. Leave notify or layout out to keep this computer's current choice; set it to null to return that area to the office's setting.`,
   items: { type: "object", additionalProperties: false, required: ["id", "visible"], properties: {
     id: { type: "string", enum: Object.keys(DESK_SECTION_LABELS) }, visible: { type: "boolean" },
-    notify: { type: "string", enum: [...NOTICE_LEVELS] }, layout: { type: "string", enum: [...new Set(LAYOUT_AREA_IDS.flatMap(id => AREA_LAYOUTS[id]))] } } },
+    notify: { type: ["string", "null"], enum: [...NOTICE_LEVELS, null] }, layout: { type: ["string", "null"], enum: [...new Set(LAYOUT_AREA_IDS.flatMap(id => AREA_LAYOUTS[id])), null] } } },
 };
 const TOOLS = [
-  { name: "views_list", description: "List the person's saved views (id, name, kind, filter, shown in the sidebar or hidden) and this computer's Desk layout: its revision, every section in display order with its name and whether it shows, for each work area whether this office uses it and its current notify and layout, and the sections that always show. Read only; call it before desk_arrange.",
+  { name: "views_list", description: "List the person's saved views (id, name, kind, filter, shown in the sidebar or hidden) and this computer's Desk layout: its revision, every section in display order with its name and whether it shows, for each work area whether this office uses it, the office's setting where a notice level or layout can be chosen (officeNotify, officeLayout) and this computer's own choice where the person made one (notify, layout), and the sections that always show. Read only; call it before desk_arrange.",
     inputSchema: { type: "object", additionalProperties: false, properties: {} } },
-  { name: "desk_arrange", description: "Show, hide or reorder this computer's Desk sections, and choose a work area's notices or layout. revision is the Desk revision views_list returned; sections lists every section id exactly once in display order. 'queue' (Needs you) always stays visible. Problems always notify, whatever notify says. Changes only this computer's view, applies at once with no card, and the person can Undo it. If Desk changed since views_list, read it again.",
+  { name: "desk_arrange", description: "Show, hide or reorder this computer's Desk sections, and choose a work area's notices or layout. revision is the Desk revision views_list returned; sections lists every section id exactly once in display order. A notify or layout left out keeps this computer's current choice; null returns it to the office's setting. 'queue' (Needs you) always stays visible. Problems always notify, whatever notify says. Changes only this computer's view, applies at once with no card, and the person can Undo it. If Desk changed since views_list, read it again.",
     inputSchema: { type: "object", additionalProperties: false, required: ["revision", "sections"], properties: { revision: { type: "integer", minimum: 0 }, sections: SECTIONS } } },
   { name: "views_create", description: `Propose a new saved view in the sidebar. kind is one of ${KINDS.join(", ")}; filter is optional (defaults to the kind's first filter). The person approves it once on a card.`,
     inputSchema: { type: "object", additionalProperties: false, required: ["name", "kind"], properties: {
@@ -76,6 +76,19 @@ const sectionList = (sections: DeskSection[], office: OfficeDesk) => {
   return sections.filter(section => section.visible && (areas.has(section.id) || !isDeskAreaId(section.id))).map(section => areas.get(section.id)?.title ?? DESK_SECTION_LABELS[section.id]).join(", ");
 };
 
+/** Bud's sections with this computer's own notify and layout kept where Bud leaves them out; null returns one to the office's setting. */
+function keepChoices(value: unknown, saved: readonly DeskSection[]): unknown {
+  return Array.isArray(value) ? value.map(raw => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+    const before = saved.find(section => section.id === (raw as { id?: unknown }).id), next: Record<string, unknown> = { ...raw };
+    for (const field of ["notify", "layout"] as const) {
+      if (next[field] === null) delete next[field];
+      else if (!Object.hasOwn(next, field) && before?.[field]) next[field] = before[field];
+    }
+    return next;
+  }) : value;
+}
+
 /** A proposed change: the new state's tabs and layout, and its one-line card. */
 type Change = { tabs: WorkspaceTab[]; sections: DeskSection[]; card: string; done: string; viewId?: string; result?: Record<string, unknown> };
 
@@ -83,7 +96,7 @@ type Change = { tabs: WorkspaceTab[]; sections: DeskSection[]; card: string; don
 function arrangement(args: Record<string, unknown>, state: WorkspaceTabs, office: OfficeDesk): Change | string {
   if (!validWorkspaceRevision(args.revision)) return "revision must be the Desk revision views_list returned. Nothing was changed.";
   let sections: DeskSection[];
-  try { sections = parseDeskSections(args.sections); } catch (error) { return `${error instanceof Error ? error.message : "Check the Desk sections."} Nothing was changed.`; }
+  try { sections = parseDeskSections(keepChoices(args.sections, state.desk.sections)); } catch (error) { return `${error instanceof Error ? error.message : "Check the Desk sections."} Nothing was changed.`; }
   const revision = state.revision + 1;
   return { tabs: state.tabs, sections, card: "", result: { revision, previousRevision: state.revision },
     done: `Arranged Desk: ${deskChangeSummary(state.desk.sections, sections)}. Desk now shows ${sectionList(sections, office)}. The person can Undo it on Desk (previous revision ${state.revision}, now ${revision}).` };
@@ -166,13 +179,19 @@ export async function startWorkspaceViewsBroker(options: {
       if (name === "views_list") {
         const rows = state.tabs.map(tab => ({ id: tab.id, name: tab.label, kind: tab.view.kind, filter: tab.view.filter, visible: tab.visible }));
         const lines = rows.map(row => `- ${row.id}: ${JSON.stringify(row.name)} (${KIND_LABELS[row.kind]}, ${row.filter}, ${row.visible ? "shown" : "hidden"})`);
-        // Each work area as the office presets it, with this computer's own choices applied.
-        const areas = officeAreas(state.desk.sections, office), desk: Record<string, unknown>[] = [], deskLines: string[] = [];
+        // Each work area this office uses: the office's notices and layout where they can be chosen, and this computer's own choice
+        // only where the person made one, so desk_arrange takes back exactly what this lists.
+        const desk: Record<string, unknown>[] = [], deskLines: string[] = [];
         for (const section of state.desk.sections) {
-          const area = areas.get(section.id), row: Record<string, unknown> = { id: section.id, name: area?.title ?? DESK_SECTION_LABELS[section.id], visible: section.visible };
-          const notes = [section.visible ? "shown" : "hidden"];
-          if (area) { Object.assign(row, { available: true, notify: area.notify, layout: area.layout }); notes.push(...area.notify ? [`notify ${area.notify}`] : [], `layout ${area.layout}`); }
-          else if (isDeskAreaId(section.id)) { row.available = false; notes.push("not used by this office"); }
+          const area = office.areas.find(preset => preset.id === section.id && preset.available), row: Record<string, unknown> = { id: section.id, name: area?.title ?? DESK_SECTION_LABELS[section.id], visible: section.visible };
+          if (area) {
+            row.available = true;
+            if (NOTICE_AREA_IDS.includes(area.id)) Object.assign(row, { officeNotify: area.notify }, section.notify ? { notify: section.notify } : {});
+            if (LAYOUT_AREA_IDS.includes(area.id)) Object.assign(row, { officeLayout: area.layout }, section.layout ? { layout: section.layout } : {});
+          } else if (isDeskAreaId(section.id)) row.available = false;
+          // The text names the same fields as the structured row.
+          const { id: _id, name: _name, visible: _visible, available, ...choices } = row;
+          const notes = [section.visible ? "shown" : "hidden", ...available === false ? ["not used by this office"] : [], ...Object.entries(choices).map(([field, value]) => `${field} ${value}`)];
           desk.push(row); deskLines.push(`- ${section.id}: ${row.name} (${notes.join(", ")})`);
         }
         return text(`${rows.length ? `Saved views:\n${lines.join("\n")}` : "There are no saved views yet."}\nDesk layout (revision ${state.revision}), in order:\n${deskLines.join("\n")}\nAlways shown: ${LOCKED_DESK_SECTIONS.join(", ")}.`,

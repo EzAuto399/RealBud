@@ -85,8 +85,8 @@ function validatePackFiles(value: unknown): CustomerPack['files'] {
   }
   return Object.keys(out).length ? out : undefined;
 }
-/** Display-only Desk preset: each area names a different workflow of this pack that
- * this core can show, with an approved layout its area renders. */
+/** Display-only Desk preset, by shape: each area names a different workflow of this pack,
+ * an approved layout and notice level, and a plain title. */
 function validatePackDesk(value: unknown, workflows: CustomerPack['workflows']): NonNullable<CustomerPack['desk']> {
   const desk = fields(value, ['areas']), seen = new Set<string>();
   if (!Array.isArray(desk.areas) || !desk.areas.length || desk.areas.length > 8) return fail('A pack’s Desk preset needs one to eight work areas.');
@@ -94,10 +94,8 @@ function validatePackDesk(value: unknown, workflows: CustomerPack['workflows']):
     const area = fields(raw, ['workflow', 'title', 'layout', 'notify']), workflow = workflows.find(item => item.id === area.workflow);
     if (!workflow || seen.has(workflow.id)) return fail('Each Desk work area must name a different workflow in this pack.');
     seen.add(workflow.id);
-    const id = areaForWorkflow(workflow.id), layout = area.layout as DeskLayoutName;
-    if (!id) return fail(`This RealBud can't show the ${workflow.title} workflow on Desk yet.`);
+    const layout = area.layout as DeskLayoutName;
     if (!DESK_LAYOUTS.includes(layout)) return fail(`Unknown Desk layout${typeof layout === 'string' && /^[a-z0-9-]{1,40}$/.test(layout) ? ` ${layout}` : ''}.`);
-    if (!AREA_LAYOUTS[id].includes(layout)) return fail(`This RealBud can't show the ${workflow.title} workflow as a ${DESK_LAYOUT_LABELS[layout]} on Desk.`);
     if (!NOTICE_LEVELS.includes(area.notify as NoticeLevel)) return fail('Choose a Desk notice level: each, summary or off.');
     if (!plain(area.title, 40) || /[\u202a-\u202e\u2066-\u2069]/.test(area.title as string)) return fail('Give each Desk work area a plain title of up to 40 characters.');
     return { workflow: workflow.id, title: area.title as string, layout, notify: area.notify as NoticeLevel };
@@ -227,6 +225,16 @@ export interface CustomerPackServiceOptions {
   /** Packs the office uploaded on the website (server/office-link.ts). Untrusted until admitted with a signature. */
   officePacks?: () => Promise<OfficePacksSource>;
 }
+/** On import (preview, install, upgrade, the office's pack list): this core can show each preset area
+ * as laid out. Saved journals are read by shape only, so a later core or a downgrade never sends an
+ * install to recovery over a display preset; `officeDesk` leaves out what it can't show. */
+function assertDeskShowable(pack: CustomerPack): void {
+  for (const area of pack.desk?.areas ?? []) {
+    const id = areaForWorkflow(area.workflow), title = pack.workflows.find(workflow => workflow.id === area.workflow)!.title;
+    if (!id) fail(`This RealBud can't show the ${title} workflow on Desk yet.`);
+    if (!AREA_LAYOUTS[id].includes(area.layout)) fail(`This RealBud can't show the ${title} workflow as a ${DESK_LAYOUT_LABELS[area.layout]} on Desk.`);
+  }
+}
 /** Packs generated from files inside the signed app bundle. Trusted as shipped:
  * the digest is computed from the current app files, never pinned. */
 const builtInPacks: Record<string, () => CustomerPack> = { 'austin-office': latestAustinCustomerPack, 'austin-accounts': latestAustinAccountsCustomerPack, 'austin-property': austinPropertyCustomerPack, 'office-core': officeCoreCustomerPack, 'department-starters': departmentStarterCustomerPack };
@@ -236,6 +244,7 @@ const builtInHistory: Record<string, (() => CustomerPack)[]> = { 'austin-office'
  * the office website always must: matching a built-in is no excuse there. */
 export function admitPack(value: unknown, keys: readonly PackPublisherKey[], requireSignature = false): CustomerPack {
   const pack = validateCustomerPack(value);
+  assertDeskShowable(pack);
   if (pack.signature) verifyPackSignature(pack, keys);
   else if (requireSignature || !Object.hasOwn(builtInPacks, pack.id)) fail(UNSIGNED_PACK_MESSAGE);
   else {

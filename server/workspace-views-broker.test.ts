@@ -60,11 +60,12 @@ describe("saved views broker", () => {
     expect(result.structuredContent).toMatchObject({ revision: 1, locked: ["queue"] });
     expect(result.structuredContent.desk).toEqual(defaultDeskSections().map(section => expect.objectContaining({ id: section.id, name: expect.any(String), visible: true })));
     expect(result.structuredContent.desk[0]).toEqual({ id: "brief", name: "Morning brief", visible: true });
-    // Each work area with its effective notices and layout; one this office does not use says so.
-    expect(result.structuredContent.desk[1]).toEqual({ id: "mail", name: "Mail priorities", visible: true, available: true, notify: "summary", layout: "priority-list" });
+    // Each work area with the office's setting where it can be chosen; one this office does not use says so.
+    expect(result.structuredContent.desk[1]).toEqual({ id: "mail", name: "Mail priorities", visible: true, available: true, officeNotify: "summary" });
+    expect(result.structuredContent.desk[2]).toEqual({ id: "bills", name: "Bills and calendar", visible: true, available: true, officeNotify: "summary", officeLayout: "calendar" });
     expect(result.structuredContent.desk[3]).toEqual({ id: "bank", name: "Bank references", visible: true, available: false });
-    expect(result.content[0].text).toContain("Desk layout (revision 1), in order:\n- brief: Morning brief (shown)\n- mail: Mail priorities (shown, notify summary, layout priority-list)");
-    expect(result.content[0].text).toContain("- bank: Bank references (shown, not used by this office)\n- shared-work: Shared work (shown, layout review-list)");
+    expect(result.content[0].text).toContain("Desk layout (revision 1), in order:\n- brief: Morning brief (shown)\n- mail: Mail priorities (shown, officeNotify summary)\n- bills: Bills and calendar (shown, officeNotify summary, officeLayout calendar)");
+    expect(result.content[0].text).toContain("- bank: Bank references (shown, not used by this office)\n- shared-work: Shared work (shown)");
     expect(result.content[0].text).toContain("Always shown: queue.");
     expect(cards).toEqual([]);
     expect(approve).not.toHaveBeenCalled();
@@ -176,15 +177,37 @@ describe("saved views broker", () => {
     expect((await get()).desk.sections).toEqual(sections);
     const listed = (await call("views_list", {})).structuredContent.desk;
     expect(listed.filter((row: { available?: boolean }) => row.available)).toEqual([
-      { id: "mail", name: "Morning priorities", visible: true, available: true, notify: "each", layout: "priority-list" },
-      { id: "bills", name: "Bills & calendar", visible: true, available: true, notify: "each", layout: "review-list" },
-      { id: "shared-work", name: "Shared work", visible: true, available: true, notify: null, layout: "review-list" },
+      { id: "mail", name: "Morning priorities", visible: true, available: true, officeNotify: "each" },
+      { id: "bills", name: "Bills & calendar", visible: true, available: true, officeNotify: "summary", notify: "each", officeLayout: "calendar", layout: "review-list" },
+      { id: "shared-work", name: "Shared work", visible: true, available: true },
     ]);
     expect(await call("desk_arrange", { revision: 2, sections: defaultDeskSections().map(section => section.id === "shared-work" ? { ...section, notify: "each" } : section) }))
       .toMatchObject({ isError: true, content: [{ text: expect.stringContaining("Set notices only for") }] });
     expect(await call("desk_arrange", { revision: 2, sections: defaultDeskSections().map(section => section.id === "bills" ? { ...section, layout: "table" } : section) }))
       .toMatchObject({ isError: true, content: [{ text: expect.stringContaining("Choose a layout only for Bills and calendar") }] });
     expect((await get()).revision).toBe(2);
+  });
+
+  it("takes back what views_list lists, keeps a person's own choice when Bud leaves it out, and null returns it to the office's setting", async () => {
+    const { views, handler, get } = await service();
+    // The person chose these on Desk.
+    const chosen = defaultDeskSections().map(section => section.id === "bills" ? { ...section, notify: "each" as const, layout: "review-list" as const } : section);
+    expect((await handler.handle("/api/workspace-tabs", "PUT", { version: 3, expectedRevision: 1, tabs: [seed], desk: { sections: chosen } }))?.status).toBe(200);
+    await start(views, async () => true);
+    const listed = (await call("views_list", {})).structuredContent;
+    expect(listed.desk.find((row: { id: string }) => row.id === "bills")).toEqual({ id: "bills", name: "Bills and calendar", visible: true, available: true, officeNotify: "summary", notify: "each", officeLayout: "calendar", layout: "review-list" });
+    const unchanged = { content: [{ text: "Desk already looks like that. Nothing was changed." }] };
+    const back = listed.desk.map(({ id, visible, notify, layout }: Record<string, unknown>) => ({ id, visible, ...(notify ? { notify } : {}), ...(layout ? { layout } : {}) }));
+    expect(await call("desk_arrange", { revision: 2, sections: back })).toMatchObject(unchanged);
+    const plain = listed.desk.map(({ id, visible }: Record<string, unknown>) => ({ id, visible }));
+    expect(await call("desk_arrange", { revision: 2, sections: plain })).toMatchObject(unchanged);
+    expect(views.save).not.toHaveBeenCalled();
+    const hidden = plain.map((row: { id: string }) => ({ ...row, visible: row.id !== "activity" }));
+    expect((await call("desk_arrange", { revision: 2, sections: hidden })).content[0].text).toMatch(/^Arranged Desk: hid Activity\. /);
+    expect((await get()).desk.sections.find(section => section.id === "bills")).toEqual({ id: "bills", visible: true, notify: "each", layout: "review-list" });
+    const reset = await call("desk_arrange", { revision: 3, sections: hidden.map((row: { id: string }) => row.id === "bills" ? { ...row, notify: null } : row) });
+    expect(reset.content[0].text).toMatch(/^Arranged Desk: set Bills and calendar notices to the office default\. /);
+    expect((await get()).desk.sections.find(section => section.id === "bills")).toEqual({ id: "bills", visible: true, layout: "review-list" });
   });
 
   it("never overwrites a Desk changed after Bud read it", async () => {

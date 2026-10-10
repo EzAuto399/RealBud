@@ -3685,8 +3685,8 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     }
     if (path === '/api/needs-you') {
       res.setHeader('cache-control', 'no-store');
-      const result = await needsYou.handle(path, method);
-      if (result) return json(res, result.status, result.body);
+      const result = await needsYou.handle(method);
+      return json(res, result.status, result.body);
     }
     if (path === "/api/loops" && method === "GET") {
       const fromParam = url.searchParams.get("from");
@@ -6372,8 +6372,11 @@ setBankProvider({
 });
 // Every saved layout is announced, so an open Desk rereads at once whoever made the change.
 // The office's Desk preset comes from its chosen workflow pack (server/desk-preset.ts). A damaged
-// setup or pack journal shows the core Desk here; Setup and Workspace report the damage themselves.
-const readOfficeDesk = () => officeDesk({ agency: async () => (await agencySetup.getConfiguration()).settings, installedPack: id => customerPacks.installedPack(id) }).catch(() => coreOfficeDesk());
+// setup shows the core Desk; a damaged pack journal keeps the office's selected workflows without the pack preset.
+// Setup and Workspace report the damage themselves.
+const readOfficeDesk = () => officeDesk({ agency: async () => (await agencySetup.getConfiguration()).settings,
+  installedPack: id => customerPacks.installedPack(id).catch(() => { oplog("storage", "desk: the workflow pack record could not be read; Desk shows the core work areas"); return null; }),
+}).catch(() => coreOfficeDesk());
 const workspaceTabs = createWorkspaceTabsHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, officeDesk: readOfficeDesk, onSaved: change => broadcast({ kind: "workspace-tabs", ...change }) });
 void workspaceTabs.addGetStartedToAutomaticSimpleDesk()
   .then(applied => { if (applied) oplog("boot", "desk: Get started added to the automatic simple layout"); })
@@ -6549,10 +6552,11 @@ const mailWorkspace = createMailIngestionService({ directory: DATA_DIR, workspac
 // Needs you: one read of what needs a person across the office's workflows (server/needs-you.ts).
 const needsYou = createNeedsYouHandler({
   selectedWorkflows: async () => (await agencySetup.getConfiguration()).settings.selectedWorkflows,
+  officeDesk: readOfficeDesk,
   mail: mailWorkspace, billFollowUps: billFollowUpsApi,
   weeklyBills: () => latestRoutineResult(workflowDatabase(), 'weekly-bills'),
   w1Status: async () => (await w1Host()).status(),
-  loops: () => loops!,
+  loops: () => loops!, jobRuns: () => jobRuns.list(),
 });
 // Restore only the connection. An interrupted browser job always stays held.
 const sourceBillRegisters = new WeakMap<ReturnType<typeof workflowDatabase>, SourceBillRegister>();
