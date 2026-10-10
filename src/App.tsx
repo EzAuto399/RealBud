@@ -1,6 +1,6 @@
 import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
 import { useBudStatusMonitor } from "@/lib/bud-status-monitor";
-import { openDeskTasks } from "@/lib/desk-view-state";
+import { openDeskArea, openDeskTasks } from "@/lib/desk-view-state";
 import { HumanHandoffPanel } from "@/components/HumanHandoffPanel";
 import { hasPropertyEdits } from "@/lib/property-edits";
 import { hasUnsavedMailReviews } from "@/lib/mail-review-drafts";
@@ -29,7 +29,7 @@ import { doorHashToWrite, viewFromHash, workspaceViewFromHash, workspaceViewHash
 import { WorkspaceTabsProvider, useWorkspaceTabs } from '@/lib/workspace-tabs';
 
 
-import { SHOW_DESK_EVENT } from "@/lib/notify-desktop";
+import { SHOW_DESK_EVENT, shownArea } from "@/lib/notify-desktop";
 
 import { WORKSPACE_SETUP_EVENT, isWorkspaceSetupTarget, type WorkspaceSetupTarget } from "@/lib/workspace-setup";
 import { ActionNotice } from "@/components/ActionNotice";
@@ -182,7 +182,13 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
   }, [state.activeView, state.workspaceTabId]);
 
   useEffect(() => {
-    const go = () => { openDeskTasks(); dispatch({ type: "showDesk" }); };
+    // A notice names the place it is about: its work area, Schedule, or (none) Tasks.
+    const go = (event: Event) => {
+      const area = shownArea(event);
+      if (area === "schedule") { dispatch({ type: "showRoutines" }); return; }
+      if (area) openDeskArea(area); else openDeskTasks();
+      dispatch({ type: "showDesk" });
+    };
     window.addEventListener(SHOW_DESK_EVENT, go);
     return () => window.removeEventListener(SHOW_DESK_EVENT, go);
   }, [dispatch]);

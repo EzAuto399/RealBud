@@ -1,9 +1,24 @@
+import { isDeskAreaId } from "@shared/desk-areas";
+import type { NeedsYouArea } from "@shared/needs-you";
 import type { DeskSnapshot } from "./desk";
 import { morningBrief, type MorningBrief } from "./morning-brief";
 
 export type NotifyPermission = NotificationPermission | "unavailable";
 
+/** Shows Desk. Detail `{ area }` opens the work area that sent a notice (`schedule`: the Schedule view); none opens Tasks. */
 export const SHOW_DESK_EVENT = "realbud:show-desk";
+
+/** A notice click: bring the window forward on the place the notice is about. */
+export function showDesk(area?: NeedsYouArea): void {
+  window.focus();
+  window.dispatchEvent(area ? new CustomEvent(SHOW_DESK_EVENT, { detail: { area } }) : new Event(SHOW_DESK_EVENT));
+}
+
+/** The place a Desk event asks for; null means Tasks. */
+export function shownArea(event: Event): NeedsYouArea | null {
+  const area = (event as CustomEvent<{ area?: unknown } | null | undefined>).detail?.area;
+  return area === "schedule" || isDeskAreaId(area) ? area : null;
+}
 
 let lastNeedsYou: number | null = null;
 let lastHeadline: string | null = null;
@@ -89,8 +104,7 @@ async function requestAndNotify(brief: MorningBrief): Promise<void> {
     });
     note.onclick = () => {
       try {
-        window.focus();
-        window.dispatchEvent(new Event(SHOW_DESK_EVENT));
+        showDesk();
       } catch {
         /* ignore */
       }

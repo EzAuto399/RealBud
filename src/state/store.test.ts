@@ -2,6 +2,7 @@ import { isValidElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, clearedStream, flushedStream, StoreProvider, toolStartedStream } from './store';
 import { WORKSPACE_TABS_CHANGED } from '@/lib/workspace-tabs';
+import { NEEDS_YOU_STALE } from '@/lib/needs-you';
 import { productRuntimeEventVisible } from '../../server/product-mode.ts';
 
 // Render StoreProvider once, without a DOM, to reach its real dispatch.
@@ -130,6 +131,32 @@ describe('saved Desk layout announcements in the event stream', () => {
     frame({ kind: 'hello', streams: [] });
     expect(heard).toHaveLength(3);
     expect(heard[2]).toBeNull();
+    for (const stop of stops) if (typeof stop === 'function') stop();
+  });
+
+  it('marks Needs you stale on every frame that can change it, and on no other', async () => {
+    const win = Object.assign(new EventTarget(), { location: { hash: '' } });
+    vi.stubGlobal('window', win);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    const sources: Array<{ onmessage: ((event: { data: string }) => void) | null }> = [];
+    vi.stubGlobal('EventSource', class { onmessage = null; onopen = null; onerror = null; constructor() { sources.push(this); } close() {} });
+    let stale = 0;
+    win.addEventListener(NEEDS_YOU_STALE, () => { stale++; });
+    hook.effects = [];
+    StoreProvider({ children: null });
+    const stops = hook.effects.map(effect => effect());
+    await vi.waitFor(() => expect(sources).toHaveLength(1));
+    const frame = (value: unknown) => sources[0]!.onmessage!({ data: JSON.stringify(value) });
+    const run = { id: 'fictional-run', loopId: 'weekly-bills', loopName: 'Weekly bills review', status: 'completed', detail: 'Nothing new.' };
+    frame({ kind: 'workspace-tabs', revision: 2 });
+    frame({ kind: 'group.deleted', groupId: 'fictional-group' });
+    expect(stale).toBe(0);
+    frame({ kind: 'loop', loop: { id: 'weekly-bills' } });
+    frame({ kind: 'loop.run', run });
+    frame({ kind: 'loops.recovery', recovery: { active: false } });
+    frame({ kind: 'job.run', run: { id: 'fictional-job-run' } });
+    frame({ kind: 'desk', snapshot: { properties: [], lastRunAt: null } });
+    expect(stale).toBe(5);
     for (const stop of stops) if (typeof stop === 'function') stop();
   });
 });

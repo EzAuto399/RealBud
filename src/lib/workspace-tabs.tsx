@@ -49,6 +49,10 @@ type TabsContext = {
   saveDesk(sections: DeskSection[], expectedRevision: number, shell?: ShellLayout): Promise<void>; revertDesk(toRevision: number, expectedRevision: number): Promise<void>;
 };
 const Context = createContext<TabsContext | null>(null);
+let lastRead: WorkspaceTabsResponse | null = null;
+/** The last layout and office preset this window read, for readers outside React (desktop notices).
+ *  Null until the first read; a failed read keeps the last good one. */
+export const lastWorkspaceTabs = () => lastRead;
 export function WorkspaceTabsProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<WorkspaceTabsResponse | null>(null);
   const [loading, setLoading] = useState(true), [saving, setSaving] = useState(false), [error, setError] = useState('');
@@ -56,7 +60,7 @@ export function WorkspaceTabsProvider({ children }: { children: ReactNode }) {
   const alive = useRef(true), generation = useRef(0), pending = useRef(false);
   // The last state this window holds, and an announcement heard while its own save was in flight.
   const latest = useRef<WorkspaceTabsResponse | null>(null), missed = useRef<Announcement | null>(null);
-  const apply = (next: WorkspaceTabsResponse | null) => { latest.current = next; setData(next); };
+  const apply = (next: WorkspaceTabsResponse | null) => { latest.current = next; if (next) lastRead = next; setData(next); };
   const refresh = useCallback(async (): Promise<WorkspaceTabsResponse | null> => {
     if (pending.current) return null;
     const request = ++generation.current;

@@ -34,6 +34,7 @@ import { speaker } from "@/lib/tts";
 import { SERVICE_UNAVAILABLE_EVENT, isLocalServiceProxyFailure, localServiceError } from "@/lib/api-error";
 import { notifyDeskNeedsYou } from "@/lib/notify-desktop";
 import { notifyRoutineRun } from '@/lib/notify-routine';
+import { NEEDS_YOU_STALE } from "@/lib/needs-you";
 import { STREAM_COMMIT_INTERVAL_MS } from "@/lib/chat-scroll";
 import { askStepLabel } from "@/lib/ask-step-label";
 import { parseLiveStreamSnapshot, restoredLiveStreams } from "@shared/live-stream";
@@ -1448,6 +1449,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       if (["message", "message.patch", "thread", "bot", "bot.deleted", "group"].includes(frame.kind)) botEvents++;
       if (botHydrationDeferred && frame.kind === "bot" && frame.bot?.busy === false) loadBots();
+      // Frames that can change what Needs you shows; its client coalesces the rereads.
+      if (["loop", "loop.run", "loops.recovery", "job.run", "desk"].includes(frame.kind)) window.dispatchEvent(new CustomEvent(NEEDS_YOU_STALE));
       switch (frame.kind) {
         case "hello": {
           // This snapshot and subsequent deltas share one ordered SSE stream.
