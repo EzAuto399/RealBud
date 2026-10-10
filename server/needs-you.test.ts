@@ -182,6 +182,12 @@ describe('Needs you: jobs', () => {
     expect(review.items.map(item => [item.key, item.level])).toEqual([['loop:bank-fail', 'problem'], ['bank:w1run_fictional', 'review']]);
   });
 
+  it('never hides a newer failed run behind an older area item', async () => {
+    const snapshot = await read({ weeklyBills: () => weekly(['gap']), // found at(5)
+      loops: loops([loopRun('bills-fail', { loopId: 'weekly-bills', loopName: 'Weekly bills', finishedAt: T + 9 * 60_000 })]) });
+    expect(snapshot.items.map(item => item.key)).toEqual(['loop:bills-fail', 'bills:coverage']);
+  });
+
   it('sends a job whose area the office does not show to Schedule', async () => {
     const run = [loopRun('bank-fail', { loopId: 'bank-references', loopName: 'Bank references' })];
     const w1Status = vi.fn(w1({ run: w1Run() }));

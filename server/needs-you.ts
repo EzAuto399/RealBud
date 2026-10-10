@@ -108,7 +108,7 @@ async function bankItems(selected: readonly string[] | null, w1Status: NeedsYouD
   return [{ key: key('bank', run.id), area: 'bank', level, ...view, foundAt: iso(run.updatedAt) }];
 }
 
-function loopItems(schedule: ReturnType<NeedsYouDeps['loops']>, own: ReadonlySet<string>, selected: readonly string[] | null): NeedsYouItem[] {
+function loopItems(schedule: ReturnType<NeedsYouDeps['loops']>, own: ReadonlyMap<string, number>, selected: readonly string[] | null): NeedsYouItem[] {
   // An area the office doesn't show (Bank references not selected) can't open the row: it goes to Schedule.
   const shown = new Set<NeedsYouArea>(coreOfficeDesk(selected ?? []).areas.filter(area => area.available).map(area => area.id));
   const startedAt = (run: LoopRun) => run.startedAt ?? run.createdAt;
@@ -123,8 +123,8 @@ function loopItems(schedule: ReturnType<NeedsYouDeps['loops']>, own: ReadonlySet
   const items: NeedsYouItem[] = [];
   for (const { run, level } of picked.values()) {
     const found = areaForLoop(run.loopId), area = found && shown.has(found) ? found : 'schedule';
-    // The area's own item at the same level says it more specifically; with none there, the job row stays.
-    if (OWN_LOOPS.has(run.loopId) && own.has(`${area}:${level}`)) continue;
+    // The area's own item at the same level, at least as new as the run, says it more specifically; otherwise the job row stays.
+    if (OWN_LOOPS.has(run.loopId) && (own.get(`${area}:${level}`) ?? -Infinity) >= (run.finishedAt ?? run.startedAt ?? run.scheduledFor)) continue;
     items.push({ key: key('loop', run.id), area, level, title: clip(run.loopName, 300, 'A scheduled job'),
       reason: LOOP_PROBLEM[run.status] ?? 'A run of this job is waiting for your approval.',
       next: level === 'problem' ? 'Open the run in Schedule' : 'Review the run in Schedule', foundAt: iso(run.finishedAt ?? startedAt(run)) });
@@ -154,7 +154,9 @@ export async function readNeedsYou(deps: NeedsYouDeps): Promise<NeedsYouSnapshot
     settle('bills', () => coverageItems(deps.weeklyBills())),
     settle('bank', async () => bankItems(await selected, deps.w1Status)),
   ]);
-  const own = new Set(sources.flatMap(source => source.items ?? []).map(item => `${item.area}:${item.level}`));
+  // Newest dated item per area and level; an undated item never hides a job row.
+  const own = new Map<string, number>();
+  for (const item of sources.flatMap(source => source.items ?? [])) if (item.foundAt) own.set(`${item.area}:${item.level}`, Math.max(own.get(`${item.area}:${item.level}`) ?? -Infinity, Date.parse(item.foundAt)));
   sources.push(await settle('schedule', async () => loopItems(deps.loops(), own, await selected)));
   const counts: NeedsYouSnapshot['counts'] = {}, shown = new Map<NeedsYouArea, number>();
   const items = sources.flatMap(source => source.items ?? []).sort(order).filter(item => {
