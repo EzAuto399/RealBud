@@ -119,7 +119,14 @@ async function shot(name, locator) {
 try {
   demo = await startAustinDemo({ demoRoot });
   // From here every Ask turn runs the scripted worker (the service reads the CLI path on each spawn).
+  const demoFingerprint = (await request('/api/hermes')).workerFingerprint;
   writeFileSync(join(demoRoot, 'demo-worker.mjs'), `#!${process.execPath}\nconst LOG = ${JSON.stringify(logFile())};\nconst REPORT = ${JSON.stringify(REPORT)};\n${WORKER}`, { mode: 0o700 });
+  // Swapping Bud's CLI changes its fingerprint, so the demo's readiness record no longer matches and Work's
+  // composer stays locked ("Bud needs a check", 8873b29f). Re-record the same fictional readiness the demo
+  // seed writes (scripts/seed-austin-demo.mjs), for this worker; not a live model test.
+  const { workerFingerprint } = await until(() => request('/api/hermes'), s => s.workerFingerprint && s.workerFingerprint !== demoFingerprint, 'the scripted worker\'s fingerprint');
+  writeFileSync(join(demo.data, 'hands-ping.json'), JSON.stringify({ at: Date.now(), ok: true, detail: 'Fictional portal-learn worker readiness; not a live model test', kind: 'ping', workerFingerprint }), { mode: 0o600 });
+  assert.equal((await request('/api/hermes')).ready, true, 'Bud is ready with the scripted worker');
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
   await primeBrowserSession(context, demo.base, demo.token);
@@ -229,6 +236,7 @@ try {
     worker: workerLog().map(entry => entry.text ? { ...entry, text: entry.text.replace(/"path":"[^"]*("|$)/g, '"path":"<temp>"') } : entry),
     limits: ['Fictional REI-style portal and data only; no REI account, credential, customer record or model was used.',
       'The worker is scripted: it proves RealBud lets a worker explore and propose through the broker and cards, not that a model explores well.',
+      'Bud\'s readiness for the scripted worker is a fictional record this script writes, as the demo seed does; no readiness check ran.',
       'The fictional portal follows the pack map; the learned export path is exercised in Ask only, and real REI report export formats are still unconfirmed.',
       'Source service on macOS; not a packaged build, installed device or Windows. The person is simulated by this script.'],
     failure: failure ?? null, ...(failure && demo ? { diagnostic: demo.logs().slice(-8000) } : {}),

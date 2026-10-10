@@ -1,4 +1,4 @@
-import { readSessionToken, primeBrowserSession } from './local-session.mjs';
+import { readSessionToken, primeBrowserSession, enterSampleDeskForQa } from './local-session.mjs';
 // Shell purpose (owner feedback 2026-10-05): every rail, context-sidebar, status-bar and
 // side-panel control does something visible; the queue shortcuts filter Desk; headers are
 // thinner and the Work composer shorter and wider. Built React UI from REALBUD_UI_DIR against a
@@ -112,8 +112,9 @@ try {
   await page.goto(origin);
   await page.getByLabel('Your name', { exact: true }).fill('Fictional Purpose Reviewer');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
-  await page.getByRole('heading', { name: 'Desk', exact: true }).waitFor();
+  // First run has no sample-desk exit: the QA helper completes it as that button did and passes the office-link screen.
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
+  await enterSampleDeskForQa(page);
   const checked = page.waitForResponse(response => new URL(response.url()).pathname === '/api/desk/practice' && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Check sample tasks', exact: true }).first().click();
   assert.equal((await checked).status(), 200);

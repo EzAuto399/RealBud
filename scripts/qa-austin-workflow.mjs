@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -14,6 +14,10 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const out = resolve(process.env.QA_OUTPUT ?? join(root, "outputs/austin-validation-2026-09-10/austin-browser"));
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module.");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
+// The owned work browser admits only the reviewed native engine, staged by `pnpm build:browser` (gitignored).
+// Without it opening the work browser fails with a generic storage error, so name the missing step first.
+const bundleRoot = join(root, "dist-browser/hermes-native");
+if (!existsSync(join(bundleRoot, "runtime.json"))) throw new Error(`No native browser engine at ${bundleRoot}. Run \`pnpm build:browser\` in this checkout first.`);
 const fixtureRoot = mkdtempSync(join(tmpdir(), "realbud-austin-"));
 const data = join(fixtureRoot, "data");
 mkdirSync(data); mkdirSync(out, { recursive: true });
@@ -30,7 +34,7 @@ import { WorkBrowserHost } from ${JSON.stringify(pathToFileURL(join(root, "serve
 import { browserRuntime } from ${JSON.stringify(pathToFileURL(join(root, "server/browser-runtime.ts")).href)};
 browserRuntime.host = new WorkBrowserHost({
   root: ${JSON.stringify(join(data, "browser/work-browser"))},
-  bundleRoot: ${JSON.stringify(join(root, "dist-browser/hermes-native"))}
+  bundleRoot: ${JSON.stringify(bundleRoot)}
 }, { launch: (executable, args, env) => spawn(executable, [...args, "--use-mock-keychain", "--password-store=basic"], { env, stdio: ["ignore", "ignore", "pipe"] }) });
 `);
 chmodSync(fakeCli, 0o755);
@@ -294,8 +298,11 @@ try {
   const bankCsv = "Date,Amount,Narrative,Reference\n2026-09-10,500.00,FICTIONAL RENT,P101\n2026-09-10,500.00,FICTIONAL TRANSFER,\n";
   assert.equal((await api("GET", "/api/bank-reference", undefined, "")).status, 401);
   await page.getByRole("button", { name: /^Schedule\b/ }).first().click();
-  // A fresh office has no role pack, so Schedule's list leaves the Auston job out (#114); the sidebar's loop link opens it.
-  await page.getByRole("button", { name: /^Bank reference review\b/ }).first().click();
+  // A fresh office has no role pack, so Schedule's list (#114) and, since 8c9d6dc6 (F5), its sidebar leave the
+  // Auston job out; the job's deep link, which the sidebar and status bar use, still opens it once Schedule is on screen.
+  await page.getByRole("list", { name: "Jobs", exact: true }).waitFor();
+  await page.evaluate(() => { location.hash = "job-bank-references"; });
+  await page.getByRole("dialog", { name: "Bank reference review", exact: true }).waitFor();
   await page.getByText("Prepare a new export", { exact: true }).click();
   await page.getByLabel("Bank CSV", { exact: true }).setInputFiles({ name: "fictional-bank.csv", mimeType: "text/csv", buffer: Buffer.from(bankCsv) });
   for (const [key, value] of Object.entries({ date: "Date", amount: "Amount", narrative: "Narrative", reference: "Reference" })) await page.getByLabel(`${key} column`, { exact: true }).fill(value);

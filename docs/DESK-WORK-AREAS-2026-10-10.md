@@ -211,5 +211,5 @@ Limits:
   - Layout `table` passes `validatePackDesk`, but no area renders it, so importing a pack that uses it is refused.
   - An older core that opens a v3 layout sends it to recovery.
 - The link screen:
-  - A computer whose link read is still in flight shows Desk briefly first.
+  - While the link or the book is still being read, the gate shows a checking frame instead of Desk. After 20 s it offers Try again and Open recovery.
   - There is no team-seat exemption, because the renderer has no reliable seat signal.

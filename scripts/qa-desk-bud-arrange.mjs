@@ -1,4 +1,4 @@
-import { readSessionToken, primeBrowserSession } from './local-session.mjs';
+import { readSessionToken, primeBrowserSession, enterSampleDeskForQa } from './local-session.mjs';
 // Bud arranges Desk (docs/DESK-WORK-AREAS-2026-10-10.md, slice 1): a real Ask turn on the fake
 // ACP worker calls desk_arrange over its loopback tool server; the open Desk follows without a
 // focus event or reload, the receipt's Undo restores the earlier layout, and an Undo after a
@@ -59,8 +59,9 @@ try {
   await page.goto(origin);
   await page.getByLabel('Your name', { exact: true }).fill('Fictional Desk Reviewer');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
-  await page.getByRole('heading', { name: 'Desk', exact: true }).waitFor();
+  // First run has no sample-desk exit: the QA helper completes it as that button did and passes the office-link screen.
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
+  await enterSampleDeskForQa(page);
   const deskRow = page.locator('.pm-desk-header').getByRole('navigation', { name: 'Desk workspace', exact: true });
   const rowTabs = async () => (await deskRow.locator('.desk-workspace-tabs > button').allTextContents()).map(text => text.replace(/[!\d]+$/, '').trim());
   const showsTabs = expected => until(async () => JSON.stringify(await rowTabs()) === JSON.stringify(expected), `Desk tabs read ${expected.join(', ')}`);

@@ -393,11 +393,24 @@ try {
     await shot('schedule-needs-you-empty');
     check(c, 'Empty state: Needs you filter with no jobs');
     await page.getByRole('button', { name: /^All jobs/ }).click();
-    // Error state: a workflow that needs agency setup refuses to resume and says why.
+    // Error state: a workflow that needs agency setup is held and says why.
     // Never switched on: "Switch on" (a job the clock has run reads "Resume").
+    // Since the setup-stages gates (3628545e) a held row action opens the job, where the
+    // switch is disabled and the reason and its fix are shown in place.
     await page.getByRole('button', { name: /^(Resume|Switch on): Morning priorities$/ }).click();
-    await page.getByRole('alert').filter({ hasText: 'needs current source checks and reviewed settings' }).waitFor();
-    check(c, 'Error state: Morning priorities cannot resume before agency workflow setup; the reason is shown');
+    const heldJob = page.getByRole('dialog', { name: 'Morning priorities' });
+    const heldSwitch = heldJob.getByRole('button', { name: /^(Resume|Switch on)$/ });
+    await heldJob.getByText('Before Morning priorities can switch on, finish Agency workflow setup and approve it there.', { exact: true }).waitFor();
+    assert.equal(await heldSwitch.isDisabled(), true, 'Switch on is held before agency workflow setup');
+    await heldJob.getByRole('button', { name: 'Open Agency workflow setup', exact: true }).waitFor();
+    // The host stays the authority: the same switch sent past the UI is refused with its reason.
+    const refused = await api('/api/mail-workspace/schedule', 'PATCH', { enabled: true });
+    assert.equal(refused.status, 409, JSON.stringify(refused.body));
+    assert.match(refused.body?.error ?? '', /needs current source checks and reviewed settings/);
+    assert.equal((await api('/api/loops')).body.loops.find(l => l.id === 'inbound-triage').enabled, false);
+    check(c, 'Error state: Morning priorities is held before agency workflow setup; the job shows the reason and "Open Agency workflow setup", and the service refuses the switch (409)');
+    await page.keyboard.press('Escape');
+    await heldJob.waitFor({ state: 'hidden' });
     await widths('schedule');
     await page.getByRole('button', { name: 'Open job: Morning money check', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Morning money check' });
