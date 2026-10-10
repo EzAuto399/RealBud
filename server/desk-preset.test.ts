@@ -11,6 +11,7 @@ import { deskChanges, previewPackChange, type PackSnapshot } from './customer-pa
 import { admitPack, createCustomerPackService, validateCustomerPack } from './customer-packs.ts';
 import { officeDesk } from './desk-preset.ts';
 import { CHANGED_PACK_MESSAGE, packSigningBytes } from './pack-signing.ts';
+import { readPrivateJson, writePrivateJson } from './private-json.ts';
 import { FICTIONAL_PACK_KEYS, signFictionalPack, withFictionalPublisher } from './testing/pack-publisher.ts';
 import { privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 
@@ -45,9 +46,7 @@ describe('a workflow pack presets its Desk work areas', () => {
   type Draft = { workflows: { id: string }[]; desk: { areas: Record<string, unknown>[] } };
   it.each<[string, (pack: Draft) => void, RegExp]>([
     ['an unknown layout', pack => { pack.desk.areas[0].layout = 'kanban'; }, /^Unknown Desk layout kanban\.$/],
-    ['a layout its area cannot render', pack => { pack.desk.areas[1].layout = 'priority-list'; }, /can't show the Bills and calendar workflow as a Priority list on Desk/],
     ['a workflow outside this pack', pack => { pack.desk.areas[0].workflow = 'morning-priorities'; }, /different workflow in this pack/],
-    ['a workflow this core cannot show', pack => { pack.workflows[0].id = 'fictional-inspections'; pack.desk.areas[0].workflow = 'fictional-inspections'; }, /^This RealBud can't show the Bank references workflow on Desk yet\.$/],
     ['a duplicate workflow', pack => { pack.desk.areas[1].workflow = 'bank-references'; }, /different workflow in this pack/],
     ['an extra area key', pack => { pack.desk.areas[0].icon = 'bank'; }, /Unsupported pack fields/],
     ['an extra desk key', pack => { Object.assign(pack.desk, { order: [] }); }, /Unsupported pack fields/],
@@ -62,6 +61,17 @@ describe('a workflow pack presets its Desk work areas', () => {
     const pack = structuredClone(accountsDesk()) as unknown as Draft;
     change(pack);
     expect(() => validateCustomerPack(pack)).toThrow(message);
+  });
+
+  // What this core can show is checked on import only: a saved install is read by shape.
+  it.each<[string, (pack: Draft) => void, RegExp]>([
+    ['a layout its area cannot render', pack => { pack.desk.areas[1].layout = 'priority-list'; }, /can't show the Bills and calendar workflow as a Priority list on Desk/],
+    ['a workflow this core cannot show', pack => { pack.workflows[0].id = 'fictional-inspections'; pack.desk.areas[0].workflow = 'fictional-inspections'; }, /^This RealBud can't show the Bank references workflow on Desk yet\.$/],
+  ])('refuses to import %s, which a saved install may still hold', (_name, change, message) => {
+    const pack = structuredClone(accountsDesk()) as unknown as Draft;
+    change(pack);
+    expect(validateCustomerPack(pack).desk).toEqual(pack.desk);
+    expect(() => admitPack(signFictionalPack(pack), FICTIONAL_PACK_KEYS, true)).toThrow(message);
   });
 
   it('signs the desk preset with the canonical manifest', () => {
@@ -141,5 +151,14 @@ describe('the installed pack reader', () => {
     const office = await officeDesk({ agency: () => ({ workflowPackId: pack.id, selectedWorkflows: ['bills-calendar'] }), installedPack: id => service.installedPack(id) });
     expect(office.source).toEqual({ kind: 'pack', packId: 'fictional-accounts', revision: 1 });
     expect(office.areas.map(area => [area.id, area.notify, area.available])).toEqual([['bank', 'each', false], ['bills', 'summary', true], ['mail', 'summary', false], ['shared-work', null, true]]);
+    // A core that can no longer render the saved layout (a later release, or a downgrade): the install stays readable and the area shows its default.
+    const file = join(root, 'customer-packs.json'), journal = await readPrivateJson(file, 2_000_000) as { installs: Record<string, { pack: CustomerPack; digest: string }> };
+    const entry = journal.installs[pack.id]!;
+    entry.pack.desk!.areas[1].layout = 'priority-list';
+    entry.digest = digest(validateCustomerPack(entry.pack));
+    await writePrivateJson(file, journal);
+    expect((await service.installedPack(pack.id))?.desk?.areas[1]).toMatchObject({ workflow: 'bills-calendar', layout: 'priority-list' });
+    const fallback = await officeDesk({ agency: () => ({ workflowPackId: pack.id, selectedWorkflows: ['bills-calendar'] }), installedPack: id => service.installedPack(id) });
+    expect(fallback.areas[1]).toEqual({ id: 'bills', title: 'Bills & calendar', layout: 'calendar', notify: 'summary', available: true });
   });
 });

@@ -2,17 +2,19 @@
 // projected on each read from each workflow's own store (shared/needs-you.ts).
 // Read-only. Each source is read on its own: one that fails is listed as
 // unavailable with a fixed sentence, never as empty, and its error text is never forwarded.
-import { areaForLoop, coreOfficeDesk } from '../shared/desk-areas.ts';
-import { mailWorkGroup, type MailScanReceipt, type MailScanStatus, type MailTaskPage, type MailTaskPageQuery } from '../shared/mail-ingestion.ts';
+import { areaForLoop, type OfficeDesk } from '../shared/desk-areas.ts';
+import type { MailScanReceipt, MailScanStatus, MailTaskPage, MailTaskPageQuery } from '../shared/mail-ingestion.ts';
 import { readBillFollowUpPage, type BillFollowUp } from '../shared/bill-followups.ts';
 import { NEEDS_YOU_AREA_LIMIT, parseNeedsYouSnapshot, type NeedsYouArea, type NeedsYouItem, type NeedsYouLevel, type NeedsYouSnapshot } from '../shared/needs-you.ts';
 import type { RoutineResult } from '../shared/routine-result.ts';
-import type { LoopRun, LoopRunStatus } from '../shared/contracts.ts';
+import type { JobRun, JobRunStatus, LoopRun, LoopRunStatus } from '../shared/contracts.ts';
 import type { W1Run } from './w1-state.ts';
 
 export type NeedsYouDeps = {
   /** Agency setup's selected workflows: Bank references is read only for an office that runs it. */
   selectedWorkflows: () => Promise<readonly string[]>;
+  /** The office's Desk preset, as the layout route reads it: a job's row opens its area only where the office shows that area. */
+  officeDesk: () => Promise<OfficeDesk>;
   /** The service behind /api/mail-workspace and /api/mail-workspace/items. */
   mail: { get(): Promise<{ latestScan: MailScanReceipt | null }>; page(query: MailTaskPageQuery): Promise<MailTaskPage> };
   /** The /api/bill-register/followups handler. */
@@ -23,6 +25,8 @@ export type NeedsYouDeps = {
   w1Status: () => Promise<{ run: Pick<W1Run, 'id' | 'step' | 'attention' | 'updatedAt'> | null; working: boolean; ask: unknown; signIn: string | null }>;
   /** The schedule behind /api/loops. */
   loops: () => { listRuns(): readonly LoopRun[]; readonly recovery: { active: boolean } };
+  /** The job-run store behind /api/job-runs. */
+  jobRuns: () => readonly JobRun[];
   now?: () => number;
 };
 
@@ -37,10 +41,11 @@ const SCAN_PROBLEM: Partial<Record<MailScanStatus, string>> = {
 /** W1 attention reasons that are findings for a person to decide; any other reason holds the run (a problem). */
 const BANK_REVIEW = new Set(['pending_rows', 'rejected_rows', 'preview_mismatch', 'nothing_found', 'nothing_to_import']);
 /** The FAILURE_WORDS statuses of src/lib/schedule-rows.ts. */
-const LOOP_PROBLEM: Partial<Record<LoopRunStatus, string>> = {
+const RUN_PROBLEM: Partial<Record<LoopRunStatus | JobRunStatus, string>> = {
   failed: 'A run of this job failed.', missed: 'A run of this job was missed, so it checked nothing.',
   interrupted: 'A run of this job stopped before it finished.', partial: "A run of this job didn't check everything.",
 };
+const WAITING = 'A run of this job is waiting for your approval.';
 /** Jobs whose runs are also their area's own items read here: one event shows as one row. */
 const OWN_LOOPS = new Set(['inbound-triage', 'weekly-bills', 'bank-references']);
 
@@ -63,8 +68,8 @@ async function mailItems(mail: NeedsYouDeps['mail']): Promise<NeedsYouItem[]> {
     open.push(...page.items);
     if (!(cursor = page.nextCursor)) break;
   }
-  // counts.needsReview is work waiting for Bud to prepare, not for a person: only the open group is a person's review.
-  const items = open.filter(item => mailWorkGroup(item) === 'open').map((item): NeedsYouItem => ({ key: key('mail', item.id), area: 'mail', level: 'review',
+  // The service filters by group (server/mail-ingestion.ts page). counts.needsReview is work waiting for Bud, not for a person.
+  const items = open.map((item): NeedsYouItem => ({ key: key('mail', item.id), area: 'mail', level: 'review',
     title: clip(item.subject, 300, 'A conversation with no subject'), reason: clip(item.reason, 600, 'Bud marked this conversation for your review.'),
     next: clip(item.nextAction, 200, 'Open it in Mail priorities'), foundAt: iso(item.firstSeenAt) }));
   const scan = latestScan ? SCAN_PROBLEM[latestScan.status] : undefined;
@@ -108,26 +113,50 @@ async function bankItems(selected: readonly string[] | null, w1Status: NeedsYouD
   return [{ key: key('bank', run.id), area: 'bank', level, ...view, foundAt: iso(run.updatedAt) }];
 }
 
-function loopItems(schedule: ReturnType<NeedsYouDeps['loops']>, own: ReadonlyMap<string, number>, selected: readonly string[] | null): NeedsYouItem[] {
-  // An area the office doesn't show (Bank references not selected) can't open the row: it goes to Schedule.
-  const shown = new Set<NeedsYouArea>(coreOfficeDesk(selected ?? []).areas.filter(area => area.available).map(area => area.id));
-  const startedAt = (run: LoopRun) => run.startedAt ?? run.createdAt;
-  const picked = new Map<string, { run: LoopRun; level: NeedsYouLevel }>();
-  for (const run of schedule.listRuns()) {
-    // As loopIssue + buildRow (src/lib/schedule-rows.ts): per job, the most serious unseen receipt, then the newest.
-    // A taught job's receipt is its job run, which Schedule judges instead; it is not read here.
-    const level = run.seenAt || run.jobRunId ? null : LOOP_PROBLEM[run.status] ? 'problem' : run.status === 'awaiting-approval' ? 'review' : null;
-    const prior = picked.get(run.loopId);
-    if (level && (!prior || (level === prior.level ? startedAt(run) > startedAt(prior.run) : level === 'problem'))) picked.set(run.loopId, { run, level });
+type Issue = { severity: 0 | 1 | 2; reason: string; at: number; key: string; title: string; foundAt: number; loop: LoopRun | undefined };
+const startOf = (run: { startedAt?: number; createdAt: number }) => run.startedAt ?? run.createdAt;
+/** As loopIssue in src/lib/schedule-rows.ts:111-117. */
+function loopIssue(run: LoopRun): Issue | null {
+  const reason = run.seenAt ? undefined : RUN_PROBLEM[run.status] ?? (run.status === 'awaiting-approval' ? WAITING : undefined);
+  return reason ? { severity: RUN_PROBLEM[run.status] ? 2 : 1, reason, at: startOf(run), key: key('loop', run.id), title: run.loopName, foundAt: run.finishedAt ?? startOf(run), loop: run } : null;
+}
+/** As jobIssue in src/lib/schedule-rows.ts:119-131: a result Bud reached beside a person on a website is never verified from its own report. */
+function jobIssue(run: JobRun, acknowledged: boolean, loop: LoopRun | undefined): Issue | null {
+  if (acknowledged) return null;
+  const attended = run.mode === 'attended', unverified = attended && ['completed', 'partial', 'unknown'].includes(run.status);
+  const severity = unverified ? 0 : RUN_PROBLEM[run.status] ? 2 : !attended && run.status === 'awaiting-approval' ? 1 : null;
+  if (severity === null) return null;
+  const reason = unverified ? 'A run of this job finished beside you. Check its result on the website.' : RUN_PROBLEM[run.status] ?? WAITING;
+  return { severity, reason, at: startOf(run), key: key('job', run.id), title: run.jobTitle, foundAt: run.finishedAt ?? startOf(run), loop };
+}
+
+function jobItems(schedule: ReturnType<NeedsYouDeps['loops']>, jobRuns: readonly JobRun[], own: ReadonlyMap<string, number>, office: OfficeDesk): NeedsYouItem[] {
+  // An area the office doesn't show (Bank references not selected, or left out of its pack's preset) can't open the row: it goes to Schedule.
+  const shown = new Set<NeedsYouArea>(office.areas.filter(area => area.available).map(area => area.id));
+  const loopRuns = schedule.listRuns(), loopById = new Map(loopRuns.map(run => [run.id, run])), jobById = new Map(jobRuns.map(run => [run.id, run]));
+  // As buildRow (src/lib/schedule-rows.ts:155-170), one row per job: a saved job's clock run (recipe-<id>) that wraps a job run of
+  // that job is judged by its job run; a job run counts as seen when it is, or when the loop run linking it is.
+  const linkedSeen = new Set(loopRuns.filter(run => run.jobRunId && run.seenAt).map(run => run.jobRunId));
+  const picked = new Map<string, Issue>();
+  const consider = (row: string, issue: Issue | null) => {
+    const prior = picked.get(row);
+    // The most serious unseen receipt, then the newest.
+    if (issue && (!prior || issue.severity > prior.severity || (issue.severity === prior.severity && issue.at > prior.at))) picked.set(row, issue);
+  };
+  for (const run of loopRuns) {
+    const wrapped = run.jobRunId ? jobById.get(run.jobRunId) : undefined;
+    if (!wrapped || run.loopId !== `recipe-${wrapped.jobId}`) consider(run.loopId, loopIssue(run));
   }
+  for (const run of jobRuns) consider(`recipe-${run.jobId}`, jobIssue(run, Boolean(run.seenAt) || linkedSeen.has(run.id), run.loopRunId ? loopById.get(run.loopRunId) : undefined));
   const items: NeedsYouItem[] = [];
-  for (const { run, level } of picked.values()) {
-    const found = areaForLoop(run.loopId), area = found && shown.has(found) ? found : 'schedule';
-    // The area's own item at the same level, at least as new as the run, says it more specifically; otherwise the job row stays.
-    if (OWN_LOOPS.has(run.loopId) && (own.get(`${area}:${level}`) ?? -Infinity) >= (run.finishedAt ?? run.startedAt ?? run.scheduledFor)) continue;
-    items.push({ key: key('loop', run.id), area, level, title: clip(run.loopName, 300, 'A scheduled job'),
-      reason: LOOP_PROBLEM[run.status] ?? 'A run of this job is waiting for your approval.',
-      next: level === 'problem' ? 'Open the run in Schedule' : 'Review the run in Schedule', foundAt: iso(run.finishedAt ?? startedAt(run)) });
+  for (const issue of picked.values()) {
+    const level: NeedsYouLevel = issue.severity === 2 ? 'problem' : 'review';
+    const found = issue.loop ? areaForLoop(issue.loop.loopId) : null, area = found && shown.has(found) ? found : 'schedule';
+    // The area's own item at the same level, found since this run started, says the same thing more specifically.
+    // One found before the run started never hides it.
+    if (issue.loop && OWN_LOOPS.has(issue.loop.loopId) && (own.get(`${area}:${level}`) ?? -Infinity) >= startOf(issue.loop)) continue;
+    items.push({ key: issue.key, area, level, title: clip(issue.title, 300, 'A scheduled job'), reason: issue.reason,
+      next: level === 'problem' ? 'Open the run in Schedule' : 'Review the run in Schedule', foundAt: iso(issue.foundAt) });
   }
   if (schedule.recovery.active) items.push({ key: 'schedule:recovery', area: 'schedule', level: 'problem', title: 'Scheduled work is paused for recovery',
     reason: 'Saved results are still available. No job runs until this is recovered.', next: 'Open Schedule for details', foundAt: null });
@@ -157,7 +186,7 @@ export async function readNeedsYou(deps: NeedsYouDeps): Promise<NeedsYouSnapshot
   // Newest dated item per area and level; an undated item never hides a job row.
   const own = new Map<string, number>();
   for (const item of sources.flatMap(source => source.items ?? [])) if (item.foundAt) own.set(`${item.area}:${item.level}`, Math.max(own.get(`${item.area}:${item.level}`) ?? -Infinity, Date.parse(item.foundAt)));
-  sources.push(await settle('schedule', async () => loopItems(deps.loops(), own, await selected)));
+  sources.push(await settle('schedule', async () => jobItems(deps.loops(), deps.jobRuns(), own, await deps.officeDesk())));
   const counts: NeedsYouSnapshot['counts'] = {}, shown = new Map<NeedsYouArea, number>();
   const items = sources.flatMap(source => source.items ?? []).sort(order).filter(item => {
     (counts[item.area] ??= { problem: 0, review: 0 })[item.level]++;
@@ -168,11 +197,10 @@ export async function readNeedsYou(deps: NeedsYouDeps): Promise<NeedsYouSnapshot
   return { checkedAt, items, counts, unavailable };
 }
 
-/** GET /api/needs-you. The host applies the session gate and `no-store` first. */
+/** /api/needs-you. The host matches the route and applies the session gate and `no-store` first. */
 export function createNeedsYouHandler(deps: NeedsYouDeps) {
   return {
-    async handle(route: string, method: string): Promise<{ status: number; body: unknown } | null> {
-      if (route !== '/api/needs-you') return null;
+    async handle(method: string): Promise<{ status: number; body: unknown }> {
       if (method !== 'GET') return { status: 405, body: { error: 'Needs you is read-only.' } };
       return { status: 200, body: await readNeedsYou(deps) };
     },

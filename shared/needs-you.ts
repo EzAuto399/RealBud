@@ -6,7 +6,7 @@ import { isDeskAreaId, type DeskAreaId } from './desk-areas.ts';
 export type NeedsYouArea = DeskAreaId | 'schedule';
 export type NeedsYouLevel = 'problem' | 'review';
 export type NeedsYouItem = {
-  /** `<source>:<id>`, stable across reads: `mail:<itemId>`, `bill:<followUpId>`, `bank:<runId>`, `loop:<runId>`. */
+  /** `<source>:<id>`, stable across reads: `mail:<itemId>`, `bill:<followUpId>`, `bank:<runId>`, `loop:<runId>`, `job:<jobRunId>`. */
   key: string;
   area: NeedsYouArea;
   /** problem: a check didn't run, access expired or a run is held. review: something was found for a person to decide. */
