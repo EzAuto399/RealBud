@@ -194,7 +194,7 @@ Also in this bundle:
   - There is no way past it except recovery (owner decision, 10 Oct). See [Office link gate](OFFICE-LINK-GATE-2026-10-10.md).
 
 Evidence:
-- Final, at `d2ac6297` with a real install: typecheck clean, `check:electron` 34/34, full suite 11,107 passed and 0 failed, and renderer QA 29 of 29 scripts on one build (fictional data). Details: [Release 0.1.50](RELEASE-0.1.50-2026-10-10.md#evidence).
+- Final, at `25f77e8d` with a real install: typecheck clean, `check:electron` 34/34, full suite 11,113 passed and 0 failed, and renderer QA 29 of 29 scripts in one run (fictional data). An independent review's high finding (a saved first-run recovery choice skipped the gate on every launch) is fixed; see the [Office link gate](OFFICE-LINK-GATE-2026-10-10.md) exits. Details: [Release 0.1.50](RELEASE-0.1.50-2026-10-10.md#evidence).
 - Full suite at `b1148c26`: 11,068 passed. Five failed for an environment reason: the PDF worker under `node --permission` through a symlinked `node_modules`. They pass with a real install. `pnpm check:electron`: 34/34.
 - After the link-gate merge: typecheck is clean. Vitest over `src`, `shared` and the Needs you and workspace-tab server tests: 232 files, 2,931 passed.
 - Renderer QA: 12 of 13 pass on the merged branch (built UI, real install): link-gate 17/17 (rerun after the copy fix), setup-stages 29/29, onboarding-setup 15/15, screen-loading 7/7, kevin-sherry-day 26/26, weekly-bills 6/6, w2-calendar 5/5, desk-work-areas 8/8, customizable-desk 9/9, desktop-shell 11/11, workspace-tabs, source-bills 30/30. clean-walkthrough is 12/13: step 6 fails the same way on `main`. Receipts: [outputs/office-link-gate-2026-10-10/](../outputs/office-link-gate-2026-10-10/).

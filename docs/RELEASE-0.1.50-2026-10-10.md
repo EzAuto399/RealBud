@@ -10,7 +10,9 @@
 - **The office link comes first.**
   - An unlinked or revoked computer opens on "Connect this computer to your office" before Bud's setup. The screen is laid out like Bud's setup screen.
   - There is no way past it except recovery (owner decision, 10 Oct). The sample-desk exits in first run are gone.
-  - Recovery never waits behind it. A protected book offers "Open recovery" beside linking, and a link that can't be read offers Try again and Open recovery after 20 s.
+  - Recovery never waits behind it. A protected book offers "Open recovery" beside linking, and a check that can't finish offers Try again and Open recovery after 20 s.
+  - Recovery started in first run is offered again as "Continue recovery" on later launches, one click per app session; it never skips the screen by itself.
+  - An unlinked computer keeps the screen while the local service reconnects.
   - Spec: [Office link gate](OFFICE-LINK-GATE-2026-10-10.md).
 - **One work-area tab per workflow** (mail priorities, bills and calendar, bank references, shared work). Each tab has one status line and a collapsed Setup, and the tab shows its own count. An office's workflow pack can preset the areas' titles, layouts and notice levels, and a person's choices on this computer win. Design and record: [Desk work areas](DESK-WORK-AREAS-2026-10-10.md) §3 and §11.
 - **Needs you on Tasks.**
@@ -26,7 +28,7 @@
   - Closing Arrange Desk returns focus to where it was opened.
 - **Smaller fixes.**
   - Desk's code loads as soon as the local service answers, so a slow service start no longer leaves Desk failing until a reload.
-  - A missing work-browser bundle now says it needs repair instead of "could not use its saved files".
+  - A missing or damaged work-browser bundle now says it needs repair; a real disk or permission error still says the saved files couldn't be used.
 
 ## Upgrade notes
 - **Every computer must be linked.** After updating, a computer that isn't linked to its office opens on the link screen and stays there until it is. Before updating an office, check each computer is linked, or have a link code ready for it. Offices are limited to 5 computers.
@@ -37,10 +39,11 @@
 ## Evidence
 | Check | Result | Tier |
 |---|---|---|
-| Typecheck, `check:electron`, UI build at `d2ac6297` | clean; 34/34 electron modules | local tests |
-| Full suite (`pnpm test`) at `d2ac6297` | 11,107 passed, 335 skipped, 0 failed (679 files) | local tests |
-| Renderer QA, 29 scripts on one build of the branch (fictional data, isolated homes) | 29 of 29 pass: 27 in one full run, and `qa-bud-status` (10) and `qa-telegram-ask-ux` (11) on the same build after a QA-only update for the 9 Oct composer lock. Highlights: link-gate 26, setup-stages 29, kevin-sherry-day 28, clean-walkthrough 13/13 steps, source-bills 30, austin-workflow 17, austin-showcase 16. Receipts: `outputs/release-0.1.50-2026-10-10/` | local QA |
+| Typecheck, `check:electron`, UI build at `25f77e8d` | clean; 34/34 electron modules | local tests |
+| Full suite (`pnpm test`) at `25f77e8d` | 11,113 passed, 335 skipped, 0 failed (679 files) | local tests |
+| Renderer QA, 29 scripts on one build of the branch (fictional data, isolated homes) | 29 of 29 pass in one run at `25f77e8d`. Highlights: link-gate 28 (including Continue recovery and the gate kept through a reconnect), setup-stages 29, kevin-sherry-day 28, clean-walkthrough 13/13 steps, source-bills 30, austin-workflow 17, austin-showcase 16. Receipts: `outputs/release-0.1.50-2026-10-10/` | local QA |
 | Package Windows (`workflow_dispatch` at the release SHA) | runs at the merge commit; recorded after the build | CI packaging |
+| Independent review of the gate and late fixes | 1 high (a saved recovery choice skipped the gate on every launch), 1 medium, 4 low; all fixed except a revoked computer having no recovery exit, which follows the owner's no-exit decision | source review |
 | Installed or upgraded Auston PC, live office link | not run | not established |
 
 Not run: `qa-native-private-restore` (needs a packaged Mac build), `qa-shell-purpose` (needs `QA_BASELINE`), `qa-browser-link-e2e` (needs Postgres and a website build).
