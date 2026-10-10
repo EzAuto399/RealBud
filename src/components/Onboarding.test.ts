@@ -14,6 +14,7 @@ const fixture = vi.hoisted(() => ({
   connect: null as unknown as { office: string | null; view: ConnectOfficeViewProps },
   personName: undefined as string | undefined,
   epoch: 0,
+  session: new Map<string, string>(),
 }));
 // Exercise the real rendered handlers while keeping state across explicit
 // rerenders. No DOM, server, effect-driven API request or browser storage.
@@ -86,6 +87,8 @@ beforeEach(() => {
   fixture.config = { profile: { name: '', email: '' } };
   fixture.connect = connection({ state: 'linked', agencyLabel: OFFICE, provisioned: true });
   fixture.epoch = 0;
+  fixture.session = new Map();
+  vi.stubGlobal('sessionStorage', { getItem: (key: string) => fixture.session.get(key) ?? null, setItem: (key: string, value: string) => void fixture.session.set(key, value) });
   let hash = '#welcome';
   vi.stubGlobal('location', { get hash() { return hash; }, set hash(value: string) { hash = '#' + value.replace(/^#/, ''); } });
 });
@@ -119,6 +122,8 @@ describe('welcome finish recovery', () => {
     expect(fixture.api.mock.calls.map(([path]) => path)).toEqual(['/api/desk', '/api/desk', '/api/desk', '/api/onboarding', '/api/desk']);
     expect(fixture.api.mock.calls[3][2]).toEqual({ timeoutMs: 60_000 });
     expect(fixture.dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'showDesk' });
+    // Choosing the sample desk leaves the office-link screen for this app session.
+    expect(fixture.session.get('realbud.linkGateLeft')).toBe('1');
   });
 
   it('retries a timed-out completion without writing the contact or stage twice', async () => {
@@ -239,6 +244,8 @@ describe('welcome backup restore', () => {
     response.resolve({ ...saved, stage: 'recovery', revision: 4 });
     await vi.waitFor(() => expect(fixture.onDone).toHaveBeenCalledTimes(1));
     expect(fixture.onDone).toHaveBeenCalledWith(); expect(location.hash).toBe('#you-private-backup');
+    // Recovery never waits behind the office-link screen.
+    expect(fixture.session.get('realbud.linkGateLeft')).toBe('1');
     expect(fixture.dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'showYou' });
     expect(fixture.api).toHaveBeenCalledTimes(1); expect(fixture.emailGate).not.toHaveBeenCalled();
     expect(fixture.track).not.toHaveBeenCalledWith('onboarding_completed', expect.anything());
@@ -362,6 +369,7 @@ describe('connect this computer to your office', () => {
     });
     button(render(saved), 'Continue to Bud setup').props.onClick!();
     await vi.waitFor(() => expect(fixture.onDone).toHaveBeenCalledWith('bud'));
+    expect(fixture.session.has('realbud.linkGateLeft')).toBe(false);
     // Get started lives on Desk, the store's first view, so the setup sheet opens over it and no view change closes it.
     expect(fixture.dispatch).toHaveBeenCalledWith({ type: 'showDesk' });
     expect(fixture.dispatch).not.toHaveBeenCalledWith({ type: 'showAsk' });

@@ -92,7 +92,7 @@ const writeReceipt = () => {
     passed: failure === null && errors.length === 0 && defects.length === 0,
     exercised: [
       'src/components/desk/GoLiveCard.tsx', 'src/lib/setup-sequence.ts', 'src/lib/first-run.ts',
-      'src/components/Onboarding.tsx', 'src/components/you/OfficeCard.tsx', 'src/components/RoutinesPage.tsx',
+      'src/components/Onboarding.tsx', 'src/components/LinkOfficeScreen.tsx', 'src/components/you/OfficeCard.tsx', 'src/components/RoutinesPage.tsx',
       'src/components/schedule/WorkflowPacksCard.tsx', 'src/components/schedule/AgencyWorkflowSetup.tsx',
     ],
     serverPid: child?.pid ?? null,
@@ -190,11 +190,19 @@ try {
     return card;
   };
   const cardTextOf = async card => (await card.innerText()).replace(/\s+/g, ' ').trim();
+  // A new tab is a new app session: an unlinked computer opens on the office-link screen first.
+  const GATE_HEADING = 'Connect this computer to your office';
+  const leaveLinkGate = async page => {
+    await page.getByRole('heading', { name: GATE_HEADING, exact: true }).waitFor();
+    assert.equal(await page.getByRole('contentinfo', { name: 'Status bar' }).count(), 0, 'the shell waits behind the office-link screen');
+    await page.getByRole('button', { name: 'Explore the sample desk', exact: true }).click();
+    await page.getByRole('heading', { name: GATE_HEADING, exact: true }).waitFor({ state: 'detached' });
+  };
 
   // ── 1. Desk workspace setup is one ordered path of three steps ──────────────
   const context = await browser.newContext({ viewport: { width: 1400, height: 1050 } });
   await onlyLocal(context);
-  await primeBrowserSession(context, uiBase, token);
+  await primeBrowserSession(context, uiBase, token, { linkGate: true });
   await context.addInitScript(() => localStorage.setItem('realbud.first-run-done', '1'));
   const desk = watch(await context.newPage());
   desk.setDefaultTimeout(30_000);
@@ -216,6 +224,12 @@ try {
   assert.equal((await request('/api/desk')).book.office.pmUser, FRESH_PERSON);
   checks.push('Fresh workspace ignores the legacy browser flag; profile submission saves office-rules, reload resumes rules with the saved profile, and explicit sample-desk completion saves complete with the office contact');
   let card = await openSetupCard(desk);
+  // The card's link read has answered unlinked, and choosing the sample desk left the office-link screen for this session.
+  assert.equal(await desk.getByRole('heading', { name: GATE_HEADING, exact: true }).count(), 0, 'Open the sample desk first lands on Desk, not the office-link screen');
+  await desk.reload();
+  card = await openSetupCard(desk);
+  assert.equal(await desk.getByRole('heading', { name: GATE_HEADING, exact: true }).count(), 0, 'a reload keeps the sample desk choice');
+  checks.push('"Open the sample desk first" leaves the office-link screen for this app session: Desk shows after the link read answers unlinked, and after a reload');
   await card.getByText('0 of 5 done', { exact: true }).waitFor();
   let cardText = await cardTextOf(card);
   observations.freshSetupCard = cardText;
@@ -365,6 +379,19 @@ try {
   narrow.setDefaultTimeout(30_000);
   await narrow.setViewportSize({ width: 390, height: 844 });
   await narrow.goto(`${uiBase}/#/desk`);
+  // A new tab is a new app session: the office-link screen comes first, its code entry on the first screen at 390px.
+  const gateHeading = narrow.getByRole('heading', { name: GATE_HEADING, exact: true });
+  await gateHeading.waitFor();
+  const gateConnect = narrow.getByRole('button', { name: 'Connect with this code', exact: true });
+  const gateBox = await gateConnect.boundingBox();
+  const gateWidths = await narrow.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
+  observations.narrowGate = { connectBottom: gateBox && Math.round(gateBox.y + gateBox.height), ...gateWidths };
+  assert.ok(gateBox && gateBox.y + gateBox.height <= 844, `Connect with this code below the first screen at 390px: ${JSON.stringify(gateBox)}`);
+  assert.ok(gateWidths.scrollWidth <= gateWidths.innerWidth + 1, `horizontal overflow on the office-link screen at 390px: ${JSON.stringify(gateWidths)}`);
+  assert.equal(await narrow.evaluate(() => document.activeElement?.tagName), 'H1', 'the office-link heading takes focus');
+  await narrow.screenshot({ path: join(output, 'link-gate-390.png') });
+  await leaveLinkGate(narrow);
+  checks.push('A new tab on the unlinked computer opens on the office-link screen: heading focused, code entry on the first screen and no horizontal scroll at 390x844; "Explore the sample desk" opens Desk');
   const narrowCard = await openSetupCard(narrow);
   await narrowCard.getByText(/^\d of 5 done$/).waitFor();
   await narrowCard.evaluate(el => el.scrollIntoView({ block: 'center' }));
@@ -383,6 +410,7 @@ try {
   const you = watch(await context.newPage());
   you.setDefaultTimeout(30_000);
   await you.goto(`${uiBase}/#/you`);
+  await leaveLinkGate(you);
   const office = you.locator('#you-office');
   await office.waitFor();
   if (!(await office.evaluate(el => el.open))) await office.locator('summary').first().click();

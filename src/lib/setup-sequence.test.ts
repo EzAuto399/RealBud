@@ -114,14 +114,20 @@ describe("Get started: five steps in Kevin's order", () => {
 
 describe("skipping a step for now", () => {
   it("never counts a skipped step as done, makes the next open step current, and leaves done steps and Bud alone", () => {
-    const input: SetupSequenceInput = { ...base, websiteLink: "not-linked", bud: installing, austinPack: pack(), schedule: loopsOn([]) };
-    expect(currentSetupStep(onlyOneCurrent(input))?.id).toBe("link");
-    const skipped = onlyOneCurrent({ ...input, skipped: ["link", "bud", "pack"] });
-    expect(skipped.map((item) => [item.id, item.state])).toEqual([["link", "skipped"], ["bud", "working"], ["pack", "done"], ["gmail", "current"], ["workflows", "later"]]);
+    const input: SetupSequenceInput = { ...base, websiteLink: "linked", bud: installing, austinPack: pack(), schedule: loopsOn([]) };
+    expect(currentSetupStep(onlyOneCurrent(input))?.id).toBe("gmail");
+    const skipped = onlyOneCurrent({ ...input, skipped: ["bud", "pack", "gmail"] });
+    expect(skipped.map((item) => [item.id, item.state])).toEqual([["link", "done"], ["bud", "working"], ["pack", "done"], ["gmail", "skipped"], ["workflows", "current"]]);
     // Every open step skipped: nothing is current and setup is still not complete.
-    const all = onlyOneCurrent({ ...input, skipped: ["link", "gmail", "workflows"] });
+    const all = onlyOneCurrent({ ...input, skipped: ["gmail", "workflows"] });
     expect(currentSetupStep(all)).toBeNull();
     expect(setupSequenceComplete(all)).toBe(false);
+  });
+
+  it("never lets the office link be skipped, even by a skip saved before it became required", () => {
+    const input: SetupSequenceInput = { ...base, websiteLink: "not-linked", bud: installing, austinPack: pack(), schedule: loopsOn([]) };
+    const steps = onlyOneCurrent({ ...input, skipped: ["link", "pack"] });
+    expect(steps.map((item) => [item.id, item.state])).toEqual([["link", "current"], ["bud", "working"], ["pack", "done"], ["gmail", "later"], ["workflows", "later"]]);
   });
 });
 

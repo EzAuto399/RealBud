@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { budAutoSetupRetryable, budAutoSetupView, budAvailability, budFirstSetupCover, budFacingCopy, budReadinessFailure, budSetupJourney, parseBudStatus, type BudSetupInput } from "./bud-setup";
+import { LINK_GATE_LEFT, budAutoSetupRetryable, budAutoSetupView, budAvailability, budFirstSetupCover, budFacingCopy, budReadinessFailure, budSetupJourney, leaveLinkGate, linkGateLeft, officeLinkGate, parseBudStatus, type BudSetupInput } from "./bud-setup";
 import type { HermesStatus } from "@/state/store";
 
 const readyBase: BudSetupInput = {
@@ -237,5 +237,35 @@ describe("last readiness check copy", () => {
     // A linked computer with nothing running still hears about its last failed check.
     expect(budReadinessFailure(stale, "linked")).toBe("Bud took too long to answer.");
     expect(budReadinessFailure(auto("idle"), "unavailable")).toBe("Bud took too long to answer.");
+  });
+});
+
+describe("office link before anything else", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+  const on = { connected: true, recovering: false, preview: false, left: false };
+  const unlinked = { link: "not-linked" as const, revoked: false };
+
+  it("blocks only on a connected service whose link read answered not linked, naming a revoked computer", () => {
+    expect(officeLinkGate(unlinked, on)).toBe("not-linked");
+    expect(officeLinkGate({ link: "not-linked", revoked: true }, on)).toBe("revoked");
+    // Linked, not read yet (no flash while reading) and a failed read never block.
+    for (const link of ["linked", undefined, "unavailable"] as const) expect(officeLinkGate({ link, revoked: false }, on)).toBeNull();
+  });
+
+  it("never blocks while disconnected, during book recovery, in a design preview or once left this session", () => {
+    for (const key of ["recovering", "preview", "left"] as const) expect(officeLinkGate(unlinked, { ...on, [key]: true })).toBeNull();
+    expect(officeLinkGate(unlinked, { ...on, connected: false })).toBeNull();
+  });
+
+  it("keeps leaving for this app session in session storage, and in memory when storage is blocked", () => {
+    const saved = new Map<string, string>();
+    vi.stubGlobal("sessionStorage", { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => void saved.set(key, value) });
+    expect(linkGateLeft()).toBe(false);
+    saved.set(LINK_GATE_LEFT, "1");
+    expect(linkGateLeft()).toBe(true);
+    vi.stubGlobal("sessionStorage", { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } });
+    expect(linkGateLeft()).toBe(false);
+    expect(() => leaveLinkGate()).not.toThrow();
+    expect(linkGateLeft()).toBe(true);
   });
 });

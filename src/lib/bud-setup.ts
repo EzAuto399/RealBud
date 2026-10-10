@@ -199,6 +199,38 @@ export function budFirstSetupCover(status: HermesStatus | null, context: { conne
   return context.connected && !context.statusError && (state === "installing" || state === "verifying") ? "running" : "stopped";
 }
 
+/** sessionStorage key: the person left the office-link screen for this app session. */
+export const LINK_GATE_LEFT = "realbud.linkGateLeft";
+// Blocked storage still keeps the choice until this window reloads.
+let leftInMemory = false;
+
+/** Whether the person left the office-link screen earlier in this app session. */
+export function linkGateLeft(): boolean {
+  if (leftInMemory) return true;
+  try { return sessionStorage.getItem(LINK_GATE_LEFT) === "1"; } catch { return false; }
+}
+
+/** Leave the office-link screen for this app session: a reload keeps the choice, the next launch asks again. */
+export function leaveLinkGate() {
+  leftInMemory = true;
+  try { sessionStorage.setItem(LINK_GATE_LEFT, "1"); } catch { /* kept in memory for this window */ }
+}
+
+/**
+ * The office link comes before anything else on this computer: "not-linked" or
+ * "revoked" while the local service is connected and its link read answered
+ * so. Null while that read is pending or failed, during book recovery, in a
+ * design preview, or once the person left the screen this session. Presentation
+ * only; the server stays the authority on every action.
+ */
+export function officeLinkGate(
+  office: { link: "linked" | "not-linked" | "unavailable" | undefined; revoked: boolean },
+  context: { connected: boolean; recovering: boolean; preview: boolean; left: boolean },
+): "not-linked" | "revoked" | null {
+  if (!context.connected || context.recovering || context.preview || context.left || office.link !== "not-linked") return null;
+  return office.revoked ? "revoked" : "not-linked";
+}
+
 /** First run's "Continue to Bud setup" opens Bud status over Desk. Once every
  * check is Ready that sheet has done its job, so it closes and Desk shows Get
  * started. A sheet the person opened themselves stays until they close it. */

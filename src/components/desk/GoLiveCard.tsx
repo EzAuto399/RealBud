@@ -219,8 +219,8 @@ export function GoLiveCard({
         {steps.map((step) => {
           // Bud's step always offers its progress; any other step acts only on its turn.
           const action = step.state === "current" || (step.id === "bud" && step.state !== "done");
-          // Any step but Bud's own can be put aside for now, and brought back.
-          const canSkip = step.state === "current" && step.id !== "bud";
+          // Any step but Bud's own and the office link can be put aside for now, and brought back.
+          const canSkip = step.state === "current" && step.id !== "bud" && step.id !== "link";
           return (
             <li key={step.id} className="flex flex-wrap items-start gap-x-3 gap-y-1.5 py-2">
               <StepIcon state={step.state} />
