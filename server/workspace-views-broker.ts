@@ -15,7 +15,7 @@ import { startLoopbackToolServer, toolError, type LoopbackToolResult, type Loopb
 
 export const WORKSPACE_VIEWS_SERVER = "workspace-views";
 export const VIEWS_CONFLICT = "Your views changed — ask again";
-export const DESK_CONFLICT = "Desk changed — read it again with views_list. Nothing was changed.";
+export const DESK_CONFLICT = "Desk changed since you read it. Nothing was changed. Call views_list again, then retry desk_arrange with the new revision.";
 
 /** The saved-views service as the host binds it for one turn: the same GET and
  * PUT the Desk uses (`createWorkspaceTabsHandler`), so the UI's next read sees
