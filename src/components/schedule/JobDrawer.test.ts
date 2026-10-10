@@ -247,6 +247,8 @@ describe("job drawer", () => {
     const list = renderToStaticMarkup(createElement(JobList, { rows, onOpen: () => {}, onAction: () => {} }));
     expect(list).toContain('aria-label="Review bank file: Bank reference review"');
     expect(list).toContain(">On demand<");
+    // This office's Desk was read and offers no Bank area, so the review stays in the job.
+    holding(coreOfficeDesk(), defaultDeskSections());
     const html = detail({ loop: bank, manualOnly: true, next: "On demand" });
     expect(html).toContain("Prepare bank references");
     expect(html).not.toContain("Run now");
@@ -264,8 +266,22 @@ describe("bank review place", () => {
     const html = detail({ loop: bank });
     expect(html).toContain(REVIEW);
     expect(html).not.toContain("on Desk</button>");
-    // A failed or missing layout read falls back to the core preset, which offers no Bank area.
+  });
+
+  it("says where bank files are reviewed could not be checked, with Try again, instead of a second review", () => {
+    // The work-areas read failed before any office preset was read; the core preset offers no Bank area.
     holding(null);
+    tabs.current = { ...tabs.current, error: "Saved views could not be checked. Refresh before changing them.", refresh: vi.fn() };
+    const html = detail({ loop: bank });
+    expect(html).not.toContain(REVIEW);
+    expect(html).not.toContain("on Desk</button>");
+    expect(html).not.toContain("Checking where bank files are reviewed");
+    expect(html).toContain('aria-label="Bank review"');
+    expect(html).toContain("Couldn’t check where bank files are reviewed.");
+    expect(buttonTag(html, "Try again")).not.toContain('disabled=""');
+    // A failed read after the preset was read keeps that preset, so the decision stands.
+    holding(coreOfficeDesk(["morning-priorities"]), defaultDeskSections());
+    tabs.current = { ...tabs.current, error: "Saved views could not be checked. Refresh before changing them." };
     expect(detail({ loop: bank })).toContain(REVIEW);
   });
 

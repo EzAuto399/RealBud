@@ -26,18 +26,32 @@ export type HermesEngineStep =
 export interface HermesEngineBundle { executable: string; sha256: string }
 export type HermesEngineExec = (executable: string, args: string[], options: { env: NodeJS.ProcessEnv; cwd: string; signal?: AbortSignal }) => Promise<Json>;
 
+/** Null when the path (or a folder on it) is absent; every other error is rethrown unchanged. */
+const unlessMissing = <T>(pending: Promise<T>): Promise<T | null> => pending.catch((error: unknown) => {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  if (code === "ENOENT" || code === "ENOTDIR") return null;
+  throw error;
+});
+/** JSON.parse never yields undefined, so undefined marks a damaged manifest. */
+const parsed = (text: string): unknown => { try { return JSON.parse(text); } catch { return undefined; } };
 /** Admit an exact build-staged binary. Never PATH, npx, floating downloads or
  * a binary whose bytes changed since its packaging manifest was written. */
 export async function admitHermesEngine(folder: string): Promise<HermesEngineBundle> {
   const manifestFile = join(folder, "runtime.json");
-  // A missing or quarantined bundle needs repair; it is not a saved-files problem.
-  const stat = await lstat(manifestFile).catch(() => null);
+  // A missing, quarantined or unreadable-as-JSON bundle needs repair; it is not a
+  // saved-files problem. Any other I/O error (EACCES, EIO...) still surfaces as one.
+  const stat = await unlessMissing(lstat(manifestFile));
   if (!stat?.isFile() || stat.isSymbolicLink() || stat.size > 4096) throw failed("The work browser bundle needs repair.");
-  const raw: unknown = JSON.parse(await readFile(manifestFile, "utf8"));
+  const text = await unlessMissing(readFile(manifestFile, "utf8"));
+  const raw = text === null ? undefined : parsed(text);
+  if (raw === undefined) throw failed("The work browser bundle needs repair.");
   if (!record(raw) || raw.engine !== "hermes-agent-browser" || raw.version !== HERMES_BROWSER_ENGINE_VERSION || raw.platform !== process.platform || raw.arch !== process.arch || typeof raw.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(raw.sha256)) throw failed("The work browser bundle is not compatible with this build.");
   const executable = join(folder, process.platform === "win32" ? "agent-browser.exe" : "agent-browser");
-  const binary = await lstat(executable).catch(() => null);
-  if (!binary?.isFile() || binary.isSymbolicLink() || binary.nlink !== 1 || binary.size > 100_000_000 || createHash("sha256").update(await readFile(executable)).digest("hex") !== raw.sha256) throw failed("The work browser executable does not match its reviewed bundle.");
+  const mismatch = "The work browser executable does not match its reviewed bundle.";
+  const binary = await unlessMissing(lstat(executable));
+  if (!binary?.isFile() || binary.isSymbolicLink() || binary.nlink !== 1 || binary.size > 100_000_000) throw failed(mismatch);
+  const bytes = await unlessMissing(readFile(executable));
+  if (!bytes || createHash("sha256").update(bytes).digest("hex") !== raw.sha256) throw failed(mismatch);
   return { executable, sha256: raw.sha256 };
 }
 

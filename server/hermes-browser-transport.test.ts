@@ -1,4 +1,4 @@
-import { mkdir, writeFile, symlink, rm } from "node:fs/promises";
+import { chmod, mkdir, writeFile, symlink, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -221,6 +221,27 @@ describe("admitted native browser bundle and endpoint", () => {
     await writeFile(join(root, "runtime.json"), JSON.stringify({ engine: "hermes-agent-browser", version: "0.26.0", platform: process.platform, arch: process.arch, sha256: "a".repeat(64) }));
     await expect(admitHermesEngine(root)).rejects.toThrow(/reviewed bundle/);
     await expect(admitHermesEngine(root)).rejects.not.toHaveProperty("syscall");
+    // A file where the bundle folder should be (ENOTDIR) is the same repair.
+    await expect(admitHermesEngine(join(root, "runtime.json"))).rejects.toThrow("The work browser bundle needs repair.");
+  });
+  it("names an unparseable runtime manifest as needing repair, without the parser's text", async () => {
+    const root = await tempRoot("rb-native-damaged-");
+    await writeFile(join(root, "runtime.json"), "{ fictional damaged");
+    const error = await admitHermesEngine(root).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error); expect(error).not.toBeInstanceOf(SyntaxError);
+    expect((error as Error).message).toBe("The work browser bundle needs repair.");
+  });
+  // Root reads through a folder or file with no permissions, so the denial cannot be staged.
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("reports a denied bundle read as the I/O error it is, not as needing repair", async () => {
+    const root = await tempRoot("rb-native-denied-"); const bundle = join(root, "bundle"); await mkdir(bundle);
+    const manifest = join(bundle, "runtime.json");
+    await writeFile(manifest, JSON.stringify({ engine: "hermes-agent-browser", version: "0.26.0", platform: process.platform, arch: process.arch, sha256: "a".repeat(64) }));
+    try {
+      await chmod(bundle, 0o600); // lstat inside a folder without search permission: EACCES
+      await expect(admitHermesEngine(bundle)).rejects.toMatchObject({ code: "EACCES", syscall: "lstat" });
+      await chmod(bundle, 0o700); await chmod(manifest, 0o000); // lstat succeeds, the read is denied
+      await expect(admitHermesEngine(bundle)).rejects.toMatchObject({ code: "EACCES", syscall: "open" });
+    } finally { await chmod(bundle, 0o700); await chmod(manifest, 0o600); }
   });
   it.skipIf(process.platform === "win32")("rejects a symlinked executable", async () => {
     const root = await tempRoot("rb-native-link-"); await mkdir(join(root, "bundle"));
