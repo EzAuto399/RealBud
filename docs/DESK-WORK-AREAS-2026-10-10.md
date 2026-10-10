@@ -183,6 +183,9 @@ Built (§10 packets 1–6, plus the review fixes):
 6. The simple desk keeps every work area as a tab. A startup step gives the tabs back to layouts that were applied automatically and never touched (`showAreaTabsOnAutomaticSimpleDesk`).
 
 Also in this bundle:
+- Accessibility, from the [system map review](SYSTEM-MAP-REVIEW-2026-10-10.md):
+  - Muted text (`--color-ink-muted`, `--color-ink-secondary`) is darkened to `#625c52`. It now passes 4.5:1 on every surface; it had measured 3.76–4.45:1 on inset, selected, raised and raised-hover.
+  - The Tasks drawer keeps Tab inside it; before, 16 of 30 Tab presses left it in Chrome. Arrange Desk uses the same shared trap. Closed from the More menu, it now returns focus to More instead of dropping it to the page.
 - The pre-rename data folder moves only into the default `~/.realbud`.
 - The office link comes first. An unlinked or revoked computer opens on "Connect this computer to your office" before Bud's setup screen.
   - Recovery never waits behind that screen.
@@ -204,6 +207,8 @@ Limits:
   - The Bank reference review is drafted in two places (`src/components/JobDrawer.tsx:496`).
   - A revoked computer is detected only by the server's 5-minute report.
   - A pack that declares `desk` needs core 0.1.50, and packs have no minimum-core field yet.
+  - A client's own pack can't be chosen as the office pack: `AGENCY_WORKFLOW_PACK_IDS` (`shared/agency-workflow-packs.ts:4`) allows three host-coded ids, and none of those packs ships `desk`. So the pack preset is proved only with fictional packs injected in tests. This is step 1 of the [map review](SYSTEM-MAP-REVIEW-2026-10-10.md).
+  - Layout `table` passes `validatePackDesk`, but no area renders it, so importing a pack that uses it is refused.
   - An older core that opens a v3 layout sends it to recovery.
 - The link screen:
   - A computer whose link read is still in flight shows Desk briefly first.

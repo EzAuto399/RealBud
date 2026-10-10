@@ -18,6 +18,10 @@
   - A click opens the area that sent the notice.
 - **Arrange Desk** splits into "Work areas" and "Cards on Tasks". It has Reset to office default and "Undo last tab or card change".
 - **Bud arranges Desk through the same route** as the sheet. That includes each area's notice level and layout.
+- **Accessibility fixes.**
+  - Muted text passes WCAG 2.2 AA (4.5:1) on every surface.
+  - The Tasks drawer keeps keyboard focus inside it.
+  - Closing Arrange Desk returns focus to where it was opened.
 - **The office link comes first.**
   - An unlinked or revoked computer opens on "Connect this computer to your office" before Bud's setup. The screen is laid out like Bud's setup screen.
   - Recovery never waits behind it.
@@ -27,7 +31,7 @@
 ## Upgrade notes
 - **Desk layouts move to v3 on first save.** Bank references is appended. A layout RealBud applied automatically and nobody changed gets the work-area tabs back once, at startup. An older core that opens a v3 layout sends it to recovery.
 - **The pre-rename data folder** is moved only into the default `~/.realbud`, never into a custom `REALBUD_DATA_DIR`.
-- **A pack that declares `desk`** needs core 0.1.50. Packs have no minimum-core field yet.
+- **A pack that declares `desk`** needs core 0.1.50. Packs have no minimum-core field yet. Only the three built-in pack ids can be the office pack, and none of them ships `desk` yet, so every office sees the core Desk preset.
 
 ## Evidence
 | Check | Result | Tier |
