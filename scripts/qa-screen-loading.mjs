@@ -28,7 +28,7 @@ try {
   writeFileSync(join(data, 'config.json'), JSON.stringify({ instances: { fixture: { driver: 'not-a-real-driver' } } }), { mode: 0o600 });
   child = spawn(process.execPath, [join(root, 'server/bootstrap.ts')], { cwd: root, env: {
     ...serviceSmokeEnv({ executable: process.execPath, home: temp, data, scratch: temp, port }),
-    REALBUD_MANAGED_SERVICE: '0', REALBUD_TEST_LAB: '1', OMB_STATIC_DIR: join(root, 'dist'),
+    REALBUD_MANAGED_SERVICE: '0', REALBUD_TEST_LAB: '1', OMB_STATIC_DIR: resolve(process.env.REALBUD_UI_DIR || join(root, 'dist')),
   }, stdio: ['ignore', 'pipe', 'pipe'] });
   for (const stream of [child.stdout, child.stderr]) stream.on('data', bytes => { logs = (logs + bytes).slice(-20000); });
   let ready = false;
@@ -62,8 +62,8 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(origin + '/#/desk'); await page.getByRole('heading', { name: 'Desk', exact: true }).waitFor();
   assert.ok(loaded.some(url => /\/DeskPage-/.test(url)));
-  for (const name of ['YouPage', 'RoutinesPage', 'WorkspaceTabsManager', 'WorkspaceSetup', 'Onboarding', 'HermiosTab']) assert.equal(loaded.some(url => url.includes(`/${name}-`)), false, `${name} should load only when used`);
-  pass('Desk opens without downloading settings, schedule, saved-view manager, setup, onboarding or Hermios chunks');
+  for (const name of ['YouPage', 'RoutinesPage', 'WorkspaceTabsManager', 'WorkspaceSetup', 'Onboarding', 'HermiosTab', 'LinkOfficeScreen']) assert.equal(loaded.some(url => url.includes(`/${name}-`)), false, `${name} should load only when used`);
+  pass('Desk opens without downloading settings, schedule, saved-view manager, setup, onboarding, office-link or Hermios chunks');
   const deskTabs = page.getByRole('navigation', { name: 'Desk workspace' });
   await deskTabs.getByRole('button', { name: 'Hermios', exact: true }).click();
   // Plain Chrome has no desktop bridge, so the tab offers the sign-in link.

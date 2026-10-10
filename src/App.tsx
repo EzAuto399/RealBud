@@ -34,7 +34,8 @@ import { SHOW_DESK_EVENT, shownArea } from "@/lib/notify-desktop";
 import { WORKSPACE_SETUP_EVENT, isWorkspaceSetupTarget, type WorkspaceSetupTarget } from "@/lib/workspace-setup";
 import { ActionNotice } from "@/components/ActionNotice";
 import { DESIGN_PREVIEW_REASON } from "@/lib/design-preview";
-import { budFirstSetupCover, budSetupSheetDone, parseBudStatus } from "@/lib/bud-setup";
+import { budFirstSetupCover, budSetupSheetDone, leaveLinkGate, linkGateLeft, officeLinkGate, parseBudStatus } from "@/lib/bud-setup";
+import { useOfficeLinkView } from "@/lib/use-office-link";
 
 const ChatView = lazy(() => import('@/components/ChatView').then(module => ({ default: module.ChatView })));
 const RoutinesPage = lazy(() => import('@/components/RoutinesPage').then(module => ({ default: module.RoutinesPage })));
@@ -45,6 +46,7 @@ const WorkspaceTabsManager = lazy(() => import('@/components/WorkspaceTabsManage
 const WorkspaceSavedView = lazy(() => import('@/components/WorkspaceSavedView').then(module => ({ default: module.WorkspaceSavedView })));
 const WorkspaceSetup = lazy(() => import('@/components/WorkspaceSetup').then(module => ({ default: module.WorkspaceSetup })));
 const BudSetupScreen = lazy(() => import('@/components/BudSetupScreen').then(module => ({ default: module.BudSetupScreen })));
+const LinkOfficeScreen = lazy(() => import('@/components/LinkOfficeScreen').then(module => ({ default: module.LinkOfficeScreen })));
 
 function macDoorKeys(): boolean {
   const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
@@ -126,9 +128,13 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
   const bud = state.bots.find((b) => b.id === "bud" || b.name === "Bud") ?? state.bots[0];
   // Once someone leaves a stopped setup, a later retry never pulls them back.
   const [leftSetup, setLeftSetup] = useState(false);
-  const setupCover = budFirstSetupCover(state.hermes, { connected: state.connected, statusError: Boolean(budStatusRead.error), recovering: Boolean(state.desk?.recovery?.active) });
-  const settingUp = Boolean(setupCover) && !leftSetup;
   const recovering = Boolean(state.desk?.recovery?.active);
+  // The office link comes first; once linked, Bud's own setup cover takes over.
+  const officeLink = useOfficeLinkView(state.connected);
+  const [leftLinkGate, setLeftLinkGate] = useState(linkGateLeft);
+  const linkGate = officeLinkGate(officeLink, { connected: state.connected, recovering, preview: Boolean(DESIGN_PREVIEW_REASON), left: leftLinkGate });
+  const setupCover = budFirstSetupCover(state.hermes, { connected: state.connected, statusError: Boolean(budStatusRead.error), recovering });
+  const settingUp = Boolean(setupCover) && !leftSetup;
   const setupSheetDone = budSetupSheetDone(state.hermes, { connected: state.connected, recovering, openedBySetup: setupFromFlow.current });
   useEffect(() => {
     // Once the person moves to another section or closes it, the sheet is theirs.
@@ -257,7 +263,8 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
           <ActionNotice message={state.error} onDismiss={() => dispatch({ type: "error", message: null })} />
         </div>
       )}
-      {settingUp ? <WorkspaceScreen key="bud-setup" label="Bud setup"><BudSetupScreen running={setupCover === "running"} onLeave={() => setLeftSetup(true)} /></WorkspaceScreen> : <>
+      {linkGate ? <WorkspaceScreen key="office-link" label="office link"><LinkOfficeScreen revoked={linkGate === "revoked"} onLeave={() => { leaveLinkGate(); setLeftLinkGate(true); }} /></WorkspaceScreen>
+      : settingUp ? <WorkspaceScreen key="bud-setup" label="Bud setup"><BudSetupScreen running={setupCover === "running"} onLeave={() => setLeftSetup(true)} /></WorkspaceScreen> : <>
       <DesktopShell inert={Boolean(setup)}>
         {/* Keyed on the view: each place rises in once on arrival. Pages already
             remount on switch (the ternary above), so no state contract changes. */}
@@ -300,7 +307,8 @@ function FirstRunGate() {
     setError('');
     void readSavedSetup(api).then(next => {
       if (!active) return;
-      if (next.stage === 'recovery') location.hash = youRecoveryTarget(location.hash);
+      // Recovery comes before the office link: it never waits behind it.
+      if (next.stage === 'recovery') { location.hash = youRecoveryTarget(location.hash); leaveLinkGate(); }
       setSaved(next);
     }).catch(cause => { if (active) setError(cause instanceof Error ? cause.message : 'Your saved setup could not be checked.'); });
     return () => { active = false; };
@@ -308,7 +316,7 @@ function FirstRunGate() {
   if (entered || firstRunDone(saved) || saved?.stage === 'recovery') return <Shell initialSetup={initialSetup} />;
   if (!saved) return <main className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-paper p-6" role={error ? 'alert' : 'status'}>
     <p>{error || 'Checking your saved setup…'}</p>
-    {error && <><button className="pm-control" onClick={() => setAttempt(value => value + 1)}>Try again</button><button className="pm-control" onClick={() => { location.hash = 'you-recovery'; setEntered(true); }}>Open recovery</button></>}
+    {error && <><button className="pm-control" onClick={() => setAttempt(value => value + 1)}>Try again</button><button className="pm-control" onClick={() => { location.hash = 'you-recovery'; leaveLinkGate(); setEntered(true); }}>Open recovery</button></>}
   </main>;
   return <WorkspaceScreen label="welcome"><Onboarding initialState={saved} onDone={(target) => { setInitialSetup(target ?? null); setEntered(true); }} /></WorkspaceScreen>;
 }

@@ -12,6 +12,7 @@ import {
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
 import { isRecoveryWriteError } from "@/lib/api-error";
 import { createFirstRunApi, officeContactNamed } from "@/lib/first-run";
+import { leaveLinkGate } from "@/lib/bud-setup";
 import { SETUP_STEP_COUNT } from "@/lib/setup-sequence";
 import type { YouRecoveryTarget } from "@/lib/you-navigation";
 import type { OnboardingState } from '@shared/onboarding';
@@ -110,6 +111,8 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
     setEmailGateDone(emailStatus);
     // A leftover door hash would move the view on mount and close the sheet.
     if (destination === "bud") history.replaceState(null, "", location.pathname + location.search);
+    // The sample desk was chosen over connecting: the office-link screen waits until the next launch.
+    else leaveLinkGate();
     dispatch({ type: "showDesk" });
     onDone(destination === "bud" ? "bud" : undefined);
   };
@@ -186,6 +189,8 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
     try {
       setSaved(await createFirstRunApi(api).save(saved, 'recovery'));
       location.hash = target;
+      // Recovery comes before the office link: it never waits behind it.
+      leaveLinkGate();
       dispatch({ type: "showYou" });
       onDone();
     } catch (cause) {

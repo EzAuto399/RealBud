@@ -23,13 +23,22 @@ export async function readSessionToken(dataDirectory, { timeoutMs = 10_000 } = {
   }
 }
 
+/** Session storage key the renderer keeps when the person leaves the office-link
+ * screen for this app session (`LINK_GATE_LEFT` in src/lib/bud-setup.ts). */
+export const LINK_GATE_LEFT_KEY = 'realbud.linkGateLeft';
+
 /** Give a Playwright context's pages on exactly `origin` the owner's token, the
- * same way a developer pastes it: tab session storage, never a URL. */
-export async function primeBrowserSession(context, origin, token) {
+ * same way a developer pastes it: tab session storage, never a URL. By default
+ * the office-link screen is also left for the session, as a person choosing
+ * "Explore the sample desk" does; `{ linkGate: true }` keeps it for scripts
+ * that test linking or an unlinked computer. */
+export async function primeBrowserSession(context, origin, token, { linkGate = false } = {}) {
   const expected = new URL(origin).origin;
-  await context.addInitScript(({ key, value, expected }) => {
-    if (window.location.origin === expected) window.sessionStorage.setItem(key, value);
-  }, { key: BROWSER_SESSION_KEY, value: token, expected });
+  await context.addInitScript(({ key, value, expected, gateKey }) => {
+    if (window.location.origin !== expected) return;
+    window.sessionStorage.setItem(key, value);
+    if (gateKey) window.sessionStorage.setItem(gateKey, '1');
+  }, { key: BROWSER_SESSION_KEY, value: token, expected, gateKey: linkGate ? null : LINK_GATE_LEFT_KEY });
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
