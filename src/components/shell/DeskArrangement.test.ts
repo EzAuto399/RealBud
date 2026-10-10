@@ -72,4 +72,11 @@ describe('Arrange Desk sheet', () => {
   it('leaves out the history section when nothing was saved yet', () => {
     expect(html()).not.toContain('Change history');
   });
+  it("ends with this computer's layout, after the change history and before Save", () => {
+    const markup = html({ layout: createElement('label', null, 'Spacing'), history: [{ revision: 0, savedAt: null, sections: defaultDeskSections() }] });
+    expect(markup).toMatch(/<h3 id="rb-arrange-computer"[^>]*>On this computer<\/h3><label>Spacing<\/label>/);
+    expect(markup.indexOf('Change history')).toBeLessThan(markup.indexOf('On this computer'));
+    expect(markup.indexOf('On this computer')).toBeLessThan(markup.indexOf('>Save<'));
+    expect(html()).not.toContain('On this computer');
+  });
 });

@@ -1,6 +1,6 @@
 import { Fragment, useState, type MouseEvent, type ReactNode } from "react";
-import { deskSectionsOrDefault, type DeskSectionId } from "@shared/workspace-tabs";
-import type { DeskOtherWork } from "@/lib/desk-view-state";
+import { DESK_SECTION_LABELS, deskSectionsOrDefault, type DeskSectionId } from "@shared/workspace-tabs";
+import { DESK_AREAS, type DeskOtherWork } from "@/lib/desk-view-state";
 import { StatusLabel } from "../pm";
 
 /** Renders Desk content sections in the saved order, skipping hidden ones.
@@ -66,13 +66,7 @@ export function DeskRemindersDisclosure({ children, initialOpen = false }: { chi
   );
 }
 
-export const OTHER_WORK_LABELS: Record<DeskOtherWork, string> = {
-  mail: "Mail priorities",
-  bills: "Bills and calendar",
-  "shared-work": "Shared work",
-};
-
-/** The task area and any opened Other work surface. Only one shows at a time;
+/** The task area and any opened work-area surface. Only one shows at a time;
  *  the rest stay mounted but hidden so unsaved drafts and in-flight request
  *  identities survive switching back and forth. The Tasks tab is the way back. */
 export function DeskWorkArea({
@@ -89,9 +83,9 @@ export function DeskWorkArea({
   return (
     <>
       <div className="desk-work-tasks" hidden={active !== null}>{tasks}</div>
-      {(Object.keys(OTHER_WORK_LABELS) as DeskOtherWork[]).map(id =>
+      {DESK_AREAS.map(id =>
         opened.has(id) || active === id ? (
-          <section key={id} className="desk-other-work-surface" data-other-work={id} hidden={active !== id} aria-label={OTHER_WORK_LABELS[id]}>
+          <section key={id} className="desk-other-work-surface" data-other-work={id} hidden={active !== id} aria-label={DESK_SECTION_LABELS[id]}>
             {panels[id]}
           </section>
         ) : null,

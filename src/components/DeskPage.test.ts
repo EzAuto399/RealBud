@@ -3,14 +3,15 @@ import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NEVER_ACTIONS, type DeskSnapshot } from "../../shared/contracts";
+import { defaultDeskSections } from "../../shared/workspace-tabs";
 
-const store = vi.hoisted(() => ({ state: {} as Record<string, unknown> }));
+const store = vi.hoisted(() => ({ state: {} as Record<string, unknown>, sections: null as unknown }));
 vi.mock("@/state/store", () => ({
   api: vi.fn(),
   useStore: () => ({ state: store.state, dispatch: vi.fn(), refreshHermes: vi.fn() }),
 }));
 vi.mock("@/lib/workspace-tabs", () => ({
-  useWorkspaceTabs: () => ({ data: null, loading: false, saving: false, error: "", save: vi.fn() }),
+  useWorkspaceTabs: () => ({ data: store.sections ? { state: { desk: { sections: store.sections } } } : null, loading: false, saving: false, error: "", save: vi.fn() }),
 }));
 vi.mock("@/lib/workspace-preferences", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/workspace-preferences")>();
@@ -61,7 +62,7 @@ function render(desk: DeskSnapshot): string {
   return renderToStaticMarkup(createElement(DeskPage, { caseEdits: new Map() }));
 }
 
-beforeEach(() => openDeskTasks());
+beforeEach(() => { openDeskTasks(); store.sections = null; });
 
 describe("Desk layout", () => {
   it("has one scroll owner: the queue, case and toolbar never scroll on their own", () => {
@@ -79,8 +80,20 @@ describe("Desk layout", () => {
     expect(toolbar).toContain("Check sample tasks");
     expect(toolbar).toContain("Ask Bud");
     expect(toolbar).toContain(">More<");
-    expect(toolbar).toContain("Other work");
     expect(toolbar).not.toContain("Mail priorities summary");
+  });
+
+  it("shows the work areas as tabs after Tasks in the saved order, with Arrange Desk one step under More", () => {
+    const tabs = (html: string) => [...html.slice(html.indexOf('aria-label="Desk workspace"'), html.indexOf("desk-shell-tabs")).matchAll(/<button type="button" aria-pressed="(true|false)"[^>]*>(?:<img[^>]*>)?([^<]+)/g)].map(match => match[2]);
+    const toolbar = (html: string) => html.slice(html.indexOf("<header"), html.indexOf("</header>"));
+    const standard = render(snapshot());
+    expect(tabs(standard)).toEqual(["Tasks", "Mail priorities", "Bills and calendar", "Shared work", "Hermios"]);
+    expect(toolbar(standard)).toContain(">Arrange Desk<");
+    for (const removed of ["Other work", "Desk options", "Turn these on in More", "Keep Bud panel open"]) expect(toolbar(standard)).not.toContain(removed);
+    // Hidden areas leave the row; the rest follow the saved order. Tasks and Hermios always stay.
+    const sections = defaultDeskSections().map(section => ({ ...section, visible: section.id !== "bills" }));
+    store.sections = [sections[0], sections[3], sections[1], ...sections.slice(4), sections[2]];
+    expect(tabs(render(snapshot()))).toEqual(["Tasks", "Shared work", "Mail priorities", "Hermios"]);
   });
 
   it("keeps nested scrolling out of the Desk stylesheet and the case", () => {

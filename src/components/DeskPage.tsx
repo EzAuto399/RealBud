@@ -1,10 +1,10 @@
 import { usePhoneConnections } from "@/lib/phone-connections";
 import { useWorkspaceScroll, useWorkspaceViewState } from "@/lib/workspace-view-state";
 import { openWorkspaceSetup } from "@/lib/workspace-setup";
-import { useDeskViewState } from "@/lib/desk-view-state";
+import { useDeskViewState, visibleDeskAreas } from "@/lib/desk-view-state";
 import type { PropertyScope } from "@/lib/book-groups";
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Building2, ChevronDown, CircleAlert, Loader2, MessageSquare, X } from "lucide-react";
+import { Building2, CircleAlert, Loader2, MessageSquare, X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { bindMenuDismiss, closeMenu } from "@/lib/menu-dismiss";
@@ -30,7 +30,6 @@ import { DeskCase, type CaseEdit } from "./desk/DeskCase";
 import { propertyEdits } from "@/lib/property-edits";
 import { deskAskContext, type DeskAskIntent } from "@/lib/desk-ask-context";
 import { useWorkspacePreferences, portfolioLayout } from "@/lib/workspace-preferences";
-import { WorkspaceLayout } from "./desk/WorkspaceLayout";
 import { DeskEvidence } from "./desk/DeskEvidence";
 import { GoLiveCard } from "./desk/GoLiveCard";
 import { ReiSignInCard } from "./desk/ReiSignInCard";
@@ -40,13 +39,13 @@ import { SharedWorkPanel } from "./desk/SharedWorkPanel";
 import { ExpectedBillsBoard } from "./desk/ExpectedBillsBoard";
 import { MailWorkPanel } from './desk/MailWorkPanel';
 import { RemindersPanel } from "./desk/RemindersPanel";
-import { DeskRecoveryNotice, DeskRemindersDisclosure, DeskSections, DeskWorkArea, LicenseeBadge, OTHER_WORK_LABELS } from "./desk/DeskSections";
+import { DeskRecoveryNotice, DeskRemindersDisclosure, DeskWorkArea, LicenseeBadge } from "./desk/DeskSections";
 import type { DeskOtherWork } from "@/lib/desk-view-state";
 import { CardMenu, DeskCardMenu } from "./shell/DeskArrangement";
 import { setDeskTabSlot } from "./shell/use-desk-nav";
 import { openArrangeDesk, useDeskDataStatus } from "./shell/shell-layout";
 import { useWorkspaceTabs } from "@/lib/workspace-tabs";
-import { deskSectionsOrDefault } from "@shared/workspace-tabs";
+import { DESK_SECTION_LABELS, deskSectionsOrDefault } from "@shared/workspace-tabs";
 import { BatchWorkspace } from "./desk/BatchWorkspace";
 import { CASE_KIND_LABELS } from "./desk/labels";
 import { MorningBrief, MorningEmpty, TASK_CHECK_FAILED_EMPTY, TASK_CHECK_NEVER } from "./desk/MorningBrief";
@@ -111,8 +110,9 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   // (here or from the shell's queue shortcuts) leaves it, and a fresh Desk opens on Tasks.
   const [hermiosOpen, setHermiosOpen] = useDeskViewState("hermios");
   useEffect(() => () => setHermiosOpen(false), []);
-  // Other work replaces the task area while open. Opened surfaces stay mounted
-  // (hidden) so their unsaved drafts and request identities survive switching.
+  // A work-area tab (mail, bills, shared work) replaces the task area while open. Opened
+  // surfaces stay mounted (hidden) so their unsaved drafts and request identities survive switching.
+  const areas = visibleDeskAreas(deskLayout);
   const [otherWork, setOtherWork] = useDeskViewState("otherWork");
   const [openedOther, setOpenedOther] = useState<ReadonlySet<DeskOtherWork>>(() => new Set(otherWork ? [otherWork] : []));
   const setMode = (next: typeof mode) => {
@@ -148,9 +148,9 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   const drawerWasOpen = useRef(false);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [checkFailed, setCheckFailed] = useState(false);
-  // "More" and "Other work" are <details class="desk-more"> menus: close them on
-  // Escape, on a press outside, and once an item is chosen. The desk-more class
-  // is also the signal Hermios uses to hide its native view under an open menu.
+  // "More" is a <details class="desk-more"> menu: close it on Escape, on a press
+  // outside, and once an item is chosen. The desk-more class is also the signal
+  // Hermios uses to hide its native view under an open menu.
   const moreRef = useRef<HTMLDetailsElement | null>(null);
   const moreUnbind = useRef<(() => void) | null>(null);
   const moreMenuRef = useCallback((node: HTMLDetailsElement | null) => {
@@ -161,17 +161,6 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   const chooseMore = (action: () => void) => () => {
     action();
     closeMenu(moreRef.current);
-  };
-  const otherRef = useRef<HTMLDetailsElement | null>(null);
-  const otherUnbind = useRef<(() => void) | null>(null);
-  const otherMenuRef = useCallback((node: HTMLDetailsElement | null) => {
-    otherUnbind.current?.();
-    otherUnbind.current = node ? bindMenuDismiss(node) : null;
-    otherRef.current = node;
-  }, []);
-  const chooseOther = (id: DeskOtherWork) => () => {
-    openOtherWork(id);
-    closeMenu(otherRef.current);
   };
   const [announce, setAnnounce] = useState("");
   const [query, setQuery] = useDeskViewState("query");
@@ -454,6 +443,9 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
     }
   }, [queueOpen]);
 
+  // A work area hidden from the saved layout (here, by Bud or another window) closes back to Tasks.
+  useEffect(() => { if (otherWork && !areas.includes(otherWork)) setOtherWork(null); }, [otherWork, areas.join()]);
+
   // One scroll owner for Desk; each surface keeps its own return position.
   const contentScrollRef = useWorkspaceScroll(`desk-content:${otherWork ?? mode}`, ready && snap != null && !hermiosOpen);
 
@@ -526,7 +518,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
         <MorningEmpty brief={{ ...brief, headline: "No cases in this filter." }} actionLabel="Show all tasks" onAction={() => { setFilter("all"); setCaseKind("all"); }} />
       )
     ) : null;
-  // Saved Desk sections now choose what Check details and Other work offer.
+  // Saved Desk sections choose what Check details show; work areas are tabs.
   const sections = deskSectionsOrDefault(deskLayout);
   const sectionShown = (id: string) => sections.find(section => section.id === id)?.visible !== false;
   // An empty office has no property tasks to check yet. Its setup card owns
@@ -798,18 +790,9 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
                 <button type="button" className="desk-more-item" aria-pressed={mode === "batch"} onClick={chooseMore(() => setMode("batch"))}>
                   Prepare several properties
                 </button>
-                {/* Temporary manual fallback until Bud can arrange Desk. */}
-                <details className="desk-options">
-                  <summary className="desk-more-item">Desk options</summary>
-                  <div className="desk-options-body">
-                    <button type="button" className="desk-more-item" onClick={chooseMore(openArrangeDesk)}>
-                      Arrange Desk
-                    </button>
-                    <div className="desk-more-layout">
-                      <WorkspaceLayout />
-                    </div>
-                  </div>
-                </details>
+                <button type="button" className="desk-more-item" onClick={chooseMore(openArrangeDesk)}>
+                  Arrange Desk
+                </button>
               </div>
             </details>
           </div>
@@ -819,33 +802,18 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
             <button type="button" aria-pressed={tasksActive} onClick={() => setMode("cases")}>
               Tasks{counts.now > 0 ? <span>{counts.now}</span> : null}
             </button>
+            {areas.map(id => (
+              <button key={id} type="button" aria-pressed={mode === "cases" && !hermiosOpen && otherWork === id} onClick={() => openOtherWork(id)}>
+                {DESK_SECTION_LABELS[id]}
+              </button>
+            ))}
             <button type="button" aria-pressed={hermiosOpen} onClick={() => { setOtherWork(null); setHermiosOpen(true); }}>
               <HermiosMark size={18} />
               Hermios
             </button>
           </div>
-          {/* The shell's Properties / Bills / saved-view tabs join this row on Desk. */}
+          {/* The shell's Properties and saved-view tabs join this row on Desk. */}
           <div ref={setDeskTabSlot} className="desk-shell-tabs" />
-          <details ref={otherMenuRef} className="desk-more desk-other-work">
-            <summary className="desk-secondary-button">Other work<ChevronDown size={14} aria-hidden /></summary>
-            <div className="desk-more-panel" role="group" aria-label="Other work">
-              <DeskSections
-                sections={deskLayout}
-                render={{
-                  mail: <OtherWorkItem id="mail" active={otherWork} onChoose={chooseOther} />,
-                  bills: <OtherWorkItem id="bills" active={otherWork} onChoose={chooseOther} />,
-                  "shared-work": <OtherWorkItem id="shared-work" active={otherWork} onChoose={chooseOther} />,
-                  brief: null,
-                  "go-live": null,
-                  queue: null,
-                  activity: null,
-                }}
-              />
-              {!sectionShown("mail") && !sectionShown("bills") && !sectionShown("shared-work") ? (
-                <p className="px-2.5 py-2 text-[12px] text-ink-muted">Turn these on in More → Desk options → Arrange Desk.</p>
-              ) : null}
-            </div>
-          </details>
         </nav>
         {/* Recovery stays outside the configurable sections, above every Desk surface. */}
         {snap.recovery?.active ? (
@@ -936,14 +904,6 @@ function narrowDesk(): boolean {
 }
 
 type QueueCheckState = "ok" | "never" | "failed";
-
-function OtherWorkItem({ id, active, onChoose }: { id: DeskOtherWork; active: DeskOtherWork | null; onChoose: (id: DeskOtherWork) => () => void }) {
-  return (
-    <button type="button" className="desk-more-item" aria-pressed={active === id} onClick={onChoose(id)}>
-      {OTHER_WORK_LABELS[id]}
-    </button>
-  );
-}
 
 function queueRowId(id: string): string {
   return `queue-row-${id}`;

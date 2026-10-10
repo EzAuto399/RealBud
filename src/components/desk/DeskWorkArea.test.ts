@@ -13,7 +13,7 @@ import { DeskCase } from "./DeskCase";
 
 const noop = () => {};
 
-describe("Other work", () => {
+describe("Work area tabs", () => {
   const area = (active: DeskOtherWork | null, opened: DeskOtherWork[]) =>
     renderToStaticMarkup(createElement(DeskWorkArea, {
       active,

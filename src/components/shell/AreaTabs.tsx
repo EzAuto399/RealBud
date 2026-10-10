@@ -12,6 +12,10 @@ export function tabKeyTarget(key: string, index: number, length: number): number
   return null;
 }
 
+/** The tab last chosen by key. The row remounts when it moves between Desk's own
+ *  row and the shell bar, so the row that shows next keeps focus on that tab. */
+let keyed: string | null = null;
+
 /** Views within the current area. Arrow keys move and select (roving tabindex);
  *  a highlight slides under the selected tab, without motion when reduced. */
 export function AreaTabs({ label, tabs, selected, onSelect, panelId }: { label: string; tabs: AreaTab[]; selected: string | null; onSelect: (id: string) => void; panelId: string }) {
@@ -29,11 +33,17 @@ export function AreaTabs({ label, tabs, selected, onSelect, panelId }: { label: 
     observer?.observe(node);
     return () => observer?.disconnect();
   }, [selected, tabs]);
+  useLayoutEffect(() => {
+    if (keyed === null || keyed !== selected) return;
+    keyed = null;
+    list.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus();
+  }, [selected]);
   const focusIndex = Math.max(0, tabs.findIndex(tab => tab.id === selected));
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     const target = tabKeyTarget(event.key, index, tabs.length);
     if (target === null) return;
     event.preventDefault();
+    keyed = tabs[target]!.id;
     onSelect(tabs[target]!.id);
     list.current?.querySelectorAll<HTMLElement>('[role="tab"]')[target]?.focus();
   };
@@ -41,7 +51,7 @@ export function AreaTabs({ label, tabs, selected, onSelect, panelId }: { label: 
     <div ref={list} role="tablist" aria-label={label} className="rb-area-tabs">
       {tabs.map((tab, index) => (
         <button key={tab.id} type="button" role="tab" id={`rb-area-tab-${tab.id}`} aria-selected={tab.id === selected} aria-controls={panelId}
-          tabIndex={index === focusIndex ? 0 : -1} className="rb-area-tab" onClick={() => onSelect(tab.id)} onKeyDown={event => onKeyDown(event, index)}>
+          tabIndex={index === focusIndex ? 0 : -1} className="rb-area-tab" onClick={() => { keyed = null; onSelect(tab.id); }} onKeyDown={event => onKeyDown(event, index)}>
           <span className="truncate">{tab.label}</span>
           {tab.count ? <span className="rb-area-tab-count">{tab.count}</span> : null}
         </button>

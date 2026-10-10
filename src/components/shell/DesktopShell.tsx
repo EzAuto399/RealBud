@@ -5,17 +5,19 @@ import { Sidebar } from "../Sidebar";
 import { useStore } from "@/state/store";
 import { useWorkspaceTabs } from "@/lib/workspace-tabs";
 import { queueCounts } from "@/lib/desk-queue";
+import { visibleDeskAreas } from "@/lib/desk-view-state";
+import { DESK_SECTION_LABELS } from "@shared/workspace-tabs";
+import { ToastStack, useToasts } from "../ui/ToastStack";
 import { AreaTabs, type AreaTab } from "./AreaTabs";
 import { ContextSidebar } from "./ContextSidebar";
 import { ContextPanel } from "./ContextPanel";
 import { StatusBar } from "./StatusBar";
-import { ArrangeDeskSheet } from "./DeskArrangement";
+import { ArrangeDeskSheet, useBudDeskReceipt } from "./DeskArrangement";
 import { useDeskNav, useDeskTabSlot, type DeskTabId } from "./use-desk-nav";
 import { useShellBrowser, useShellBudget } from "./shell-status";
 import "./shell.css";
 
 const PANEL_ID = "rb-shell-content";
-const DESK_TABS: Record<DeskTabId, string> = { today: "Tasks", properties: "Properties", bills: "Bills" };
 
 /** Windows draws min/max/close over the top-right of the frameless window (titleBarOverlay in
  *  electron/main.mjs). This strip is the drag area under them, so no control sits beneath. */
@@ -28,24 +30,29 @@ export function WindowsTitlebar() {
 export function DesktopShell({ inert, children }: { inert: boolean; children: ReactNode }) {
   const { state, dispatch } = useStore();
   const nav = useDeskNav();
-  const savedViews = useWorkspaceTabs().data?.state?.tabs.filter(tab => tab.visible) ?? [];
+  const workspaceTabs = useWorkspaceTabs();
+  const savedViews = workspaceTabs.data?.state?.tabs.filter(tab => tab.visible) ?? [];
+  const areas = visibleDeskAreas(workspaceTabs.data?.state?.desk.sections);
+  const toasts = useToasts();
+  useBudDeskReceipt(toasts);
   const browser = useShellBrowser();
   const budget = useShellBudget();
   const [drawer, setDrawer] = useState(false);
   const deskArea = state.activeView === "desk" || state.activeView === "workspace";
-  // On Desk the tabs join Desk's own row (Tasks / Department work / Hermios), which
-  // already carries Tasks; elsewhere the shell keeps its own row with a Tasks tab.
+  // On Desk the tabs join Desk's own row (Tasks / work areas / Hermios), which already
+  // carries Tasks and the areas; elsewhere the shell keeps its own row with them.
   // No fallback row on Desk: a row that appears and then leaves would shift Desk's scroll.
   const slot = useDeskTabSlot();
   const onDesk = state.activeView === "desk";
   useEffect(() => { if (!deskArea) setDrawer(false); }, [deskArea]);
-  const tabs: AreaTab[] = [
-    ...(Object.keys(DESK_TABS) as DeskTabId[]).filter(id => !(onDesk && id === "today")).map(id => ({ id, label: DESK_TABS[id], ...(id === "today" ? { count: queueCounts(nav.rows).now } : {}) })),
-    ...savedViews.map(tab => ({ id: tab.id, label: tab.label })),
+  const deskTabs: AreaTab[] = [
+    ...(onDesk ? [] : [{ id: "today", label: "Tasks", count: queueCounts(nav.rows).now }, ...areas.map(id => ({ id, label: DESK_SECTION_LABELS[id] }))]),
+    { id: "properties", label: "Properties" },
   ];
+  const tabs: AreaTab[] = [...deskTabs, ...savedViews.map(tab => ({ id: tab.id, label: tab.label }))];
   const selected = state.activeView === "workspace" ? state.workspaceTabId : nav.tab;
   const choose = (id: string) => {
-    if (id in DESK_TABS) nav.openTab(id as DeskTabId);
+    if (deskTabs.some(tab => tab.id === id)) nav.openTab(id as DeskTabId);
     else dispatch({ type: "showWorkspaceTab", id });
   };
   const bar = (<>
@@ -66,8 +73,9 @@ export function DesktopShell({ inert, children }: { inert: boolean; children: Re
           {deskArea ? <ContextPanel browser={browser.browser} open={drawer} onClose={() => setDrawer(false)} /> : null}
         </div>
       </div>
-      {/* TODO(ui-components): mount CommandPalette and ToastStack here once src/components/ui lands. */}
+      {/* TODO(ui-components): mount CommandPalette here once src/components/ui lands. */}
     </div>
+    <ToastStack toasts={toasts.toasts} onDismiss={toasts.dismiss} />
     <StatusBar browser={browser.browser} stopping={browser.stopping} stopError={browser.error} onStop={() => void browser.stop()} budget={budget} />
     <ArrangeDeskSheet />
   </>);

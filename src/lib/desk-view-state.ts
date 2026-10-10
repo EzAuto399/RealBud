@@ -1,10 +1,16 @@
 import { useSyncExternalStore, type SetStateAction } from "react";
+import { deskSectionsOrDefault } from "@shared/workspace-tabs";
 import type { PropertyScope } from "./book-groups";
 import type { QueueFilter } from "./desk-queue";
 
-/** Secondary work opened from "Other work". While one is open it replaces the
+/** Desk's work areas, each a tab after Tasks. While one is open it replaces the
  *  task area; null means the queue and case are showing. */
-export type DeskOtherWork = "mail" | "bills" | "shared-work";
+export const DESK_AREAS = ["mail", "bills", "shared-work"] as const;
+export type DeskOtherWork = typeof DESK_AREAS[number];
+/** The work-area tabs the saved layout shows, in its order. An absent or invalid layout shows all three. */
+export function visibleDeskAreas(sections: unknown): DeskOtherWork[] {
+  return deskSectionsOrDefault(sections).flatMap(section => section.visible && (DESK_AREAS as readonly string[]).includes(section.id) ? [section.id as DeskOtherWork] : []);
+}
 interface DeskViewState {
   mode: "cases" | "book" | "batch";
   /** The Hermios tab is open over the task area. Shell navigation closes it. */

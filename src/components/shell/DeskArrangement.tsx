@@ -4,10 +4,12 @@ import {
   DESK_SECTION_LABELS, SHELL_PANEL_LABELS, defaultDeskSections, defaultShellLayout, deskSectionsOrDefault,
   sameDeskSections, simpleDeskSections, type DeskLayoutHistoryEntry, type DeskSection, type DeskSectionId, type ShellLayout, type ShellPanelId,
 } from "@shared/workspace-tabs";
-import { useWorkspaceTabs } from "@/lib/workspace-tabs";
+import { undoBudDeskChange, useWorkspaceTabs } from "@/lib/workspace-tabs";
 import { bindMenuDismiss, closeMenu } from "@/lib/menu-dismiss";
 import { useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
+import type { useToasts } from "../ui/ToastStack";
+import { WorkspaceLayout } from "../desk/WorkspaceLayout";
 import {
   ARRANGE_DESK_EVENT, LAYOUT_CONFLICT, deskSectionLocked, openArrangeDesk, shellOrDefault, shellPanelLocked, withDeskSection, withShellPanel,
 } from "./shell-layout";
@@ -38,6 +40,26 @@ export function useDeskArrangement() {
     setSection: (id: DeskSectionId, visible: boolean) => save(withDeskSection(sections, id, visible), shell),
     setPanel: (id: ShellPanelId, visible: boolean) => save(sections, withShellPanel(shell, id, visible)),
   };
+}
+
+/** One notice with Undo each time Bud arranges Desk, wherever the person is. Undo restores
+ *  the layout before Bud's change; if Desk changed since, it changes nothing and offers Arrange Desk. */
+export function useBudDeskReceipt({ push, dismiss }: Pick<ReturnType<typeof useToasts>, "push" | "dismiss">) {
+  const tabs = useWorkspaceTabs();
+  const { dispatch } = useStore();
+  const change = tabs.budChange;
+  useEffect(() => {
+    if (!change) return;
+    const id = `bud-desk-${change.revision}`;
+    push(`Bud arranged Desk: ${change.summary}.`, { label: "Undo", run: () => {
+      dismiss(id);
+      undoBudDeskChange(change, tabs.revertDesk).then(({ message, openArrange }) => {
+        const notice = `bud-desk-undo-${change.revision}`;
+        push(message, openArrange ? { label: "Open Arrange Desk", run: () => { dismiss(notice); openArrangeDesk(); } } : undefined, notice);
+      },
+        cause => dispatch({ type: "error", message: cause instanceof Error ? cause.message : "Undo could not be confirmed. Refresh before retrying." }));
+    } }, id);
+  }, [change]); // once per Bud change
 }
 
 type Arrangement = { sections: DeskSection[]; shell: ShellLayout };
@@ -89,14 +111,16 @@ export interface ArrangeDeskViewProps {
   /** Another window or Bud changed the saved layout after this draft began. */
   stale: boolean;
   stored: Arrangement; current: Arrangement; history: DeskLayoutHistoryEntry[];
+  /** This computer's presentation (spacing, property view, rows, queue width); applies at once. */
+  layout?: ReactNode;
   onChange(next: Partial<Arrangement>): void;
   onSave(): void; onRestore(revision: number): void; onReopen(): void; onClose(): void;
 }
 
 /** Presentational Arrange Desk sheet: Desk cards (show, hide, order), side panels,
- *  Save, Reset to recommended, Simple desk and the change history with Restore.
- *  Locked items are shown checked and cannot change. */
-export function ArrangeDeskView({ dialogRef, ready, saving, message, stale, stored, current, history, onChange, onSave, onRestore, onReopen, onClose }: ArrangeDeskViewProps) {
+ *  Save, Reset to recommended, Simple desk, the change history with Restore and,
+ *  last, this computer's layout. Locked items are shown checked and cannot change. */
+export function ArrangeDeskView({ dialogRef, ready, saving, message, stale, stored, current, history, layout, onChange, onSave, onRestore, onReopen, onClose }: ArrangeDeskViewProps) {
   const recommended = { sections: defaultDeskSections(), shell: { ...defaultShellLayout(), panelWidth: current.shell.panelWidth } };
   const unchanged = sameDeskSections(current.sections, stored.sections) && JSON.stringify(current.shell) === JSON.stringify(stored.shell);
   const isRecommended = sameDeskSections(current.sections, recommended.sections) && JSON.stringify(current.shell) === JSON.stringify(recommended.shell);
@@ -174,6 +198,12 @@ export function ArrangeDeskView({ dialogRef, ready, saving, message, stale, stor
               </ul>
             </section>
           ) : null}
+          {layout ? (
+            <section className="mt-3 border-t border-line pt-3" aria-labelledby="rb-arrange-computer">
+              <h3 id="rb-arrange-computer" className="text-[13px] font-medium text-ink">On this computer</h3>
+              {layout}
+            </section>
+          ) : null}
           <div className="rb-arrange-actions"><div className="flex flex-wrap gap-2">
             <button type="button" className={cn(control, "border-agency bg-agency text-white hover:bg-agency-hover")} disabled={saving || stale || unchanged} onClick={onSave}>{saving ? "Saving…" : "Save"}</button>
             <button type="button" className={control} disabled={saving || isRecommended} onClick={() => onChange(recommended)}>Reset to recommended</button>
@@ -233,7 +263,7 @@ export function ArrangeDeskSheet() {
     if (await arrangement.restore(revision)) { setDraft(null); setMessage("Earlier layout restored."); }
   };
   return (
-    <ArrangeDeskView dialogRef={dialog} ready={arrangement.ready} saving={arrangement.saving} message={message} stored={stored} current={current} history={arrangement.history}
+    <ArrangeDeskView dialogRef={dialog} ready={arrangement.ready} saving={arrangement.saving} message={message} stored={stored} current={current} history={arrangement.history} layout={<WorkspaceLayout />}
       stale={draft !== null && draft.base !== arrangement.revision}
       onChange={next => { setMessage(""); setDraft({ sections: current.sections, shell: current.shell, ...next, base: draft ? draft.base : arrangement.revision }); }}
       onSave={() => void save()} onRestore={revision => void restore(revision)} onReopen={() => { setDraft(null); setMessage(""); }} onClose={close} />
