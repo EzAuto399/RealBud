@@ -1,4 +1,4 @@
-import { createElement } from 'react';
+import { createElement, type ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { defaultDeskSections, defaultShellLayout, simpleDeskSections } from '@shared/workspace-tabs';
@@ -153,5 +153,31 @@ describe('Arrange Desk sheet', () => {
     expect(markup.indexOf('Change history')).toBeLessThan(markup.indexOf('On this computer'));
     expect(markup.indexOf('On this computer')).toBeLessThan(markup.indexOf('>Save<'));
     expect(html()).not.toContain('On this computer');
+  });
+
+  it('keeps Tab inside the sheet when its last control is a disclosure or link, and closes on Escape', () => {
+    // The sheet's own element and key handler, with element stand-ins (node has no DOM).
+    const sheet = ArrangeDeskView(props({ onClose: vi.fn() })) as ReactElement<{ children: ReactElement<{ onKeyDown(event: unknown): void }> }>;
+    const onKeyDown = sheet.props.children.props.onKeyDown;
+    const doc = { activeElement: null as unknown };
+    const control = (tag: string, attrs: string[] = []) => ({ tag, attrs, getClientRects: () => [{}], closest: () => null, getAttribute: () => null, focus() { doc.activeElement = this; } });
+    for (const last of [control('summary'), control('a', ['href']), control('div', ['tabindex="0"'])]) {
+      const close = control('button'), items = [close, control('select'), last];
+      // Matches by tag or attribute, the way querySelectorAll reads the shared focusable selector.
+      const root = { ownerDocument: doc, focus: vi.fn(), querySelectorAll: (selector: string) => items.filter(item =>
+        selector.split(',').some(part => { const term = part.trim().split(':')[0]!; return term === item.tag || item.attrs.some(attr => term === `[${attr}]`); })) };
+      last.focus();
+      const tab = { key: 'Tab', shiftKey: false, currentTarget: root, preventDefault: vi.fn(), stopPropagation: vi.fn() };
+      onKeyDown(tab);
+      expect(tab.preventDefault).toHaveBeenCalledOnce();
+      expect(doc.activeElement).toBe(close);
+      onKeyDown({ ...tab, shiftKey: true, preventDefault: vi.fn() });
+      expect(doc.activeElement).toBe(last);
+    }
+    const onClose = vi.fn();
+    const escape = { key: 'Escape', shiftKey: false, preventDefault: vi.fn(), stopPropagation: vi.fn() };
+    (ArrangeDeskView(props({ onClose })) as ReactElement<{ children: ReactElement<{ onKeyDown(event: unknown): void }> }>).props.children.props.onKeyDown(escape);
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(escape.stopPropagation).toHaveBeenCalledOnce();
   });
 });

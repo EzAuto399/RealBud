@@ -17,6 +17,15 @@ export function dialogFocusables(root: ParentNode): HTMLElement[] {
     && !insideClosedDetails(el) && (typeof el.checkVisibility !== "function" || el.checkVisibility()));
 }
 
+/** Tab and Shift+Tab wrap at the dialog's ends, so focus never leaves it; other keys pass through. */
+export function trapDialogTab(root: HTMLElement, event: { key: string; shiftKey: boolean; preventDefault(): void }) {
+  if (event.key !== "Tab") return;
+  const list = dialogFocusables(root), first = list[0], last = list.at(-1), active = root.ownerDocument.activeElement;
+  if (!first) { event.preventDefault(); root.focus(); return; }
+  if (event.shiftKey && (active === first || active === root)) { event.preventDefault(); last?.focus(); }
+  else if (!event.shiftKey && (active === last || active === root)) { event.preventDefault(); first.focus(); }
+}
+
 /** Keep focus inside a dialog and restore it without refocusing on every edit. */
 export function useDialogKeyboard(ref: RefObject<HTMLElement | null>, onClose: () => void, busy = false, open = true) {
   const latest = useRef({ onClose, busy }); latest.current = { onClose, busy };
@@ -25,7 +34,6 @@ export function useDialogKeyboard(ref: RefObject<HTMLElement | null>, onClose: (
     const root = ref.current;
     if (!root) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusables = () => dialogFocusables(root);
     (root.querySelector<HTMLElement>('[data-dialog-autofocus]') ?? root).focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.isComposing || event.keyCode === 229) return;
@@ -33,11 +41,7 @@ export function useDialogKeyboard(ref: RefObject<HTMLElement | null>, onClose: (
         event.preventDefault(); event.stopPropagation();
         if (!latest.current.busy) latest.current.onClose();
       }
-      if (event.key !== "Tab") return;
-      const list = focusables(), first = list[0], last = list.at(-1);
-      if (!first) { event.preventDefault(); root.focus(); return; }
-      if (event.shiftKey && (document.activeElement === first || document.activeElement === root)) { event.preventDefault(); last?.focus(); }
-      else if (!event.shiftKey && (document.activeElement === last || document.activeElement === root)) { event.preventDefault(); first.focus(); }
+      trapDialogTab(root, event);
     };
     root.addEventListener("keydown", onKey);
     return () => { root.removeEventListener("keydown", onKey); if (previous?.isConnected) previous.focus(); };

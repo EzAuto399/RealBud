@@ -10,6 +10,7 @@ import {
 } from "@shared/desk-areas";
 import { undoBudDeskChange, useWorkspaceTabs } from "@/lib/workspace-tabs";
 import { bindMenuDismiss, closeMenu } from "@/lib/menu-dismiss";
+import { trapDialogTab } from "@/lib/use-dialog-keyboard";
 import { useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
 import type { useToasts } from "../ui/ToastStack";
@@ -172,11 +173,7 @@ export function ArrangeDeskView({ dialogRef, ready, saving, message, stale, stor
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="rb-arrange-title" className="rb-arrange-sheet"
         onKeyDown={event => {
           if (event.key === "Escape") { event.stopPropagation(); onClose(); return; }
-          if (event.key !== "Tab") return;
-          const items = [...event.currentTarget.querySelectorAll<HTMLElement>("input:not(:disabled), select:not(:disabled), button:not(:disabled)")];
-          const first = items[0], last = items.at(-1);
-          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+          trapDialogTab(event.currentTarget, event);
         }}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -314,7 +311,8 @@ export function ArrangeDeskSheet() {
     setOpen(false);
     const back = opener.current;
     if (back?.isConnected) back.focus();
-    else document.querySelector<HTMLElement>('.rb-sidebar [aria-current="page"]')?.focus();
+    // An opener in a menu that has since closed can't take focus: return to that menu's button.
+    if (document.activeElement !== back) (back?.closest("details")?.querySelector<HTMLElement>(":scope > summary") ?? document.querySelector<HTMLElement>('.rb-sidebar [aria-current="page"]'))?.focus();
   }
   const stored = { sections: arrangement.sections, shell: arrangement.shell };
   const current: Arrangement = draft ?? stored;

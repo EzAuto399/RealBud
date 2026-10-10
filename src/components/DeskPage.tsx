@@ -8,6 +8,7 @@ import { Building2, CircleAlert, Loader2, MessageSquare, X } from "lucide-react"
 
 import { cn } from "@/lib/cn";
 import { bindMenuDismiss, closeMenu } from "@/lib/menu-dismiss";
+import { trapDialogTab } from "@/lib/use-dialog-keyboard";
 import type { CsvColumnMapping, CsvImportPreview, DeskSnapshot, Draft, Property } from "@/lib/desk";
 import {
   buildDeskQueue,
@@ -616,7 +617,11 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
           role={drawerOpen ? "dialog" : undefined}
           aria-modal={drawerOpen ? true : undefined}
           aria-label={drawerOpen ? "Tasks" : undefined}
-          onKeyDown={drawerOpen ? (event) => { if (event.key === "Escape") { event.stopPropagation(); setQueueOpen(false); } } : undefined}
+          onKeyDown={drawerOpen ? (event) => {
+            if (event.key === "Escape") { event.stopPropagation(); setQueueOpen(false); }
+            // The rail and sidebar stay focusable beside the drawer, so Tab wraps here.
+            trapDialogTab(event.currentTarget, event);
+          } : undefined}
         >
           <QueuePane
             scope={taskScope}
