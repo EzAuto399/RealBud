@@ -534,9 +534,9 @@ try {
     await banner.waitFor();
     await banner.getByText('Bud is still working. RealBud will restart to update when the work finishes.').waitFor();
     await widths('update-deferred');
-    await banner.getByRole('button', { name: 'Restart to update' }).click();
+    await banner.getByRole('button', { name: 'Restart now' }).click();
     assert.equal(updaterInstalls, 1);
-    check(c, 'Deferred copy shown; Restart to update hands off to the updater once');
+    check(c, 'Deferred copy shown; Restart now hands off to the updater once (every restart state: scripts/qa-update-restart.mjs)');
     await banner.getByRole('button', { name: 'Dismiss update notice' }).click();
     await banner.waitFor({ state: 'hidden' });
     check(c, 'Dismiss hides the notice');

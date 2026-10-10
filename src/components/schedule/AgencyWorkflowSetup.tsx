@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AGENCY_WORKFLOWS, AGENCY_WORKFLOW_NAMES, type AgencySetupSettings, type AgencySetupView } from '@shared/agency-setup';
 import { api } from '@/state/store';
+import { guardUnsavedWork } from '@/lib/unsaved-work';
 import { AGENCY_WORKFLOW_PACK_IDS, AGENCY_WORKFLOW_PACK_NAMES, type AgencyWorkflowPackId } from '@shared/agency-workflow-packs';
 
 type Draft = Omit<AgencySetupSettings, 'propertyReferences'> & { propertyReferences: { propertyId: string; reference: string; aliasesText: string }[] };
@@ -32,6 +33,9 @@ export function AgencyWorkflowSetup({ onOpenConnections, onSaved }: { onOpenConn
   };
   const dirty = Boolean(view && draft && JSON.stringify(settingsFrom(draft)) !== JSON.stringify(view.state.settings));
   const stale = Boolean(view && view.state.revision !== draftRevision);
+  // Unsaved settings hold the window's beforeunload and main's update restart.
+  const unsaved = useRef(dirty); unsaved.current = dirty;
+  useEffect(() => guardUnsavedWork(() => unsaved.current), []);
   const save = async (continueTo?: number) => {
     if (!draft) return;
     const result = await api('/api/agency-setup', { method: 'PUT', body: JSON.stringify({ expectedRevision: draftRevision, settings: settingsFrom(draft) }) });

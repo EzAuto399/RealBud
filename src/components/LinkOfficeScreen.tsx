@@ -15,8 +15,8 @@ const primary = "pm-decision flex w-full items-center justify-center gap-2 round
 const secondary = "pm-control w-full rounded border border-line bg-sheet px-3 text-[13px] text-ink hover:bg-selected";
 
 /** Takes the shell's place until this computer is linked to its office: every
- * computer links before anything else opens, ahead of Bud's own setup. Update
- * and handoff banners stay above it. The only way past is recovery: "Open
+ * computer links before anything else opens, ahead of Bud's own setup. The
+ * handoff banner stays above it and the update card docks below it. The only way past is recovery: "Open
  * recovery" when the check can't finish, and "Continue recovery" below the link
  * card once first run started recovery (`onContinueRecovery`); first run keeps
  * its own backup and recovery choices. While the link is still being read, App

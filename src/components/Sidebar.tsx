@@ -8,7 +8,7 @@ import { MausAvatar } from "./Avatar";
 import { cn } from "@/lib/cn";
 import { buildDeskQueue, queueCounts } from "@/lib/desk-queue";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
-import { useUpdaterState } from "@/lib/updater";
+import { countdownAt, updateStatusLine, useSecondsLeft, useUpdaterState } from "@/lib/updater";
 import { WorkdayPulse } from "./WorkdayPulse";
 
 function macDoorKeys(): boolean {
@@ -17,17 +17,19 @@ function macDoorKeys(): boolean {
 }
 
 // Updates check and download by themselves in the background; the rail shows
-// nothing until a new version is on disk, then one "Restart to update" button.
+// nothing until a new version is on disk, then one "Restart now" button whose
+// tooltip says what the automatic restart is doing.
 function UpdateButton() {
   const s = useUpdaterState();
+  const seconds = useSecondsLeft(countdownAt(s));
   const updater = window.ogb?.updater;
   if (!updater || s?.status !== "downloaded") return null;
-  const label = s.message ?? `Version ${s.version ?? ""} ready — restart to update`;
+  const action = `Restart now to install ${s.version ?? "the update"}`;
   return (
     <button
       onClick={() => void updater.install()}
-      title={label}
-      aria-label={label}
+      title={`${updateStatusLine(s, seconds)}. ${action}.`}
+      aria-label={action}
       className="relative rounded-md p-2 text-accent hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-agency"
     >
       <ArrowDownToLine size={18} />

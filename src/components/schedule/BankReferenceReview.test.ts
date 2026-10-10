@@ -4,6 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ dispatch: vi.fn(), refreshActivity: vi.fn(),
   state: { connected: true, loops: [], loopRuns: [], activityLoad: { routines: "ready" }, scheduleRecovery: { active: false, detail: "" }, desk: null } }) }));
+// A static render never runs effects; record them so the unsaved-work test can run the guard's.
+const hooks = vi.hoisted(() => ({ effects: [] as Array<{ effect: () => unknown; deps?: unknown[] }>, checks: [] as Array<() => boolean> }));
+vi.mock("react", async original => ({ ...await original<typeof import("react")>(), useEffect: (effect: () => unknown, deps?: unknown[]) => { hooks.effects.push({ effect, deps }); } }));
+vi.mock("@/lib/unsaved-work", () => ({ guardUnsavedWork: (check: () => boolean) => { hooks.checks.push(check); return () => {}; } }));
 
 import { accountLabel, BankReferenceReview, coverageLine, FirstPassReview, parseFirstPass, parseW1Status, W1RunStrip, W1Setup, w1View, type FirstPass, type W1Status } from "./BankReferenceReview";
 
@@ -148,5 +152,21 @@ describe("bank review as a Desk work area", () => {
     const drawer = renderToStaticMarkup(createElement(BankReferenceReview));
     expect(drawer).toContain('<section class="space-y-4" aria-labelledby="bank-review-title"><div><h3 id="bank-review-title"');
     expect(drawer).not.toContain("Bank references status");
+  });
+});
+
+describe("unsaved bank review", () => {
+  it("guards beforeunload and main's update restart with the same condition as its close guard", () => {
+    hooks.effects.length = 0; hooks.checks.length = 0;
+    const closeGuards: Array<() => boolean> = [];
+    const registerCloseGuard = (guard: () => boolean) => { closeGuards.push(guard); return () => {}; };
+    renderToStaticMarkup(createElement(BankReferenceReview, { registerCloseGuard }));
+    const guardEffect = hooks.effects.find(entry => entry.deps?.[0] === registerCloseGuard);
+    expect(guardEffect).toBeDefined();
+    guardEffect!.effect();
+    expect(hooks.checks).toHaveLength(1);
+    // Nothing chosen yet: closing is free, and neither beforeunload nor the restart is held.
+    expect(closeGuards[0]()).toBe(true);
+    expect(hooks.checks[0]()).toBe(false);
   });
 });

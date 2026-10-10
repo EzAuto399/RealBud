@@ -10,6 +10,7 @@ import { startReiSignIn, useReiSignIn } from "@/lib/rei-sign-in";
 import { fmtDateTime } from "@/lib/au";
 import { SETUP_STEP_COUNT, type SetupDegradedKind, type SetupJumpTarget, type SetupState } from "@/lib/setup-sequence";
 import { useSetupState } from "@/lib/use-setup-state";
+import { countdownAt, updateReadyLine, updateStatusLine, useSecondsLeft, useUpdaterState } from "@/lib/updater";
 import { openSetupTarget } from "../SetupGateNote";
 
 const dot = { agency: "bg-agency", hold: "bg-hold", muted: "bg-ink-muted", danger: "bg-danger" } as const;
@@ -26,11 +27,13 @@ const DEGRADED_LABEL: Record<SetupDegradedKind, string> = {
 };
 
 /** The one setup item: the most serious degraded state, else "Setup N of 5 · <next>", else nothing once ready.
- *  The full sentence is its title; the target is its fix (an owner-only fix opens the Website account card). */
-export function setupStatusItem(setup: Pick<SetupState, "stage" | "degraded" | "steps" | "next">): { label: string; title: string; target?: SetupJumpTarget } | null {
+ *  The full sentence is its title; the target is its fix (an owner-only fix opens the Website account card).
+ *  `update` words a waiting update from the updater's own state (restarts when away, countdown, needs you). */
+export function setupStatusItem(setup: Pick<SetupState, "stage" | "degraded" | "steps" | "next">, update?: { label: string; title: string } | null): { label: string; title: string; target?: SetupJumpTarget } | null {
   const issue = setup.degraded;
   // A waiting update is only news; it never hides setup progress.
   if (issue && (issue.kind !== "updatePending" || setup.stage === "ready")) {
+    if (issue.kind === "updatePending" && update) return update;
     const target = issue.target ?? (issue.ownerRequest ? "you-website" : undefined);
     return { label: DEGRADED_LABEL[issue.kind], title: issue.message, ...(target ? { target } : {}) };
   }
@@ -45,7 +48,9 @@ export function setupStatusItem(setup: Pick<SetupState, "stage" | "degraded" | "
  *  Hidden below 960px. */
 export function StatusBar({ browser, stopping, stopError, onStop, budget }: { browser: ShellBrowser; stopping: boolean; stopError: string; onStop: () => void; budget: UsageBudget | null }) {
   const { state, dispatch, refreshHermes } = useStore();
-  const setupItem = setupStatusItem(useSetupState());
+  const updater = useUpdaterState();
+  const updateSeconds = useSecondsLeft(countdownAt(updater));
+  const setupItem = setupStatusItem(useSetupState(), updater?.status === "downloaded" ? { label: updateStatusLine(updater, updateSeconds), title: updateReadyLine(updater) } : null);
   // Re-read relative times each minute so "checked 5 min ago" does not freeze.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 60_000); return () => window.clearInterval(timer); }, []);

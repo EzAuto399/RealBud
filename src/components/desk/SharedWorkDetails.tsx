@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SharedWorkActivity, SharedWorkItem, SharedWorkPerson } from '@shared/company-work';
 import { companyApi } from '@/lib/company-api';
+import { guardUnsavedWork } from '@/lib/unsaved-work';
 
 const button = 'min-h-10 rounded-lg border border-line px-3 py-2 text-sm font-medium hover:bg-raised disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-agency';
 const field = 'min-h-10 w-full rounded-lg border border-line bg-sheet px-3 py-2 text-sm';
@@ -22,6 +23,9 @@ export function SharedWorkDetails({ item, members, busy, verifyIdentity, perform
   const mounted = useRef(true);
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { mounted.current = true; heading.current?.focus(); return () => { mounted.current = false; }; }, []);
+  // An unsaved response holds the window's beforeunload and main's update restart.
+  const unsaved = useRef(false); unsaved.current = dirty && response !== item.response;
+  useEffect(() => guardUnsavedWork(() => unsaved.current), []);
   useEffect(() => {
     setHistory(null); setConfirmTarget('');
     if (!dirty) { setResponse(item.response); setDraftRevision(item.revision); }

@@ -33,7 +33,6 @@ import { SetupGateNote } from "../SetupGateNote";
 import { useOfficeLinkRead } from "@/lib/use-office-link";
 import { canUseTaskStarter } from "@/lib/pm-task-starters";
 import { PmTaskStarters } from "../PmTaskStarters";
-import { hasUnfinishedJobDraft } from "@/lib/work-continuation";
 import { beginManualJobRequest, confirmManualJobReceipt, pendingManualJobRequest, resumeManualJobRequest } from "@/lib/manual-job-request";
 import { useOfficeSources } from "@/lib/connected-apps-refresh";
 import { activeConnectedAccounts, EMAIL_APPS } from "@/lib/connected-apps";
@@ -128,7 +127,6 @@ export function JobWorkspace({
   // Recovery holds every change until the saved schedule is trustworthy again.
   const blocked = !state.connected || Boolean(state.desk?.recovery?.active) || Boolean(state.scheduleRecovery?.active) || loading || Boolean(loadError);
   const dirty = Boolean(plan && fields && (!draft.saved || jobPlanChanged(plan, fields)));
-  const unfinished = hasUnfinishedJobDraft(draft);
   const current = plan ? recipes.find((item) => item.id === plan.id) : undefined;
   const stale = Boolean(
     plan && !loading && !loadError && (draft.saved ? !current || current.revision !== plan.revision : current),
@@ -189,16 +187,6 @@ export function JobWorkspace({
       draft: { text: current.description, plan: current, fields: jobPlanFields(current), saved: true },
     });
   }, [current, plan, draft.saved, dirty, dispatch]);
-
-  useEffect(() => {
-    if (!unfinished) return;
-    const warn = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [unfinished]);
 
   const accept = (next: Recipe[], id: string) => {
     const saved = next.find((item) => item.id === id);

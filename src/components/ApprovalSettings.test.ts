@@ -5,6 +5,12 @@ import { defaultApprovalSettings, type ApprovalSettings as Settings } from '@sha
 
 vi.mock('@/state/store', () => ({ api: vi.fn(), useStore: () => ({ state: { config: { composio: { managed: true } } }, dispatch: vi.fn() }) }));
 vi.mock('@/lib/connected-apps-refresh', () => ({ useOfficeSources: () => ({ snapshot: null }) }));
+// A static render never runs effects; record them so the test can run the unsaved-work guard's.
+const hooks = vi.hoisted(() => ({ effects: [] as Array<{ effect: () => unknown; deps?: unknown[] }>, checks: [] as Array<() => boolean> }));
+vi.mock('react', async original => ({ ...await original<typeof import('react')>(), useEffect: (effect: () => unknown, deps?: unknown[]) => { hooks.effects.push({ effect, deps }); } }));
+vi.mock('@/lib/unsaved-work', async original => ({ ...await original<object>(), guardUnsavedWork: (check: () => boolean) => { hooks.checks.push(check); return () => {}; } }));
+/** Runs the effects a mount would run once (empty deps) and returns the unsaved-work checks they registered. */
+const mountGuards = () => { for (const { effect, deps } of hooks.effects) if (deps?.length === 0) effect(); return hooks.checks; };
 import { APPROVALS_INTRO, ApprovalSettings, approvalRows, changeLines, LOCKED_ROWS, readApprovalHistory, readApprovalsPayload, rowOptions, SITE_HINT } from './ApprovalSettings';
 
 const settings = (groups: Settings['groups'] = {}, reviewedReads: string[] = []): Settings => ({ ...defaultApprovalSettings(), groups, reviewedReads });
@@ -64,5 +70,15 @@ describe('Workspace → Approvals', () => {
     expect(lines[1]).toMatch(/^Fictional Sam · Marked Fetch emails as only reading · /);
     expect(changeLines(office[0]!, rows)[0]).toMatch(/^Fictional Kim · Payments: Don't use → Recommended · /);
     expect(() => readApprovalHistory({ entries: [{ at: 'soon', by: 'x', before: settings(), after: settings() }] })).toThrow('Changes could not be read.');
+  });
+});
+
+describe('unsaved approval rules', () => {
+  it('registers one guard for beforeunload and the update restart, holding nothing before the rules load', () => {
+    hooks.effects.length = 0; hooks.checks.length = 0;
+    renderToStaticMarkup(createElement(ApprovalSettings));
+    const checks = mountGuards();
+    expect(checks).toHaveLength(1);
+    expect(checks[0]()).toBe(false);
   });
 });

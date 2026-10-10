@@ -10,6 +10,7 @@ import { BankReviewAmendment } from './BankReviewAmendment';
 import { BrowserSignInStrip, useBrowserSignIns } from "../BrowserSignInStrip";
 import { parseReiAccount, ReiDirectoryRefresh } from "../ReiDirectoryRefresh";
 import { NAVIGATION_CANCELLED, registerNavigationGuard } from '@/lib/navigation-guard';
+import { guardUnsavedWork } from '@/lib/unsaved-work';
 import { useRunPoll } from "@/lib/run-poll";
 import { AreaStatusLine } from "../desk/AreaStatusLine";
 
@@ -123,12 +124,9 @@ export function BankReferenceReview({ registerCloseGuard, area = false }: { regi
       window.dispatchEvent(new Event(NAVIGATION_CANCELLED));
       return false;
     });
-    const warn = (event: BeforeUnloadEvent) => {
-      if (!unfinished.current && !reading.current && !pending.current) return;
-      event.preventDefault(); event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', warn);
-    return () => { remove(); removeClose?.(); window.removeEventListener('beforeunload', warn); };
+    // Holds the window's beforeunload and answers main before an update restart.
+    const unguard = guardUnsavedWork(() => unfinished.current || reading.current || pending.current);
+    return () => { remove(); removeClose?.(); unguard(); };
   }, [registerCloseGuard]);
   const refresh = async (cursor?: string) => {
     const current = ++historyGeneration.current, previous = history;

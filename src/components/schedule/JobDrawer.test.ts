@@ -6,6 +6,12 @@ import { buildScheduleRows } from "@/lib/schedule-rows";
 import { stageState, type FixtureStage } from "../setup-stages.fixture";
 
 vi.mock("@/state/store", () => ({ api: vi.fn(), useStore: () => ({ state: {}, dispatch: vi.fn() }) }));
+// A static render never runs effects; record them so the test can run the unsaved-work guard's.
+const hooks = vi.hoisted(() => ({ effects: [] as Array<{ effect: () => unknown; deps?: unknown[] }>, checks: [] as Array<() => boolean> }));
+vi.mock("react", async original => ({ ...await original<typeof import("react")>(), useEffect: (effect: () => unknown, deps?: unknown[]) => { hooks.effects.push({ effect, deps }); } }));
+vi.mock("@/lib/unsaved-work", async original => ({ ...await original<object>(), guardUnsavedWork: (check: () => boolean) => { hooks.checks.push(check); return () => {}; } }));
+/** Runs the effects a mount would run once (empty deps) and returns the unsaved-work checks they registered. */
+const mountGuards = () => { for (const { effect, deps } of hooks.effects) if (deps?.length === 0) effect(); return hooks.checks; };
 // The saved Desk layout and office preset this window holds (WorkspaceTabsProvider); read, nothing saved yet.
 const tabs = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 vi.mock("@/lib/workspace-tabs", async (importOriginal) => ({ ...(await importOriginal<object>()), useWorkspaceTabs: () => tabs.current }));
@@ -17,7 +23,8 @@ holding(null);
 
 import { coreOfficeDesk, type OfficeDesk } from "@shared/desk-areas";
 import { defaultDeskSections, type DeskSection } from "@shared/workspace-tabs";
-import { FlaggedReceipt, JobDrawer, LoopDetail, NewMailSwitch, readNewMailState } from "./JobDrawer";
+import { FlaggedReceipt, JobDrawer, LoopDetail, LoopTiming, NewMailSwitch, readNewMailState } from "./JobDrawer";
+import { useScheduleTiming } from "@/lib/workspace-view-state";
 import { JobList } from "./JobList";
 
 const NOW = Date.UTC(2026, 9, 0, 23, 0);
@@ -357,5 +364,25 @@ describe("new mail switch", () => {
     expect(readNewMailState({ enabled: "yes", available: true })).toBeNull();
     expect(readNewMailState({ enabled: true, available: true, reason: 7 })).toBeNull();
     expect(readNewMailState({ loopId: "inbound-triage", enabled: true, available: false, reason: "Fictional reason" })).toEqual({ enabled: true, available: false, reason: "Fictional reason" });
+  });
+});
+
+describe("unsaved job timing", () => {
+  const timing = () => {
+    hooks.effects.length = 0; hooks.checks.length = 0;
+    const html = renderToStaticMarkup(createElement(LoopTiming, { loop: loop({ id: "recipe-fictional-timing" }), busy: false, controlsDisabled: false, open: true, onOpen: () => {}, onRetune: () => {} }));
+    return { html, checks: mountGuards() };
+  };
+  it("holds beforeunload and the update restart exactly while Timing offers Save", () => {
+    const clean = timing();
+    expect(clean.checks).toHaveLength(1);
+    expect(clean.html).not.toContain("Save</button>");
+    expect(clean.checks[0]()).toBe(false);
+    // The time field's edit, kept in this window's view state.
+    function EditTime() { useScheduleTiming("recipe-fictional-timing", "08:00", [1]).setTime("09:30"); return null; }
+    renderToStaticMarkup(createElement(EditTime));
+    const edited = timing();
+    expect(edited.html).toContain("Save</button>");
+    expect(edited.checks[0]()).toBe(true);
   });
 });

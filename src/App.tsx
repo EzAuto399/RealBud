@@ -2,11 +2,8 @@ import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
 import { useBudStatusMonitor } from "@/lib/bud-status-monitor";
 import { openDeskArea, openDeskTasks } from "@/lib/desk-view-state";
 import { HumanHandoffPanel } from "@/components/HumanHandoffPanel";
-import { hasPropertyEdits } from "@/lib/property-edits";
-import { hasUnsavedMailReviews } from "@/lib/mail-review-drafts";
-import { hasUnsavedOfficeDrafts } from "@/lib/office-draft-journal";
-import { hasUnsavedDepartmentConfigurationDrafts } from '@/lib/department-configuration-draft-journal';
-import { hasUnpersistedBillDrafts } from "@/lib/bill-review-drafts";
+import { hasUnsavedWork, holdUnloadWhile, registerUnsavedCheck } from "@/lib/unsaved-work";
+import { hasUnfinishedJobDraft } from "@/lib/work-continuation";
 import { scrollYouTarget, youHashTarget } from "@/lib/you-navigation";
 import { NAVIGATION_CANCELLED } from "@/lib/navigation-guard";
 import { lazy, useCallback, useEffect, useRef, useState } from "react";
@@ -66,15 +63,11 @@ const VIEW_ACTIONS = {
 function Shell({ initialSetup = null, recoveryStarted = false }: { initialSetup?: WorkspaceSetupTarget | null; recoveryStarted?: boolean }) {
   // Keep unfinished wording in memory across navigation; never write it to disk.
   const deskCaseEdits = useRef(new Map<string, CaseEdit>());
-  useEffect(() => {
-    const warn = (event: BeforeUnloadEvent) => {
-      if (!hasPropertyEdits() && !hasUnpersistedBillDrafts() && !hasUnsavedMailReviews() && !hasUnsavedOfficeDrafts() && !hasUnsavedDepartmentConfigurationDrafts() && deskCaseEdits.current.size === 0) return;
-      event.preventDefault(); event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, []);
+  useEffect(() => registerUnsavedCheck(() => deskCaseEdits.current.size > 0), []);
   const { state, dispatch } = useStore();
+  // A job draft lives in the store, so it stays guarded after its drawer closes.
+  const jobDraft = useRef(state.jobDraft); jobDraft.current = state.jobDraft;
+  useEffect(() => registerUnsavedCheck(() => hasUnfinishedJobDraft(jobDraft.current)), []);
   const canAdminister = useServiceAdminAccess(state.serviceAdmin ?? state.config?.serviceAdmin);
   const refreshBudStatus = useCallback(async (isCurrent: () => boolean) => {
     const status = parseBudStatus(await api("/api/hermes", undefined, { timeoutMs: 15_000 }));
@@ -156,6 +149,8 @@ function Shell({ initialSetup = null, recoveryStarted = false }: { initialSetup?
   const openRecoveryPastLinkGate = useCallback(() => { continueRecovery(location); setLeftLinkGate(true); }, []);
   const setupCover = budFirstSetupCover(state.hermes, { connected: state.connected, statusError: Boolean(budStatusRead.error), recovering });
   const settingUp = Boolean(setupCover) && !leftSetup;
+  // The office link, its check and Bud's first setup take the whole window, with no rail or status bar.
+  const solo = Boolean(linkGate) || settingUp;
   const setupSheetDone = budSetupSheetDone(state.hermes, { connected: state.connected, recovering, openedBySetup: setupFromFlow.current });
   useEffect(() => {
     // Once the person moves to another section or closes it, the sheet is theirs.
@@ -276,7 +271,7 @@ function Shell({ initialSetup = null, recoveryStarted = false }: { initialSetup?
   return (
     <div className="workspace-surface flex h-full flex-col">
       {DESIGN_PREVIEW_REASON && <div role="status" className="relative z-40 shrink-0 border-b border-agency/25 bg-agency-soft px-4 py-2 text-center text-[12px] leading-5 text-ink"><strong>Design preview · example data.</strong> Run real work from the RealBud app.</div>}
-      <UpdateBanner />
+      {!solo && <UpdateBanner />}
       <HumanHandoffPanel />
       {/* Store errors surface on every page, not just the view that failed. */}
       {state.error && !setup && (
@@ -314,6 +309,8 @@ function Shell({ initialSetup = null, recoveryStarted = false }: { initialSetup?
       {!setup && <ShellPalette />}
       {setup && <WorkspaceScreen key="setup" label="setup" onClose={() => setSetup(null)}><WorkspaceSetup target={setup} error={state.error} onDismissError={() => dispatch({ type: "error", message: null })} origin={state.activeView === "desk" ? "Desk" : state.activeView === "schedule" ? "Schedule" : state.activeView === "you" ? "Workspace" : "Work"} onTarget={setSetup} onServiceAdministration={openServiceAdministration} onClose={() => setSetup(null)} onAsk={() => { setSetup(null); dispatch({ type: "showAsk" }); }} onSchedule={() => { setSetup(null); dispatch({ type: "showRoutines" }); }} /></WorkspaceScreen>}
       </>}
+      {/* The strip below the screen keeps the screen's own paper. */}
+      {solo && <div className="shrink-0 bg-paper"><UpdateBanner docked /></div>}
     </div>
   );
 }
@@ -360,14 +357,28 @@ function FirstRunGate() {
     return () => { active = false; };
   }, [attempt]);
   if (entered || firstRunDone(saved) || saved?.stage === 'recovery') return <Shell initialSetup={initialSetup} recoveryStarted={saved?.stage === 'recovery'} />;
-  if (!saved) return <main className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-paper p-6" role={error ? 'alert' : 'status'}>
-    <p>{error || 'Checking your saved setup…'}</p>
-    {error && <><button className="pm-control" onClick={() => setAttempt(value => value + 1)}>Try again</button><button className="pm-control" onClick={() => { location.hash = 'you-recovery'; leaveLinkGate(); setEntered(true); }}>Open recovery</button></>}
-  </main>;
-  return <WorkspaceScreen label="welcome"><Onboarding initialState={saved} onDone={(target) => { setInitialSetup(target ?? null); setEntered(true); }} /></WorkspaceScreen>;
+  return <div className="flex h-full flex-col">
+    {/* Layout containment holds first run's full-window frame above the docked update card. */}
+    <div className="flex min-h-0 flex-1 flex-col [contain:layout]">
+      {saved ? <WorkspaceScreen label="welcome"><Onboarding initialState={saved} onDone={(target) => { setInitialSetup(target ?? null); setEntered(true); }} /></WorkspaceScreen>
+      : <main className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-paper p-6" role={error ? 'alert' : 'status'}>
+        <p>{error || 'Checking your saved setup…'}</p>
+        {error && <><button className="pm-control" onClick={() => setAttempt(value => value + 1)}>Try again</button><button className="pm-control" onClick={() => { location.hash = 'you-recovery'; leaveLinkGate(); setEntered(true); }}>Open recovery</button></>}
+      </main>}
+    </div>
+    <UpdateBanner docked />
+  </div>;
 }
 
 export default function App() {
+  // Mounted for the window's whole life, so beforeunload and main's question before an
+  // update restart get the same answer on every screen, first run and the office link included.
+  useEffect(() => {
+    const warn = holdUnloadWhile(hasUnsavedWork);
+    window.addEventListener("beforeunload", warn);
+    const stopAnswering = window.ogb?.updater?.onQueryUnsaved?.(hasUnsavedWork);
+    return () => { window.removeEventListener("beforeunload", warn); stopAnswering?.(); };
+  }, []);
   return (
     <DesktopCapabilitiesProvider>
       <StoreProvider>

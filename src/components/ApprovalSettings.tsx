@@ -1,12 +1,13 @@
 // Workspace → Approvals: how often Bud asks before using each connected app,
 // website and office connector. Reads and saves `/api/approvals` (the store
 // checks edit rights and the revision); saved site rules stay revocable here.
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, useStore } from "@/state/store";
 import { fmtDateTime } from "@/lib/au";
 import { isPortalSiteRule, portalRuleLabel } from "@/lib/portal-job";
 import { useOfficeSources } from "@/lib/connected-apps-refresh";
 import { cn } from "@/lib/cn";
+import { guardUnsavedWork } from "@/lib/unsaved-work";
 import { officeAppLabel } from "@shared/office-sources";
 import { CONNECTORS_API, parseConnectorRegistry } from "@shared/mcp-connector";
 import { approvalGroupKey, defaultApprovalSettings, normalizeApprovalSettings, PER_INSTANCE_CLASSES, READ_ONLY_APP_TOOLS, type ApprovalChoice, type ApprovalSettings } from "@shared/approval-settings";
@@ -202,6 +203,9 @@ export function ApprovalSettings() {
     managed, sites: [...sites, ...ruleSites], connectors, saved: Object.keys({ ...saved?.groups, ...draft.groups }),
   }) : [];
   const dirty = !!draft && !!saved && fingerprint(draft) !== fingerprint(saved);
+  // Unsaved approval rules hold the window's beforeunload and main's update restart.
+  const unsaved = useRef(dirty); unsaved.current = dirty;
+  useEffect(() => guardUnsavedWork(() => unsaved.current), []);
 
   const choose = (row: ApprovalRow, choice: RowChoice) => setDraft(current => {
     if (!current) return current;
