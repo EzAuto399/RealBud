@@ -4,7 +4,7 @@
 .desk-workspace .pm-desk-header { padding: 8px 24px 0; }
 /* One line of tabs at every width: the strip scrolls sideways on its own, never the page,
    and fades at an edge with more tabs beyond it. */
-.desk-workspace-nav { display: flex; align-items: center; gap: 16px; margin-top: 2px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
+.desk-workspace-nav { display: flex; align-items: center; gap: 16px; margin-top: 2px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; }
 .desk-workspace-nav > * { flex: none; }
 .desk-workspace-nav[data-more-end] { mask-image: linear-gradient(to right, var(--color-ink) calc(100% - 40px), transparent); }
 .desk-workspace-nav[data-more-start] { mask-image: linear-gradient(to right, transparent, var(--color-ink) 40px); }

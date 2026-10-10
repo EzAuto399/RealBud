@@ -345,7 +345,7 @@ try {
     await until(async () => JSON.stringify((await api('/api/desk')).body.properties[0]).includes('"graceDays":5'), 'grace days saved');
     check(c, 'Edit: Grace days changed to 5 and saved');
     await widths('desk-property');
-    // Arrange Desk: Show/Hide, Move up/down, Reset to recommended.
+    // Arrange Desk: Show/Hide, Move a work area up, Reset to office default.
     await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: /^Tasks\s*\d*$/ }).click();
     await openMore();
     await more.getByRole('group', { name: 'More Desk tools', exact: true }).getByRole('button', { name: 'Arrange Desk', exact: true }).click();
@@ -353,7 +353,7 @@ try {
     await panel.waitFor();
     assert.equal(await panel.getByRole('checkbox', { name: 'Needs you always shows', exact: true }).isDisabled(), true, 'the safety section cannot be hidden');
     check(c, 'Needs you (safety/approval section) cannot be hidden');
-    const up = panel.getByRole('button', { name: 'Move Activity up', exact: true });
+    const up = panel.getByRole('button', { name: 'Move Bills and calendar up', exact: true });
     await up.focus(); await page.keyboard.press('Enter');
     await panel.getByRole('checkbox', { name: 'Show Mail priorities on my Desk', exact: true }).uncheck();
     await shot('customize-draft');
@@ -362,11 +362,11 @@ try {
     let layout = (await api('/api/workspace-tabs')).body.state.desk.sections;
     assert.equal(layout.find(s => s.id === 'mail').visible, false, 'Mail priorities hidden');
     check(c, 'Arrange (keyboard Move up) and Hide Mail priorities saved');
-    await panel.getByRole('button', { name: 'Reset to recommended', exact: true }).click();
+    await panel.getByRole('button', { name: 'Reset to office default', exact: true }).click();
     await panel.getByRole('button', { name: 'Save', exact: true }).click();
     await until(async () => (await api('/api/workspace-tabs')).body.state.desk.sections.every(s => s.visible), 'reset saved');
     layout = (await api('/api/workspace-tabs')).body.state.desk.sections;
-    check(c, `Reset to recommended restores every section (${layout.map(s => s.id).join(', ')})`);
+    check(c, `Reset to office default restores every section (${layout.map(s => s.id).join(', ')})`);
     await widths('customize-panel');
     await panel.getByRole('button', { name: 'Close Arrange Desk', exact: true }).click();
   });

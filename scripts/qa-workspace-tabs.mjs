@@ -176,7 +176,13 @@ try {
   };
   await openDeskMail();
   const mailPanel = page.getByRole('region', { name: 'Mail priorities and follow-ups', exact: true });
-  await mailPanel.getByText('No source collection is recorded. Finish agency setup and explicitly collect the reviewed Gmail scope.', { exact: true }).waitFor();
+  // The source note sits in the area's collapsed Setup.
+  const mailSetupNote = async () => {
+    const setup = mailPanel.locator('details.area-setup');
+    if (!await setup.evaluate(element => element.open)) await setup.locator(':scope > summary').click();
+    await mailPanel.getByText('No source collection is recorded. Finish agency setup and explicitly collect the reviewed Gmail scope.', { exact: true }).waitFor();
+  };
+  await mailSetupNote();
   assert.equal(await page.locator('.desk-work-tasks').isVisible(), false);
   await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: /^Tasks\s*\d*$/ }).click();
   await page.locator('.desk-work-tasks').waitFor();
@@ -185,7 +191,7 @@ try {
   await putViews(tabs => [...tabs, view('view-fictional-mail', 'Mail priorities', 'mail', 'open')]);
   await openSavedViews(); await refreshViews();
   await page.getByRole('button', { name: 'Open Mail priorities', exact: true }).click();
-  await mailPanel.getByText('No source collection is recorded. Finish agency setup and explicitly collect the reviewed Gmail scope.', { exact: true }).waitFor();
+  await mailSetupNote();
   const mailHash = new URL(page.url()).hash; await page.reload(); await mailPanel.waitFor(); assert.equal(new URL(page.url()).hash, mailHash);
   await page.setViewportSize({ width: 1365, height: 1024 });
   await page.screenshot({ animations: 'disabled', path: join(output, 'mail-saved-view-desktop.png') });
