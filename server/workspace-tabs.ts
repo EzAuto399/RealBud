@@ -98,6 +98,21 @@ export function createWorkspaceTabsHandler(options: { directory: string; workspa
         return true;
       });
     },
+    /** Before work areas were tabs, the automatic simple desk hid them; as tabs they would be unreachable.
+     * Untouched since (as written by the two methods above), that layout gains its work-area tabs once. */
+    async showAreaTabsOnAutomaticSimpleDesk(): Promise<boolean> {
+      return serial(async () => {
+        const { state } = await read();
+        const shownIds = (sections: readonly DeskSection[]) => sections.filter(section => section.visible && section.id !== 'bank').map(section => section.id).sort().join();
+        const automatic = state && ((state.revision === 1 && state.history.length === 2 && state.history[1].savedAt === null)
+          || (state.revision === 2 && state.history.length === 3 && state.history[2].savedAt === null && shownIds(state.history[1].sections) === 'brief,queue'));
+        // Bank references may sit at the end, shown, as a file from before it existed reads today.
+        if (!state || !automatic || shownIds(state.desk.sections) !== 'brief,go-live,queue') return false;
+        const revision = state.revision + 1;
+        await save({ ...state, revision, ...withDesk(state, revision, simpleDeskSections()) });
+        return true;
+      });
+    },
     /** `by` is set only by the host's binding for Bud's own tools, never from a request. */
     async handle(route: string, method: string, body?: unknown, by?: 'bud'): Promise<{ status: number; body: unknown } | null> {
       if (route !== '/api/workspace-tabs' && route !== '/api/workspace-tabs/reset' && route !== '/api/workspace-tabs/revert') return null;

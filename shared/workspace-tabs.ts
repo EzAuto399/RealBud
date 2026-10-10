@@ -45,8 +45,9 @@ const NOTIFY_RULE = `Set notices only for ${or(NOTICE_AREA_IDS.map(id => DESK_SE
 const LAYOUT_RULE = `Choose a layout only for ${or(LAYOUT_AREA_IDS.map(id => `${DESK_SECTION_LABELS[id]} (${or(AREA_LAYOUTS[id].map(layout => DESK_LAYOUT_LABELS[layout]))})`))}.`;
 /** Today's Desk order; also the fallback for an absent or invalid layout. */
 export const defaultDeskSections = (): DeskSection[] => DESK_SECTION_IDS.map(id => ({ id, visible: true }));
-/** A calm starting Desk for a freshly linked office: brief, Get started (it hides itself once every step is done) and Needs you. */
-export const simpleDeskSections = (): DeskSection[] => DESK_SECTION_IDS.map(id => ({ id, visible: id === 'brief' || id === 'go-live' || id === 'queue' }));
+/** A calm starting Desk for a freshly linked office: on Tasks, the brief, Get started (it hides itself once every step
+ * is done) and Needs you; every work area stays a tab, since a tab costs the page nothing and a hidden one can't be found. */
+export const simpleDeskSections = (): DeskSection[] => DESK_SECTION_IDS.map(id => ({ id, visible: id === 'brief' || id === 'go-live' || id === 'queue' || isDeskAreaId(id) }));
 /** The office's starting Desk: today's order with the area slots in the preset's order (areas
  * it does not list keep theirs, after it), every section shown, no personal notice or layout. */
 export function officeDefaultSections(office: OfficeDesk): DeskSection[] {

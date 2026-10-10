@@ -4,7 +4,7 @@ import { mkdtemp, readFile, readdir, writeFile, symlink } from 'node:fs/promises
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createWorkspaceTabsHandler } from './workspace-tabs.ts';
-import { defaultDeskSections, defaultShellLayout, parseWorkspaceTabsResponse } from '../shared/workspace-tabs.ts';
+import { DESK_SECTION_IDS, defaultDeskSections, defaultShellLayout, parseWorkspaceTabsResponse } from '../shared/workspace-tabs.ts';
 import { coreOfficeDesk } from '../shared/desk-areas.ts';
 
 const desk = { sections: defaultDeskSections() };
@@ -26,7 +26,8 @@ describe('private workspace saved views', () => {
     const fresh = await fixture();
     expect(await fresh.handler.simpleDeskIfNeverCustomized()).toBe(true);
     const visible = (await fresh.read()).state!.desk.sections.filter(section => section.visible).map(section => section.id).sort();
-    expect(visible).toEqual(['brief', 'go-live', 'queue']);
+    // Calm Tasks, and every work area still a tab.
+    expect(visible).toEqual(['bank', 'bills', 'brief', 'go-live', 'mail', 'queue', 'shared-work']);
     // Applying twice is a no-op, and the standard layout stays restorable.
     expect(await fresh.handler.simpleDeskIfNeverCustomized()).toBe(false);
     expect((await fresh.read()).state!.history.length).toBeGreaterThan(0);
@@ -42,7 +43,7 @@ describe('private workspace saved views', () => {
     const legacy = ['brief', 'mail', 'bills', 'shared-work', 'go-live', 'queue', 'activity'].map(id => ({ id, visible: id === 'brief' || id === 'queue' }));
     expect((await old.call('PUT', { version: 2, expectedRevision: 0, tabs: [], desk: { sections: legacy } }))?.status).toBe(200);
     expect(await old.handler.addGetStartedToAutomaticSimpleDesk()).toBe(true);
-    expect((await old.read()).state!.desk.sections.filter(section => section.visible).map(section => section.id).sort()).toEqual(['brief', 'go-live', 'queue']);
+    expect((await old.read()).state!.desk.sections.filter(section => section.visible).map(section => section.id).sort()).toEqual(['bank', 'bills', 'brief', 'go-live', 'mail', 'queue', 'shared-work']);
     expect(await old.handler.addGetStartedToAutomaticSimpleDesk()).toBe(false);
     // A person's own layout is never changed.
     const chosen = await fixture();
@@ -50,6 +51,29 @@ describe('private workspace saved views', () => {
     expect((await chosen.call('PUT', { version: 3, expectedRevision: 0, tabs: [], desk: { sections: own } }))?.status).toBe(200);
     expect(await chosen.handler.addGetStartedToAutomaticSimpleDesk()).toBe(false);
     expect((await chosen.read()).state!.desk.sections).toEqual(own);
+  });
+  it('shows the work-area tabs once on an untouched automatic simple desk that hid them', async () => {
+    const simple = (ids: readonly string[], shown = ['brief', 'go-live', 'queue']) => ids.map(id => ({ id, visible: shown.includes(id) }));
+    const before = ['brief', 'mail', 'bills', 'shared-work', 'go-live', 'queue', 'activity'];
+    const visible = async (fx: Awaited<ReturnType<typeof fixture>>) => (await fx.read()).state!.desk.sections.filter(section => section.visible).map(section => section.id).sort();
+    const tabs = ['bank', 'bills', 'brief', 'go-live', 'mail', 'queue', 'shared-work'];
+    // As 0.1.49 linked an office: the simple desk saved once over the untouched default, before Bank references existed.
+    const linked = await fixture();
+    expect((await linked.call('PUT', { version: 2, expectedRevision: 0, tabs: [], desk: { sections: simple(before) } }))?.status).toBe(200);
+    expect(await linked.handler.showAreaTabsOnAutomaticSimpleDesk()).toBe(true);
+    expect(await visible(linked)).toEqual(tabs);
+    expect(await linked.handler.showAreaTabsOnAutomaticSimpleDesk()).toBe(false);
+    // An older office, after the Get started step was added to its automatic layout.
+    const older = await fixture();
+    expect((await older.call('PUT', { version: 2, expectedRevision: 0, tabs: [], desk: { sections: simple(before, ['brief', 'queue']) } }))?.status).toBe(200);
+    expect(await older.handler.addGetStartedToAutomaticSimpleDesk()).toBe(true);
+    expect(await visible(older)).toEqual(tabs);
+    // A layout a person saved, even one that hides every area, is never changed.
+    const chosen = await fixture();
+    expect((await chosen.call('PUT', { version: 3, expectedRevision: 0, tabs: [], desk: { sections: simple(DESK_SECTION_IDS, [...DESK_SECTION_IDS].filter(id => id !== 'activity')) } }))?.status).toBe(200);
+    expect((await chosen.call('PUT', { version: 3, expectedRevision: 1, tabs: [], desk: { sections: simple(DESK_SECTION_IDS) } }))?.status).toBe(200);
+    expect(await chosen.handler.showAreaTabsOnAutomaticSimpleDesk()).toBe(false);
+    expect(await visible(chosen)).toEqual(['brief', 'go-live', 'queue']);
   });
   it('persists a mail filter as a private shortcut without executable settings or source access', async () => {
     const a = await fixture();

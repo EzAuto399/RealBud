@@ -6380,7 +6380,9 @@ const readOfficeDesk = () => officeDesk({ agency: async () => (await agencySetup
 const workspaceTabs = createWorkspaceTabsHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, officeDesk: readOfficeDesk, onSaved: change => broadcast({ kind: "workspace-tabs", ...change }) });
 void workspaceTabs.addGetStartedToAutomaticSimpleDesk()
   .then(applied => { if (applied) oplog("boot", "desk: Get started added to the automatic simple layout"); })
-  .catch(() => oplog("boot", "desk: Get started could not be added to the simple layout; the saved layout stays"));
+  .then(() => workspaceTabs.showAreaTabsOnAutomaticSimpleDesk())
+  .then(applied => { if (applied) oplog("boot", "desk: work-area tabs shown on the automatic simple layout"); })
+  .catch(() => oplog("boot", "desk: the automatic simple layout could not be updated; the saved layout stays"));
 // One-off reminders per workspace and member. Its own interval only marks them
 // due; nothing is sent or started. The office zone is read, never guessed.
 // Weekly-bills follow-ups: owner, date, resolve/reopen per finding; survives repeat runs.
