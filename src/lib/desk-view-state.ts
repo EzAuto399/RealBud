@@ -1,15 +1,17 @@
 import { useSyncExternalStore, type SetStateAction } from "react";
-import { deskSectionsOrDefault } from "@shared/workspace-tabs";
+import { DESK_AREA_IDS, coreOfficeDesk, type DeskAreaId, type OfficeDesk } from "@shared/desk-areas";
+import { deskSectionsOrDefault, effectiveDeskAreas } from "@shared/workspace-tabs";
 import type { PropertyScope } from "./book-groups";
 import type { QueueFilter } from "./desk-queue";
 
 /** Desk's work areas, each a tab after Tasks. While one is open it replaces the
  *  task area; null means the queue and case are showing. */
-export const DESK_AREAS = ["mail", "bills", "shared-work"] as const;
-export type DeskOtherWork = typeof DESK_AREAS[number];
-/** The work-area tabs the saved layout shows, in its order. An absent or invalid layout shows all three. */
-export function visibleDeskAreas(sections: unknown): DeskOtherWork[] {
-  return deskSectionsOrDefault(sections).flatMap(section => section.visible && (DESK_AREAS as readonly string[]).includes(section.id) ? [section.id as DeskOtherWork] : []);
+export const DESK_AREAS = DESK_AREA_IDS;
+export type DeskOtherWork = DeskAreaId;
+/** The work-area tabs the saved layout shows: the office's available areas that are shown, in saved
+ *  order. An absent or invalid layout uses today's order; an office preset not read yet, the core one. */
+export function visibleDeskAreas(sections: unknown, office: OfficeDesk | null | undefined): DeskOtherWork[] {
+  return effectiveDeskAreas(deskSectionsOrDefault(sections), office ?? coreOfficeDesk()).flatMap(area => area.visible ? [area.id] : []);
 }
 interface DeskViewState {
   mode: "cases" | "book" | "batch";

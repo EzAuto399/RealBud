@@ -92,7 +92,7 @@ describe("Desk layout", () => {
     for (const removed of ["Other work", "Desk options", "Turn these on in More", "Keep Bud panel open"]) expect(toolbar(standard)).not.toContain(removed);
     // Hidden areas leave the row; the rest follow the saved order. Tasks and Hermios always stay.
     const sections = defaultDeskSections().map(section => ({ ...section, visible: section.id !== "bills" }));
-    store.sections = [sections[0], sections[3], sections[1], ...sections.slice(4), sections[2]];
+    store.sections = ["brief", "shared-work", "mail", "bank", "go-live", "queue", "activity", "bills"].map(id => sections.find(section => section.id === id));
     expect(tabs(render(snapshot()))).toEqual(["Tasks", "Shared work", "Mail priorities", "Hermios"]);
   });
 

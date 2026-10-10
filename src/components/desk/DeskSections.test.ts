@@ -9,7 +9,7 @@ const order = (sections: unknown) => [...renderToStaticMarkup(createElement(Desk
 
 describe('DeskSections', () => {
   it('renders today\'s order when the layout is absent or invalid', () => {
-    const today = ['brief', 'mail', 'bills', 'shared-work', 'go-live', 'queue', 'activity'];
+    const today = ['brief', 'mail', 'bills', 'bank', 'shared-work', 'go-live', 'queue', 'activity'];
     expect(order(undefined)).toEqual(today);
     expect(order([{ id: 'queue', visible: true }])).toEqual(today);
     expect(order(defaultDeskSections().map(section => ({ ...section, visible: section.id !== 'queue' })))).toEqual(today);
@@ -17,7 +17,7 @@ describe('DeskSections', () => {
   it('renders the saved order and skips hidden sections', () => {
     const sections = [
       { id: 'queue', visible: true }, { id: 'activity', visible: true }, { id: 'brief', visible: false }, { id: 'mail', visible: true },
-      { id: 'bills', visible: false }, { id: 'shared-work', visible: true }, { id: 'go-live', visible: false },
+      { id: 'bills', visible: false }, { id: 'bank', visible: false }, { id: 'shared-work', visible: true }, { id: 'go-live', visible: false },
     ];
     expect(order(sections)).toEqual(['queue', 'activity', 'mail', 'shared-work']);
   });

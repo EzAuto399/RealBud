@@ -6,7 +6,7 @@ import { announcementNeeds, budDeskChange, undoBudDeskChange } from './workspace
 
 const before = defaultDeskSections();
 const after = defaultDeskSections().map(section => ({ ...section, visible: section.id !== 'activity' }));
-const state = (revision: number, history: WorkspaceTabs['history']): WorkspaceTabs => ({ version: 2, revision, tabs: [], desk: { sections: history[0]?.sections ?? before }, history });
+const state = (revision: number, history: WorkspaceTabs['history']): WorkspaceTabs => ({ version: 3, revision, tabs: [], desk: { sections: history[0]?.sections ?? before }, history });
 
 describe('announced layout changes', () => {
   it('rereads only a revision this window does not hold', () => {
@@ -30,6 +30,10 @@ describe("Bud's Desk change and its Undo", () => {
     expect(budDeskChange(state(9, saved.history), 9)).toBeNull();
     expect(budDeskChange(state(1, [{ revision: 1, savedAt: 1, sections: after }]), 1)).toBeNull();
     expect(budDeskChange(null, 7)).toBeNull();
+    // A notice-only change is a change, named in the receipt.
+    const notified = before.map(section => section.id === 'mail' ? { ...section, notify: 'each' as const } : section);
+    expect(budDeskChange(state(8, [{ revision: 8, savedAt: 3, sections: notified }, { revision: 7, savedAt: 2, sections: before }]), 8))
+      .toEqual({ revision: 8, toRevision: 7, summary: 'set Mail priorities notices to Each new item' });
   });
 
   it('restores against the revision Bud saved, and once Desk changed since changes nothing and offers Arrange Desk', async () => {

@@ -89,7 +89,8 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   const canAdminister = useServiceAdminAccess(state.serviceAdmin ?? state.config?.serviceAdmin);
   const { preferences } = useWorkspacePreferences();
   // Saved Desk sections; an absent or invalid layout renders today's order.
-  const deskLayout = useWorkspaceTabs().data?.state?.desk.sections;
+  const workspaceTabs = useWorkspaceTabs();
+  const deskLayout = workspaceTabs.data?.state?.desk.sections;
   // The day's REI sign-in: while REI needs it, it is Desk's one primary action.
   const rei = useReiSignIn();
   const reiNeeded = rei.view?.state === "needed";
@@ -112,7 +113,8 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   useEffect(() => () => setHermiosOpen(false), []);
   // A work-area tab (mail, bills, shared work) replaces the task area while open. Opened
   // surfaces stay mounted (hidden) so their unsaved drafts and request identities survive switching.
-  const areas = visibleDeskAreas(deskLayout);
+  // Bank references has no Desk surface yet (a later slice), so its tab is not offered.
+  const areas: DeskOtherWork[] = visibleDeskAreas(deskLayout, workspaceTabs.office).filter(id => id !== "bank");
   const [otherWork, setOtherWork] = useDeskViewState("otherWork");
   const [openedOther, setOpenedOther] = useState<ReadonlySet<DeskOtherWork>>(() => new Set(otherWork ? [otherWork] : []));
   const setMode = (next: typeof mode) => {
@@ -889,6 +891,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
               mail: <><div className="rb-card-menu-row"><DeskCardMenu id="mail" /></div><MailWorkPanel /></>,
               bills: <><div className="rb-card-menu-row"><DeskCardMenu id="bills" /></div><ExpectedBillsBoard /></>,
               "shared-work": <><div className="rb-card-menu-row"><DeskCardMenu id="shared-work" /></div><SharedWorkPanel initialExpanded /></>,
+              bank: null,
             }}
           />
         </div>

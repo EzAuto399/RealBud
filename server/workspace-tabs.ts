@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstat, rename } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { DESK_SECTION_IDS, MAX_DESK_LAYOUT_HISTORY, defaultDeskSections, simpleDeskSections, parseDeskSections, parseShellLayout, parseWorkspaceTabs, sameDeskSections, validWorkspaceRevision, type DeskSection, type WorkspaceTabs, type WorkspaceTabsResponse } from '../shared/workspace-tabs.ts';
+import { coreOfficeDesk, type OfficeDesk } from '../shared/desk-areas.ts';
 import { privateDirectory, readPrivateJson, writePrivateJson } from './private-json.ts';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
 
@@ -16,17 +17,20 @@ function fields(value: unknown, allowed: string[]): Record<string, unknown> {
 
 /** Who made a saved change, as the open windows are told. Only the host's Bud binding passes "bud". */
 export type WorkspaceTabsChange = { revision: number; by?: 'bud' };
+/** The stored side of an answer; every answer also carries the office's Desk preset. */
+type Stored = Omit<WorkspaceTabsResponse, 'office'>;
 
 /** One private service owns a DATA_DIR. Queue all windows/store instances before
  * rereading revisions. Office membership cannot change this immutable binding.
  * `onSaved` hears every successful write (routes, Bud, boot migrations) so open
- * windows reread at once. */
-export function createWorkspaceTabsHandler(options: { directory: string; workspaceId: string; now?: () => number; onSaved?: (change: WorkspaceTabsChange) => void }) {
+ * windows reread at once. `officeDesk` is the office's Desk preset sent with every answer. */
+export function createWorkspaceTabsHandler(options: { directory: string; workspaceId: string; now?: () => number; onSaved?: (change: WorkspaceTabsChange) => void; officeDesk?: () => OfficeDesk | Promise<OfficeDesk> }) {
   const now = options.now ?? Date.now;
+  const officeDesk = options.officeDesk ?? (() => coreOfficeDesk());
   if (!/^[a-f0-9-]{36}$/i.test(options.workspaceId)) throw new Error('A private workspace identity is required.');
   const directory = resolve(options.directory, 'workspace-views');
   const path = join(directory, 'tabs.json');
-  const defaults = (): WorkspaceTabs => ({ version: 2, revision: 0, tabs: [], desk: { sections: defaultDeskSections() }, history: [] });
+  const defaults = (): WorkspaceTabs => ({ version: 3, revision: 0, tabs: [], desk: { sections: defaultDeskSections() }, history: [] });
   /** Record an accepted desk layout, newest first. The layout in place before the
    * first customization is kept too, so it can be restored. */
   const withDesk = (current: WorkspaceTabs, revision: number, sections: DeskSection[]): Pick<WorkspaceTabs, 'desk' | 'history'> => {
@@ -41,7 +45,7 @@ export function createWorkspaceTabsHandler(options: { directory: string; workspa
     await windowsFilePrivacy(path, 'file');
     return createHash('sha256').update(`${options.workspaceId}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`).digest('hex');
   }
-  async function read(): Promise<WorkspaceTabsResponse> {
+  async function read(): Promise<Stored> {
     await privateDirectory(directory);
     try {
       const value = await readPrivateJson(path, MAX_BYTES);
@@ -64,7 +68,7 @@ export function createWorkspaceTabsHandler(options: { directory: string; workspa
     if (Buffer.byteLength(JSON.stringify(state)) > MAX_BYTES - 200) throw fail(400, 'invalid_tabs', 'Saved views are too large.');
     await writePrivateJson(path, { workspaceId: options.workspaceId, state });
     try { options.onSaved?.({ revision: state.revision, ...(by ? { by } : {}) }); } catch { /* an announcement never changes the saved outcome */ }
-    return { state, recovery: null } satisfies WorkspaceTabsResponse;
+    return { state, recovery: null } satisfies Stored;
   }
   return {
     /** A newly linked office starts on the simple desk (brief + Needs you).
@@ -86,7 +90,8 @@ export function createWorkspaceTabsHandler(options: { directory: string; workspa
     async addGetStartedToAutomaticSimpleDesk(): Promise<boolean> {
       return serial(async () => {
         const current = await read();
-        const legacy = DESK_SECTION_IDS.map(id => ({ id, visible: id === 'brief' || id === 'queue' }));
+        // As that file reads today: Bank references, added later, sits at the end, shown.
+        const legacy = [...DESK_SECTION_IDS.filter(id => id !== 'bank').map(id => ({ id, visible: id === 'brief' || id === 'queue' })), { id: 'bank' as const, visible: true }];
         if (!current.state || current.state.revision !== 1 || current.state.history.length !== 2 || current.state.history[1].savedAt !== null || !sameDeskSections(current.state.desk.sections, legacy)) return false;
         const revision = 2;
         await save({ ...current.state, revision, ...withDesk(current.state, revision, simpleDeskSections()) });
@@ -98,6 +103,7 @@ export function createWorkspaceTabsHandler(options: { directory: string; workspa
       if (route !== '/api/workspace-tabs' && route !== '/api/workspace-tabs/reset' && route !== '/api/workspace-tabs/revert') return null;
       if (!(route === '/api/workspace-tabs' && ['GET', 'PUT'].includes(method)) && !(route !== '/api/workspace-tabs' && method === 'POST')) return { status: 405, body: { error: 'This saved view action is unavailable.' } };
       try {
+        const office = await officeDesk();
         const result = await serial(async () => {
           const current = await read();
           if (method === 'GET') return current;
@@ -123,19 +129,20 @@ export function createWorkspaceTabsHandler(options: { directory: string; workspa
             return save({ ...current.state, revision, ...withDesk(current.state, revision, target.sections) }, by);
           }
           if (!current.state) throw fail(409, 'tabs_recovery_required', 'Saved views need recovery. Reset views before making changes.');
-          // Version 1 bodies change tabs only; version 2 bodies carry the Desk layout
-          // and may carry the side panel layout. An omitted shell keeps the stored one.
+          // Version 1 bodies change tabs only; version 3 bodies carry the whole Desk layout
+          // (version 2, from an older window or script, is migrated like a stored file) and
+          // may carry the side panel layout. An omitted shell keeps the stored one.
           const input = fields(body, ['expectedRevision', 'version', 'tabs', 'desk', 'shell']);
           if (!validWorkspaceRevision(input.expectedRevision)) throw fail(400, 'invalid_tabs', 'Refresh saved views before changing them.');
-          if (input.version !== 1 && input.version !== 2 || (input.version === 1) !== (input.desk === undefined) || (input.version === 1 && input.shell !== undefined)) throw fail(400, 'invalid_tabs', 'Check the saved view settings.');
+          if (input.version !== 1 && input.version !== 2 && input.version !== 3 || (input.version === 1) !== (input.desk === undefined) || (input.version === 1 && input.shell !== undefined)) throw fail(400, 'invalid_tabs', 'Check the saved view settings.');
           if (input.expectedRevision !== current.state.revision) throw fail(409, 'tabs_changed', 'Saved views changed in another window. Refresh and review your changes again.');
           const revision = current.state.revision + 1;
           let tabs: WorkspaceTabs['tabs'], sections = current.state.desk.sections;
           try { tabs = parseWorkspaceTabs({ version: 1, revision, tabs: input.tabs }).tabs; }
           catch { throw fail(400, 'invalid_tabs', 'Check the saved view names, types and filters. No views were changed.'); }
-          if (input.version === 2) {
+          if (input.version !== 1) {
             const desk = input.desk as Record<string, unknown> | undefined;
-            try { if (!record(desk) || Object.keys(desk).join() !== 'sections') throw new Error(); sections = parseDeskSections(desk.sections); }
+            try { if (!record(desk) || Object.keys(desk).join() !== 'sections') throw new Error(); sections = parseDeskSections(desk.sections, input.version === 2); }
             catch (cause) { throw fail(400, 'invalid_desk', cause instanceof Error && cause.message ? `${cause.message} No layout was changed.` : 'Check the Desk sections. No layout was changed.'); }
           }
           let shell = current.state.shell;
@@ -143,9 +150,9 @@ export function createWorkspaceTabsHandler(options: { directory: string; workspa
             try { shell = parseShellLayout(input.shell); }
             catch (cause) { throw fail(400, 'invalid_shell', `${cause instanceof Error ? cause.message : 'Check the side panel settings.'} No layout was changed.`); }
           }
-          return save({ version: 2, revision, tabs, ...withDesk(current.state, revision, sections), ...(shell ? { shell } : {}) }, by);
+          return save({ version: 3, revision, tabs, ...withDesk(current.state, revision, sections), ...(shell ? { shell } : {}) }, by);
         });
-        return { status: 200, body: result };
+        return { status: 200, body: { ...result, office } satisfies WorkspaceTabsResponse };
       } catch (cause) {
         const known = cause as { status?: number; code?: string; message?: string };
         return { status: known.status ?? 503, body: { error: known.status ? known.message : 'Saved views could not be saved or checked. Refresh before retrying; your business records are unchanged.', code: known.code ?? 'tabs_unavailable' } };
