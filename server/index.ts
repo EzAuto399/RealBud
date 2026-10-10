@@ -4,6 +4,7 @@ import { sweepStaleTempFiles } from "./temp-sweep.ts";
 import { LiveStreamRecovery } from "../shared/live-stream.ts";
 import { sendToSseClients } from "./sse-clients.ts";
 import { createWorkspaceTabsHandler } from "./workspace-tabs.ts";
+import { createNeedsYouHandler } from "./needs-you.ts";
 import { createRemindersService } from "./reminders.ts";
 import { createOnboardingHandler } from "./onboarding.ts";
 import { createCustomerPackService } from "./customer-packs.ts";
@@ -3680,6 +3681,11 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         loopId: url.searchParams.get('loopId') ?? undefined,
       }));
     }
+    if (path === '/api/needs-you') {
+      res.setHeader('cache-control', 'no-store');
+      const result = await needsYou.handle(path, method);
+      if (result) return json(res, result.status, result.body);
+    }
     if (path === "/api/loops" && method === "GET") {
       const fromParam = url.searchParams.get("from");
       const toParam = url.searchParams.get("to");
@@ -6534,6 +6540,14 @@ const mailWorkspace = createMailIngestionService({ directory: DATA_DIR, workspac
     if (!binding || binding.accountId !== authority.accountId) throw new Error('The reviewed Gmail binding is unavailable.');
     return scanGmailReadOnly({ ...binding, assertAuthority }, request, signal);
   },
+});
+// Needs you: one read of what needs a person across the office's workflows (server/needs-you.ts).
+const needsYou = createNeedsYouHandler({
+  selectedWorkflows: async () => (await agencySetup.getConfiguration()).settings.selectedWorkflows,
+  mail: mailWorkspace, billFollowUps: billFollowUpsApi,
+  weeklyBills: () => latestRoutineResult(workflowDatabase(), 'weekly-bills'),
+  w1Status: async () => (await w1Host()).status(),
+  loops: () => loops!,
 });
 // Restore only the connection. An interrupted browser job always stays held.
 const sourceBillRegisters = new WeakMap<ReturnType<typeof workflowDatabase>, SourceBillRegister>();
