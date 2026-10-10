@@ -78,6 +78,14 @@ export function isCanonicalBud(id: string): boolean {
   return id === CANONICAL_BUD_ID;
 }
 
+/** A runtime event as it leaves the server: without the tool's argument digest,
+ * which only the in-process repeat watchdog reads. A tool start's title is
+ * already its bare identifier or a fixed label (drivers/acp/core.ts). */
+export function broadcastRuntimeEvent<T extends object>(event: T): T {
+  const { toolFingerprint: _digest, ...sent } = event as T & { toolFingerprint?: unknown };
+  return sent as T;
+}
+
 /** Product clients need the answer stream and the terminal completion event,
  * not provider reasoning, raw tool names, or runtime diagnostics. Permission
  * cards and settled messages are projected separately by the server. A tool

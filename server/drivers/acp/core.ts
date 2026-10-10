@@ -211,6 +211,10 @@ export function turnToolName(title: unknown): string | null {
   const head = typeof title === "string" ? title.split(":", 1)[0]!.trim() : "";
   return TURN_TOOL_NAME.test(head) ? head : null;
 }
+/** Any other tool call's title outside the worker (event log, broadcast, history): the tool's own identifier, the
+ * `name` of Hermes' `name: arguments`, and never its arguments or a shell command; else "tool". Ask names the step
+ * from it (src/lib/ask-step-label.ts). The private native log keeps the call as Hermes sent it. */
+export const toolStartTitle = (title: unknown): string => turnToolName(title) ?? "tool";
 /** A page tool call's title for the event log and the Work activity line: a fixed label per tool, never its arguments. */
 const pageToolLabel = (tool: string): string => PAGE_TOOL_LABEL[tool] ?? "Used the work browser";
 /** A page tool call (a start, update or permission request) as the private native log keeps it: the tool name and its
@@ -984,9 +988,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 type: "item.started",
                 itemType: "tool",
                 itemId: update.toolCallId,
-                // A page tool call shows only its label; the fingerprint (a digest of the real arguments, kept off
-                // the event log) still tells two pages apart for the repeat watchdog.
-                title: tool !== null ? pageToolLabel(tool) : String(update.rawInput?.command ?? update.title ?? "tool").slice(0, 80),
+                // A page tool call shows only its label, any other only its identifier; the fingerprint (a digest
+                // of the real arguments, kept off the event log and the broadcast) still tells two calls apart for
+                // the repeat watchdog.
+                title: tool !== null ? pageToolLabel(tool) : toolStartTitle(update.title),
                 toolFingerprint: toolFingerprint(String(update.title ?? "tool"), update.rawInput ?? update.content),
               });
               if (cuaNeverTool(update.rawInput?.name, update.rawInput?.tool, update.title)) {

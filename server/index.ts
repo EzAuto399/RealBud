@@ -246,7 +246,7 @@ import { createServiceGrantRenewal } from "./service-entitlement-renewal.ts";
 import { isPrivilegedServiceMutation } from "./service-admin.ts";
 import { serviceControl } from "./service-control.ts";
 import { careCredentialsLocked, careStatus, lockCare, unlockCare, serviceAdmin } from "./care-unlock.ts";
-import { CANONICAL_BUD_ID, CANONICAL_BUD_NAME, productDenied, productRuntimeEventVisible, productTurnLimits } from "./product-mode.ts";
+import { broadcastRuntimeEvent, CANONICAL_BUD_ID, CANONICAL_BUD_NAME, productDenied, productRuntimeEventVisible, productTurnLimits } from "./product-mode.ts";
 import { hostTimezone, morningCheckResult, ownerLetterResult, LoopManager, recipeIdFromLoopId, type LoopId, type LoopExecuteResult } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { dispatchLoop, evaluatorForLoop } from "../shared/workflow-catalog.ts";
@@ -1306,7 +1306,7 @@ bus.subscribe((raw: RuntimeEvent) => {
     return;
   }
   if (intentionallyStopped && event.type !== "request.resolved" && event.type !== "turn.completed") return;
-  if (productRuntimeEventVisible(event) || event.type === "turn.started") broadcast({ kind: "runtime", event });
+  if (productRuntimeEventVisible(event) || event.type === "turn.started") broadcast({ kind: "runtime", event: broadcastRuntimeEvent(event) });
 
   const pushMessage = (m: Omit<Message, "id" | "at">) => {
     const message = store.appendMessage(event.threadId, group && m.role === "bot" ? { ...m, from: speaker } : m);

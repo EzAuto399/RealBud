@@ -14,7 +14,7 @@ On 10 October Auston Realty's Windows PC exposed three problems.
 - **Bud's tools are visible to the model directly.** Hermes 0.21.x hid every MCP tool, including all of RealBud's per-turn brokers, behind `tool_search`/`tool_describe`/`tool_call`. That cost one or two extra model calls each time Bud first used a tool family. `tools.tool_search.enabled` is now owned `off`, and startup adds that one key to an existing profile without a Repair. The trade-off is about 3K more prompt tokens per call; large connector sets cost more.
 - **Warm workers stay 30 minutes** instead of 10, so a question asked after a short break skips the cold start.
 - **One timing line per Ask turn** in `realbud.log` (`event: "turn"`). It records: warm or cold, prelude, worker start, first text, tool count and names, model calls, model time, slowest call and time to headers, upstream errors, total, and outcome. Only numbers and tool names are logged, never a message, argument, account or request id.
-- **Ask names the step while Bud works**, for example "Reading the bank feed… · 12s". An unknown tool keeps "Working for Ns", and argument previews are never shown.
+- **Ask names the step while Bud works**, for example "Reading the bank feed… · 12s". An unknown tool keeps "Working for Ns". A tool start now leaves the service, and enters the event log, with only the tool's name or a fixed browser or desktop label: never its arguments, a shell command or the repeat-check digest. The private native log is unchanged.
 
 ## Upgrade notes
 - **Each upgraded office gets one automatic hands check** ("Testing Bud on this computer", one model call) after the startup profile write.
