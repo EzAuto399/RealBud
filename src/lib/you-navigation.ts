@@ -13,6 +13,7 @@ export function youHashTarget(hash: string): string | null {
     case "you-approvals": return "you-approvals";
     case "you-phone": return "you-phone";
     case "you-office": return "you-office";
+    case "you-company": return "you-company";
     case "you-website": return "you-website";
     // The link-code field itself, inside its disclosure (WebsiteLinkCard).
     case "you-website-code": return "you-website-code";

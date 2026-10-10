@@ -107,6 +107,7 @@ export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
       {linked ? <>
         <p><strong>{status.agencyLabel}</strong> · {status.label}</p>
         <p className="text-ink-muted">{status.lastReportedAt ? `Last reported ${new Date(status.lastReportedAt).toLocaleString()}` : "Linked. Send a status update to finish checking the connection."}</p>
+        <p><a className="text-agency underline underline-offset-2" href="https://realbud.app/account" target="_blank" rel="noreferrer">Billing and linked computers on realbud.app</a></p>
         <div className="flex flex-wrap gap-3">
           <button className={secondary} disabled={busy} onClick={props.onReport}>{busy ? "Updating…" : "Update status"}</button>
           <button className={secondary} disabled={busy} onClick={() => props.onConfirm(true)}>Disconnect website</button>
