@@ -1,5 +1,5 @@
 import type { LoopRun } from '@shared/contracts';
-import { areaForLoop, coreOfficeDesk, type NoticeLevel } from '@shared/desk-areas';
+import { areaForLoop, coreOfficeDesk, type DeskAreaId, type NoticeLevel } from '@shared/desk-areas';
 import type { NeedsYouArea, NeedsYouSnapshot } from '@shared/needs-you';
 import { reiWaitNotice } from '@shared/rei-sign-in-wait';
 import { NOTICE_AREA_IDS, effectiveDeskAreas, officeDefaultSections } from '@shared/workspace-tabs';
@@ -21,24 +21,34 @@ type AreaNotice = { area: NeedsYouArea; title: string; level: NoticeLevel };
  * notices to Schedule. Null for a job in no area: its catalog flag decides, as before. */
 function areaNotice(loopId: string): AreaNotice | null {
   const id = areaForLoop(loopId);
-  if (!id) return null;
+  return id ? areaSetting(id) : null;
+}
+function areaSetting(id: DeskAreaId): AreaNotice {
   const read = lastWorkspaceTabs(), office = read?.office ?? coreOfficeDesk();
   const shown = effectiveDeskAreas(read?.state?.desk.sections ?? officeDefaultSections(office), office).find(area => area.id === id);
   const preset = shown ?? office.areas.find(area => area.id === id) ?? coreOfficeDesk().areas.find(area => area.id === id)!;
   return { area: shown ? id : 'schedule', title: preset.title, level: preset.notify ?? 'off' };
 }
 
-/** A notice names the item, never an amount or account number its title may carry (a mail subject can). */
-const noticeTitle = (title: string) => title.replace(/[$€£]\s?\d[\d,]*(?:\.\d+)?|\d[\d ,.-]{4,}\d/g, '…');
+/** A notice names the item, never an amount or account number its title may carry (a mail subject can).
+ * Dates (2026-10-10, 9/10/2026) stay. */
+const DATE = /(\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}\/\d{1,2}\/\d{4}\b)/;
+const noticeTitle = (title: string) => title.split(DATE).map((part, index) => index % 2 ? part : part.replace(/[$€£]\s?\d[\d,]*(?:\.\d+)?|\d[\d ,.-]{4,}\d/g, '…')).join('');
 
-/** Review keys per area from the first read after app start, plus every key told since, so a restart
- * never floods. An area joins once a read could check it. */
+/** Review keys per area that are not news: the first read after app start, every read while the area is not
+ * on Each new item, and every key told since. So neither a restart nor switching to Each new item announces
+ * what was already there. An area joins once a read could check it. */
 const known = new Map<NeedsYouArea, Set<string>>();
 const reviews = (snapshot: NeedsYouSnapshot, area: NeedsYouArea) => snapshot.items.filter(item => item.area === area && item.level === 'review');
 const readable = (snapshot: NeedsYouSnapshot, area: NeedsYouArea) => !snapshot.unavailable.some(row => row.area === area);
 subscribeNeedsYou(() => {
   const { snapshot } = getNeedsYou();
-  for (const area of NOTICE_AREA_IDS) if (snapshot && !known.has(area) && readable(snapshot, area)) known.set(area, new Set(reviews(snapshot, area).map(item => item.key)));
+  for (const area of NOTICE_AREA_IDS) {
+    if (!snapshot || !readable(snapshot, area)) continue;
+    const keys = reviews(snapshot, area).map(item => item.key), seen = known.get(area);
+    if (!seen) known.set(area, new Set(keys));
+    else if (areaSetting(area).level !== 'each') for (const key of keys) seen.add(key);
+  }
 });
 
 function tell(title: string, body: string, tag: string, area?: NeedsYouArea): boolean {

@@ -187,6 +187,36 @@ describe('Each new item', () => {
     expect(notices.slice(4).map(n => n.body)).toEqual(['Fictional subject mail:f']);
   });
 
+  it('switching an area to Each new item announces only what arrives after the switch', async () => {
+    vi.resetModules();
+    const { notifyRoutineRun: notify } = await import('./notify-routine');
+    const { notices } = capture();
+    fake.tabs = layout({ mail: 'summary' });
+    const read = (items: NeedsYouItem[]) => { fake.state = { snapshot: snapshot(items), error: null, checking: false }; fake.listeners.forEach(listener => listener()); };
+    read([item('mail:a')]);
+    read([item('mail:b'), item('mail:a')]);
+    notify(mailRun('fictional-before-switch'));
+    expect(notices.map(n => n.body)).toEqual(['2 conversations need you.']);
+    fake.tabs = layout({ mail: 'each' });
+    fake.next = snapshot([item('mail:c'), item('mail:b'), item('mail:a')]);
+    notify(mailRun('fictional-after-switch'));
+    await settle();
+    expect(notices.slice(1).map(n => n.body)).toEqual(['Fictional subject mail:c']);
+  });
+
+  it('masks amounts and account numbers in item titles but keeps dates', async () => {
+    vi.resetModules();
+    const { notifyRoutineRun: notify } = await import('./notify-routine');
+    const { notices } = capture();
+    fake.tabs = layout({ mail: 'each' });
+    fake.state = { snapshot: snapshot([]), error: null, checking: false };
+    fake.listeners.forEach(listener => listener());
+    fake.next = snapshot([item('mail:d', 'Rent review 2026-10-10 and 9/10/2026, due 10/10/2026, ref 12345678, $480 a week')]);
+    notify(mailRun('fictional-dates'));
+    await settle();
+    expect(notices.map(n => n.body)).toEqual(['Rent review 2026-10-10 and 9/10/2026, due 10/10/2026, ref …, … a week']);
+  });
+
   it('after a restart with no earlier read, the first run is only the baseline', async () => {
     vi.resetModules();
     const { notifyRoutineRun: notify } = await import('./notify-routine');
