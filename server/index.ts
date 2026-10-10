@@ -2599,7 +2599,7 @@ loops = new LoopManager({
     // One handler per evaluator (server/workflow-catalog.ts). The spec is checked before a handler runs;
     // a loop without a registered evaluator is refused with a reason.
     return dispatchLoop<LoopExecuteResult>(loop.id, {
-    'bank-references': async () => (await w1Host()).runLoop(detail => loops?.noteRun(run.id, detail)), // W1 host (see BEGIN W1 host)
+    'bank-references': async () => (await w1Host()).runLoop((detail, waiting) => loops?.noteRun(run.id, detail, waiting)), // W1 host (see BEGIN W1 host)
     'weekly-bills': async () => websiteRunContext.runLoop(run.requestId, () => mailWorkspace.withWorkflow(() => runWeeklyBillsWorkflow(run, {
       database: workflowDatabase, workspaceId: workspaceIdentity.id, drafts: billDraftStore,
       authorize: async () => { await checkWebsiteExecution(); await authorizeBillWorkflow(); },
@@ -2609,7 +2609,7 @@ loops = new LoopManager({
       bills: range => sourceBills().snapshot(range),
     }))),
     // REI Suppliers list check: the Refresh from REI read up to its preview; saving waits for the person (server/rei-directory-sync.ts).
-    'rei-supplier-check': async () => (await reiDirectorySync()).checkSuppliers(detail => loops?.noteRun(run.id, detail)),
+    'rei-supplier-check': async () => (await reiDirectorySync()).checkSuppliers((detail, waiting) => loops?.noteRun(run.id, detail, waiting)),
     // REI morning refresh: read-only loop grant in the already signed-in REI session, one Desk apply; never signs in (server/rei-morning-refresh.ts).
     'rei-morning-refresh': async () => { const result = await (await reiMorningRefresh()).run(); commitDesk(desk.snapshot()); noteReiRefresh(result); return result; },
     // W4: reads saved reviewed bills only; no mail, model or browser call.
@@ -2721,6 +2721,8 @@ askLab?.catch(() => {}); // a failed lab start is answered on the next Ask brows
 async function askRuntime() { if (askLab) await askLab; return askBrowserRuntime(); }
 async function currentBankProvider() { return w1Lab ? (await w1Lab).provider : (await import("./bank-provider.ts")).connectedBankProvider(); }
 let w1HostPromise: Promise<import("./w1-host.ts").W1Host> | undefined;
+/** The host once made, for /api/health's synchronous counts (serviceBusy, waitingApprovals); unset: no bank import runs. */
+let w1Loaded: import("./w1-host.ts").W1Host | undefined;
 // One coverage tracker per process: separate instances on the same file would
 // queue writes independently and could lose each other's updates.
 let bankServicesPromise: ReturnType<typeof import("./bank-source-http.ts").bankSourceServices> | undefined;
@@ -2732,7 +2734,7 @@ function w1Host() {
     const [{ createW1Host }, { localDate }, { connectedBankProvider }, { createTenantDirectoryStore }] = await Promise.all([import("./w1-host.ts"), import("./redbark-source.ts"), import("./bank-provider.ts"), import("./tenant-directory.ts")]);
     const services = await bankServices();
     const lab = w1Lab ? await w1Lab : null;
-    return createW1Host({ dataDir: DATA_DIR, coverage: services.coverage, store: bankReferenceStore, provider: lab ? () => lab.provider : connectedBankProvider,
+    return w1Loaded = createW1Host({ dataDir: DATA_DIR, coverage: services.coverage, store: bankReferenceStore, provider: lab ? () => lab.provider : connectedBankProvider,
       today: async () => localDate(new Date(), (await agencySetup.getConfiguration()).settings.timeZone || undefined),
       tenantDirectory: () => createTenantDirectoryStore(workflowDatabase()).freshness(),
       runtime: lab?.runtime ?? browserRuntime, lab, ...(lab ? { load: lab.load, pollMs: 0 } : {}),
@@ -2759,11 +2761,13 @@ async function resumeReiSignInWaits() {
 // ---- BEGIN REI directory refresh (REI Tenants → W1 tenant directory, REI Suppliers → W4 supplier directory). Logic in server/rei-directory-sync.ts. ----
 // Bud reads the list in the work browser under a host-issued read-only grant; the person saves the preview. Same lab as W1.
 let reiDirectoryPromise: Promise<import("./rei-directory-sync.ts").ReiDirectorySync> | undefined;
+/** The refresh once made, for /api/health's synchronous counts; unset: no refresh runs. */
+let reiDirectoryLoaded: import("./rei-directory-sync.ts").ReiDirectorySync | undefined;
 function reiDirectorySync() {
   return reiDirectoryPromise ??= (async () => {
     const [{ createReiDirectorySync }, { createTenantDirectoryStore }] = await Promise.all([import("./rei-directory-sync.ts"), import("./tenant-directory.ts")]);
     const lab = w1Lab ? await w1Lab : null;
-    return createReiDirectorySync({ runtime: lab?.runtime ?? browserRuntime, ...(lab ? { load: lab.load, pollMs: 0 } : {}),
+    return reiDirectoryLoaded = createReiDirectorySync({ runtime: lab?.runtime ?? browserRuntime, ...(lab ? { load: lab.load, pollMs: 0 } : {}),
       browserId: lab?.browserId ?? (async () => { const status = await browserRuntime.status(); return status.state === "ready" ? status.selectedBrowserId : null; }),
       account: () => readReiAccountRef(DATA_DIR),
       tenants: createTenantDirectoryStore(workflowDatabase()), suppliers: supplierDirectory,
@@ -3336,8 +3340,29 @@ const workerAutoSetup = createWorkerAutoSetup({
   log: message => oplog("boot", message),
 });
 
-/** Work an update must not cut short: a turn, a browser task, a held workspace operation, Bud setup. */
-function serviceBusy() { return store.bots.some(bot => bot.busy) || workspaceActivity.active > 0 || recipeTaskStops.size > 0 || installBlocksUpdate(); }
+/** Work an update must not cut short: a turn that is working (not one parked on a card), a scheduled run doing work (not one parked on the person), a bank import
+ * or REI list refresh doing work (person-started or scheduled; not one waiting on an ask or REI's sign-in), an open Ask
+ * browser task (running, waiting at Start for sign-in, paused for sign-in, or a portal read), a held workspace operation, Bud setup. */
+function serviceBusy() {
+  // A turn parked on an approval card waits on the person: waitingApprovals counts its card.
+  return store.bots.some(bot => bot.busy && !watchdog.parkedOnHuman(bot.id)) || workspaceActivity.active > 0 || !!loops?.working ||
+    (w1Loaded?.activity().working ?? 0) > 0 || (reiDirectoryLoaded?.activity().working ?? 0) > 0 ||
+    askTaskTimers.size > 0 || askSignInWaits.size > 0 || recipeTaskStops.size > 0 || installBlocksUpdate();
+}
+/** Bud waiting on a person: cards still waiting in this process (answerLiveRequest's registry; a restart leaves them
+ * stale), a bank import's or REI list refresh's step ask (person-started or scheduled; the only asks a scheduled run
+ * parks on), and an REI refresh's unsaved preview or a person's own REI sign-in. A scheduled REI sign-in wait is
+ * neither this nor busy: it is saved and resumes after a restart. Not
+ * `busy`, so "Restart to update" still works; the automatic restart reads this count. A count only: no ids or content. */
+function waitingApprovals(): number {
+  let waiting = (w1Loaded?.activity().asks ?? 0) + (reiDirectoryLoaded?.activity().asks ?? 0);
+  for (const key of askMessageByRequest.keys()) {
+    const split = key.indexOf(":");
+    try { if (liveRequestCard(key.slice(0, split), key.slice(split + 1))) waiting++; }
+    catch { /* a conversation that cannot be read cannot answer its card either */ }
+  }
+  return waiting;
+}
 /** The one way a waiting card is answered (both respond routes). The request
  * must still be waiting in this process: a persisted card from another client
  * or an earlier process is never a grant. Client scope, rules and read grants
@@ -5861,10 +5886,13 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     // re-read it from disk, so after a manual install they reported the new
     // version while running the old code. The app adopts only a service that
     // sends `runtimeVersion` (electron/update-service-handoff.mjs).
+    //
+    // `busy` holds any update restart; `waitingApprovals` (a count) holds only
+    // the automatic one, so a person can still choose "Restart to update".
     if (method === "GET" && path === "/api/health") {
       if (!localSessionPublished) return json(res, 503, { error: "starting" });
       return json(res, 200, { app: "realbud", pid: process.pid, static: Boolean(STATIC_DIR), instanceId: SERVICE_INSTANCE_ID, controlId: SERVICE_CONTROL.id, version: appVersion(),
-        runtimeVersion: appVersion(), busy: serviceBusy() });
+        runtimeVersion: appVersion(), busy: serviceBusy(), waitingApprovals: waitingApprovals() });
     }
 
     // ── provider instances (model picker) ──

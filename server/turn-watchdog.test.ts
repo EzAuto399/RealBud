@@ -18,6 +18,22 @@ function rig(options: { maxMs?: number; maxTools?: number; maxRepeatedTool?: num
 }
 
 describe("TurnWatchdog", () => {
+  it("says a bot is parked on a person only while every turn it has waits on a card", () => {
+    const { dog } = rig();
+    expect(dog.parkedOnHuman("bot1")).toBe(false);
+    dog.watch("t1", "bot1");
+    expect(dog.parkedOnHuman("bot1")).toBe(false);
+    dog.setWaitingOnHuman("t1", true);
+    expect(dog.parkedOnHuman("bot1")).toBe(true);
+    dog.watch("t2", "bot1");
+    expect(dog.parkedOnHuman("bot1")).toBe(false);
+    dog.settle("t2");
+    expect(dog.parkedOnHuman("bot1")).toBe(true);
+    expect(dog.parkedOnHuman("bot2")).toBe(false);
+    dog.setWaitingOnHuman("t1", false);
+    expect(dog.parkedOnHuman("bot1")).toBe(false);
+  });
+
   it("stalls a silent turn once, and only once", () => {
     const { dog, stalls, tick } = rig();
     dog.watch("t1", "bot1");

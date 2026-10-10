@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadPortalRecipePack, loadShippedPortalRecipePack } from "./portal-recipe-task.ts";
+import { runPortalRecipes } from "./portal-recipe-runner.ts";
 import { createReiDirectorySync, SUPPLIER_BIG_DROP, supplierChanges } from "./rei-directory-sync.ts";
 import { createSupplierDirectory } from "./supplier-directory.ts";
 import { createTenantDirectoryStore } from "./tenant-directory.ts";
@@ -21,6 +22,11 @@ import { matchSender } from "../shared/supplier-directory.ts";
 vi.mock("./portal-recipe-task.ts", async importOriginal => {
   const real = await importOriginal<typeof import("./portal-recipe-task.ts")>();
   return { ...real, loadPortalRecipePack: vi.fn(real.loadPortalRecipePack), loadShippedPortalRecipePack: vi.fn(real.loadShippedPortalRecipePack) };
+});
+// The real runner, wrapped so a test can put an ask before a read (the fictional grid raises none by itself).
+vi.mock("./portal-recipe-runner.ts", async importOriginal => {
+  const real = await importOriginal<typeof import("./portal-recipe-runner.ts")>();
+  return { ...real, runPortalRecipes: vi.fn(real.runPortalRecipes) };
 });
 
 const dirs: string[] = [], dbs: WorkflowDatabase[] = [];
@@ -157,6 +163,41 @@ describe("refresh from REI (fictional portal)", () => {
     expect((await f.suppliers.read()).revision).toBe(1);
   });
 
+  // What an update restart reads (server/index.ts /api/health): `working` holds every restart, `asks` only the automatic one.
+  it("a refresh reading REI counts as working, at an ask as one approval, and at REI's sign-in as neither", async () => {
+    const f = await fixture();
+    await f.lab.handle({ action: "sign-in" });
+    const { runPortalRecipes: real } = await vi.importActual<typeof import("./portal-recipe-runner.ts")>("./portal-recipe-runner.ts");
+    let go = () => {};
+    const held = new Promise<void>(resolve => { go = resolve; });
+    vi.mocked(runPortalRecipes).mockImplementationOnce(async options => {
+      await held;
+      await options.approve!("browser_download", {}, "Fictional: allow a step in REI", options.signal!);
+      return real(options);
+    });
+    expect(f.sync.activity()).toEqual({ working: 0, asks: 0 });
+    await f.call("/api/rei-directory/runs", { kind: "tenants" });
+    expect(f.sync.activity()).toEqual({ working: 1, asks: 0 });
+    go();
+    let now = await f.settle();
+    expect(now.run!.ask).toMatchObject({ tool: "browser_download" });
+    expect(f.sync.activity()).toEqual({ working: 0, asks: 1 });
+    await f.call(`/api/rei-directory/runs/${now.run!.id}/answer`, { requestId: now.run!.ask!.requestId, allowed: true });
+    now = await f.finish();
+    expect(now.run!.phase, now.run!.message ?? "").toBe("preview");
+    // A preview that can still be saved waits on the person: a restart would drop it.
+    expect(f.sync.activity()).toEqual({ working: 0, asks: 1 });
+    await f.call(`/api/rei-directory/runs/${now.run!.id}/stop`, {});
+    expect(f.sync.activity()).toEqual({ working: 0, asks: 0 });
+    // Signed out: a person's own sign-in waits on them too (it isn't saved, unlike a scheduled wait).
+    await f.lab.handle({ action: "handover" }); await f.lab.handle({ action: "sign-out" });
+    now = await f.start("tenants");
+    expect(now.run!.signIn).toMatch(/^rei-dir-/);
+    expect(f.sync.activity()).toEqual({ working: 0, asks: 1 });
+    await f.call(`/api/rei-directory/runs/${now.run!.id}/stop`, {});
+    expect(f.sync.activity()).toEqual({ working: 0, asks: 0 });
+  });
+
   it("refuses before the browser: no saved REI account, or a recipe that needs more than reading", async () => {
     const none = await fixture({ account: false });
     expect((await none.start("tenants")).run!.message).toMatch(/Save the REI business code/);
@@ -216,6 +257,24 @@ describe("scheduled Supplier list check (fictional portal)", () => {
     const directory = await f.suppliers.read();
     expect(matchSender(directory, "roof@fictional-roofing.test")).toEqual({ kind: "unlisted" });
     expect(matchSender(directory, "paint@fictional-painting.test")).toEqual({ kind: "listed", supplierRef: "FS-PAINT" });
+  });
+
+  it("waiting at REI's sign-in is neither working nor an approval, and tells Schedule it waits on the person", async () => {
+    const f = await fixture(), notes: Array<[string, boolean | undefined]> = [];
+    await f.lab.handle({ action: "handover" });
+    const check = f.sync.checkSuppliers((detail, waiting) => { notes.push([detail, waiting]); });
+    const now = await f.settle();
+    expect(now.run).toMatchObject({ origin: "schedule", signIn: expect.stringMatching(/^rei-dir-/) });
+    expect(f.sync.activity()).toEqual({ working: 0, asks: 0 });
+    expect(notes.at(-1)).toEqual([expect.stringMatching(/^Sign in to REI Cloud so Bud can check the supplier list/), true]);
+    await f.lab.handle({ action: "sign-in" });
+    await f.finish();
+    expect(await check).toMatchObject({ status: "awaiting-approval" });
+    // Its changed list waits for the person's review, which a restart would drop.
+    expect(f.sync.activity()).toEqual({ working: 0, asks: 1 });
+    // Only the sign-in lines waited on the person; reading REI did not.
+    expect(notes.filter(([, waiting]) => waiting).every(([detail]) => /Sign in to REI Cloud/.test(detail))).toBe(true);
+    expect(notes).toContainEqual(["Reading REI's supplier list. Nothing in REI changes.", false]);
   });
 
   it("holds a big drop with a warning until the person confirms it", async () => {

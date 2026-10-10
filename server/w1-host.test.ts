@@ -278,6 +278,59 @@ describe("W1 host", () => {
     expect(await f.lab.handle({ action: "status" })).toMatchObject({ uploads: 0, effects: [] });
   });
 
+  // What an update restart reads (server/index.ts /api/health): `working` holds every restart, `asks` only the automatic one.
+  it("a person-started advance doing work counts as working, at an ask as one approval, and at REI's sign-in as neither", windowsAdmissionTimeout(255), async () => {
+    let gate: Promise<void> | null = null, release = () => {}, signedIn = () => {};
+    const f = await fixture(made => ({
+      today: async () => { await gate; return TODAY; },
+      openForSignIn: async () => { await new Promise<void>(resolve => { signedIn = resolve; }); await made.handle({ action: "sign-in" }); return { outcome: "signed_in" as const, origin: "https://rei-mock.fictional.test" }; } }));
+    await f.configure();
+    expect(f.host.activity()).toEqual({ working: 0, asks: 0 });
+    await f.call("/api/w1/runs/start");
+    let now = await f.settle();
+    await f.review(now.run!.fetch!.batchId);
+    gate = new Promise(resolve => { release = resolve; });
+    await f.call(`/api/w1/runs/${now.run!.id}/advance`, "POST", { expectedRevision: now.run!.revision });
+    expect(f.host.activity()).toEqual({ working: 1, asks: 0 });
+    release();
+    // Waiting for the person to sign in to REI: neither.
+    await vi.waitFor(async () => expect((await f.host.status()).signIn).toBeTruthy(), { timeout: 5_000 });
+    expect(f.host.activity()).toEqual({ working: 0, asks: 0 });
+    signedIn();
+    now = await f.settle();
+    expect(now.ask, String(now.note)).not.toBeNull();
+    expect(f.host.activity()).toEqual({ working: 0, asks: 1 });
+    now = await f.answer();
+    expect(now.run, String(now.note)).toMatchObject({ step: "handoff" });
+    expect(f.host.activity()).toEqual({ working: 0, asks: 0 });
+  });
+
+  it("a scheduled run waiting at REI's sign-in is neither working nor an approval; its upload ask is one", windowsAdmissionTimeout(255), async () => {
+    let signedIn = () => {};
+    const f = await fixture(made => ({
+      openForSignIn: async () => { await new Promise<void>(resolve => { signedIn = resolve; }); await made.handle({ action: "sign-in" }); return { outcome: "signed_in" as const, origin: "https://rei-mock.fictional.test" }; } }));
+    await f.configure();
+    await f.call("/api/w1/runs/start");
+    const reviewed = await f.settle();
+    await f.review(reviewed.run!.fetch!.batchId);
+    const notes: Array<[string, boolean | undefined]> = [];
+    const loop = f.host.runLoop((detail, waiting) => { notes.push([detail, waiting]); });
+    await vi.waitFor(async () => expect((await f.host.status()).signIn).toBeTruthy(), { timeout: 5_000 });
+    expect(f.host.activity()).toEqual({ working: 0, asks: 0 });
+    // Schedule hears that the run waits on the person (server/routines.ts noteRun), so its clock is not `working` either.
+    expect(notes.at(-1)).toEqual([expect.stringMatching(/^Sign in to REI Cloud so Bud can finish the bank import/), true]);
+    signedIn();
+    await vi.waitFor(async () => expect((await f.host.status()).ask).toBeTruthy(), { timeout: 5_000 });
+    expect(f.host.activity()).toEqual({ working: 0, asks: 1 });
+    expect(notes.at(-1)).toEqual([expect.stringMatching(/^Waiting for/), true]);
+    const answered = await f.answer();
+    expect(answered.tools).toContain("browser_upload");
+    expect(await loop).toMatchObject({ status: "awaiting-approval" });
+    expect(f.host.activity()).toEqual({ working: 0, asks: 0 });
+    // Each answered ask said the run works again.
+    expect(notes).toContainEqual(["Allowed. Uploading the reviewed bank file to REI.", undefined]);
+  });
+
   it("self-serve REI sign-in: opens REI for the person and continues once signed in; wrong account or a timeout stays put", windowsAdmissionTimeout(312), async () => {
     const outcomes: Array<"signed_in" | "stopped" | "timed_out" | "wrong_account"> = ["timed_out", "wrong_account", "signed_in"];
     const calls: Array<{ site: string; reason: string; signal: boolean }> = [];

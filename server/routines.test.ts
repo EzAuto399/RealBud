@@ -257,6 +257,38 @@ describe("LoopManager runs", () => {
     await manager.tick();
   });
 
+  it("counts a running run as working, not one parked on the person (an ask or REI sign-in), and neither once it settles", async () => {
+    // The service's update gate reads `working` (serviceBusy in server/index.ts, /api/health). A parked run's ask is counted by
+    // its own host (w1-host.ts, rei-directory-sync.ts activity()), and a sign-in wait counts nowhere.
+    let finish!: (result: { ok: boolean; detail: string }) => void;
+    let runId = "";
+    const manager = track(new LoopManager({ file: tempFile(), runDeadlineMs: 60_000, execute: (_loop, run) => {
+      runId = run.id;
+      return new Promise((resolve) => { finish = resolve; });
+    } }));
+    // A note also releases the clock's tick for other loops; let it finish before reading.
+    const state = async () => { await new Promise((resolve) => setTimeout(resolve, 20)); return { busy: manager.busy, working: manager.working }; };
+    expect(await state()).toEqual({ busy: false, working: false });
+    const run = manager.runNow("rei-supplier-check")!;
+    await vi.waitFor(() => expect(runId).toBe(run.id));
+    expect(await state()).toEqual({ busy: true, working: true });
+    // A note of what it is doing is still work.
+    manager.noteRun(run.id, "Reading REI's supplier list. Nothing in REI changes.");
+    expect(await state()).toEqual({ busy: true, working: true });
+    // Parked on the person: not work an update must wait for. Private backup (`busy`) still waits.
+    manager.noteRun(run.id, "Waiting for you to sign in to REI Cloud.", true);
+    expect(await state()).toEqual({ busy: true, working: false });
+    expect(manager.listRuns().find((row) => row.id === run.id)).toMatchObject({ status: "running", detail: "Waiting for you to sign in to REI Cloud." });
+    // Resumed work leaves the parked set, then parks again on the same line.
+    manager.noteRun(run.id, "Reading REI's supplier list. Nothing in REI changes.");
+    expect(await state()).toEqual({ busy: true, working: true });
+    manager.noteRun(run.id, "Reading REI's supplier list. Nothing in REI changes.", true);
+    expect(await state()).toEqual({ busy: true, working: false });
+    finish({ ok: true, detail: "Prepared." });
+    await vi.waitFor(() => expect(manager.listRuns().find((row) => row.id === run.id)?.status).toBe("completed"));
+    expect(await state()).toEqual({ busy: false, working: false });
+  });
+
   it("runs a due scheduled occurrence once, and not again", async () => {
     // 2026-08-18 is a Tuesday. The app is open: watch the clock cross 07:30.
     let now = new Date(2026, 7, 18, 7, 29, 0).getTime();
