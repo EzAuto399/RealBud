@@ -4,6 +4,8 @@ import { lstat, open, readFile, unlink, readdir } from 'node:fs/promises';
 import { basename, dirname, join, parse, resolve } from 'node:path';
 import type { LoopSchedule, Recipe } from '../shared/contracts.ts';
 import { CUSTOMER_PACK_FILES, type CustomerPackOfficeSettings, type OfficePacksSource, type OfficePacksView } from '../shared/customer-packs.ts';
+import { AREA_LAYOUTS, DESK_LAYOUTS, DESK_LAYOUT_LABELS, NOTICE_LEVELS, type DeskLayoutName, type NoticeLevel } from '../shared/desk-areas.ts';
+import { areaForWorkflow } from './desk-preset.ts';
 import { BUILT_IN_MISMATCH_MESSAGE, PACK_PUBLISHER_KEYS, UNSIGNED_PACK_MESSAGE, verifyPackSignature, type PackPublisherKey } from './pack-signing.ts';
 import { parsePortalRecipePack } from './portal-recipe.ts';
 import type { CustomerPack, CustomerPackCheck, CustomerPackCheckId, CustomerPackInstallation, CustomerPackPreview, CustomerPackArchivePreview, CustomerPackArchivedHistory, CustomerPackHistoryItem, PackSkillProposal, PackSkillRevisionMetadata, PackSkillHistorySummary, PackSkillArchivePreview, PackSkillArchiveConfirmation, PackSkillHistoryPage, PackSkillHistorySelection, PackSkillRevertPreview } from '../shared/customer-packs.ts';
@@ -83,6 +85,24 @@ function validatePackFiles(value: unknown): CustomerPack['files'] {
   }
   return Object.keys(out).length ? out : undefined;
 }
+/** Display-only Desk preset: each area names a different workflow of this pack that
+ * this core can show, with an approved layout its area renders. */
+function validatePackDesk(value: unknown, workflows: CustomerPack['workflows']): NonNullable<CustomerPack['desk']> {
+  const desk = fields(value, ['areas']), seen = new Set<string>();
+  if (!Array.isArray(desk.areas) || !desk.areas.length || desk.areas.length > 8) return fail('A pack’s Desk preset needs one to eight work areas.');
+  return { areas: desk.areas.map(raw => {
+    const area = fields(raw, ['workflow', 'title', 'layout', 'notify']), workflow = workflows.find(item => item.id === area.workflow);
+    if (!workflow || seen.has(workflow.id)) return fail('Each Desk work area must name a different workflow in this pack.');
+    seen.add(workflow.id);
+    const id = areaForWorkflow(workflow.id), layout = area.layout as DeskLayoutName;
+    if (!id) return fail(`This RealBud can't show the ${workflow.title} workflow on Desk yet.`);
+    if (!DESK_LAYOUTS.includes(layout)) return fail(`Unknown Desk layout${typeof layout === 'string' && /^[a-z0-9-]{1,40}$/.test(layout) ? ` ${layout}` : ''}.`);
+    if (!AREA_LAYOUTS[id].includes(layout)) return fail(`This RealBud can't show the ${workflow.title} workflow as a ${DESK_LAYOUT_LABELS[layout]} on Desk.`);
+    if (!NOTICE_LEVELS.includes(area.notify as NoticeLevel)) return fail('Choose a Desk notice level: each, summary or off.');
+    if (!plain(area.title, 40) || /[\u202a-\u202e\u2066-\u2069]/.test(area.title as string)) return fail('Give each Desk work area a plain title of up to 40 characters.');
+    return { workflow: workflow.id, title: area.title as string, layout, notify: area.notify as NoticeLevel };
+  }) };
+}
 export function validateCustomerPack(value: unknown): CustomerPack {
   const serialized = JSON.stringify(value);
   if (!serialized || Buffer.byteLength(serialized) > 500_000) return fail('Choose a customer pack smaller than 500 KB.');
@@ -97,7 +117,7 @@ export function validateCustomerPack(value: unknown): CustomerPack {
     if (item && typeof item === 'object') values.push(...Object.values(item));
   }
   if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY|\bsk-[A-Za-z0-9_-]{20,}|(?:api[_-]?key|access[_-]?token|password)\s*[=:]\s*["']?[A-Za-z0-9_+\/-]{12,}|(?:\/Users\/|\/home\/|\b[A-Za-z]:[\\/])/i.test(JSON.stringify(unsigned))) return fail('Remove credentials and machine-specific paths before sharing a pack.');
-  const row = fields(value, ['format', 'version', 'id', 'revision', 'title', 'workflows', 'recipes', 'skills', 'dependencies', 'files', 'signature']);
+  const row = fields(value, ['format', 'version', 'id', 'revision', 'title', 'workflows', 'recipes', 'skills', 'dependencies', 'files', 'signature', 'desk']);
   if (row.format !== 'realbud-customer-pack' || row.version !== 1 || !Number.isSafeInteger(row.revision) || Number(row.revision) < 1) return fail('Unsupported customer pack format or revision.');
   const dependencies = fields(row.dependencies, ['runtime', 'mode', 'schedules', 'permissions']);
   if (dependencies.runtime !== 'hermes-property' || dependencies.mode !== 'supplied-source-preparation' || dependencies.schedules !== 'off' || dependencies.permissions !== 'local-review-required') return fail('This importer accepts preparation plans only. Schedules and new execution permissions cannot be imported.');
@@ -127,15 +147,16 @@ export function validateCustomerPack(value: unknown): CustomerPack {
   });
   if (recipes.some(recipe => !workflows.some(workflow => workflow.recipeIds.includes(recipe.id)))) return fail('Every recipe must belong to a named business workflow.');
   const files = row.files === undefined ? undefined : validatePackFiles(row.files);
+  const desk = row.desk === undefined ? undefined : validatePackDesk(row.desk, workflows);
   let signature: CustomerPack['signature'];
   if (rawSignature !== undefined) {
     const sig = fields(rawSignature, ['algorithm', 'keyId', 'value']);
     if (sig.algorithm !== 'ed25519' || typeof sig.keyId !== 'string' || !/^[a-z0-9][a-z0-9.-]{0,63}$/.test(sig.keyId) || typeof sig.value !== 'string' || !/^[A-Za-z0-9+/]{86}==$/.test(sig.value)) return fail(UNSIGNED_PACK_MESSAGE);
     signature = { algorithm: 'ed25519', keyId: sig.keyId, value: sig.value };
   }
-  // A pack without files or a signature keeps its exact earlier bytes and digest.
+  // A pack without files, a signature or a Desk preset keeps its exact earlier bytes and digest.
   return { format: 'realbud-customer-pack', version: 1, id: safeId(row.id), revision: Number(row.revision), title: text(row.title, 120), recipes, skills, workflows, dependencies: { runtime: 'hermes-property', mode: 'supplied-source-preparation', schedules: 'off', permissions: 'local-review-required' },
-    ...(files ? { files } : {}), ...(signature ? { signature } : {}) };
+    ...(files ? { files } : {}), ...(signature ? { signature } : {}), ...(desk ? { desk } : {}) };
 }
 
 /** Stable identity of an instruction change: never a runtime path, so relocating or recreating the worker folder keeps it valid. */
@@ -1075,6 +1096,8 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
       }
     },
     async list() { const entries = await journals(); return { installations: await Promise.all(Object.values(entries).map(status)) }; },
+    /** The installed manifest of a pack, or null. Read only, for the office's Desk preset (server/desk-preset.ts). */
+    async installedPack(packId: string): Promise<CustomerPack | null> { const entry = (await journals())[safeId(packId)]; return entry?.phase === 'installed' ? entry.pack : null; },
     async clientExport(packId: string) { const entry = (await journals())[safeId(packId)]; if (!entry) return fail('The installed pack was not found.', 404); return clientExportPack(entry.pack, await options.officeSettings?.()); },
     async handle(route: string, method: string, body?: unknown): Promise<{ status: number; body: unknown } | null> {
       if (!route.startsWith('/api/customer-packs')) return null;

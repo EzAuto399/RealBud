@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual as same } from 'node:util';
 import type { Recipe } from '../shared/contracts.ts';
-import type { CustomerPack, CustomerPackRecipe, CustomerPackChangePreview } from '../shared/customer-packs.ts';
+import type { CustomerPack, CustomerPackRecipe, CustomerPackChangePreview, PackDeskArea } from '../shared/customer-packs.ts';
 import { AGENCY_RECIPE_ROLES, workflowRecipeId } from '../shared/agency-workflow-packs.ts';
+import { AREA_WORKFLOW, DESK_LAYOUT_LABELS, NOTICE_LEVEL_LABELS, coreOfficeDesk } from '../shared/desk-areas.ts';
 import { validateRecipe } from './recipes.ts';
 import { validateSkillOverride, validateSkillArchiveJournal, type SkillArchiveHead, type SkillArchiveIntent } from './customer-pack-skill-history.ts';
 
@@ -110,6 +111,25 @@ const transitionDigest = (change: Pick<PackTransition,'action'|'fromGeneration'|
   packChangeHash({ action:change.action,fromGeneration:change.fromGeneration,fromDigest:change.fromDigest,scope:change.scope,target:change.target,
     before:{...change.before,savedAt:undefined},recipes:change.recipes,artifacts:change.artifacts,retiredRecipeIds:change.retiredRecipeIds });
 
+/** The office's default Desk areas a pack sets: its `desk.areas`, else the core's. */
+const deskAreas = (pack: CustomerPack): PackDeskArea[] => pack.desk?.areas ??
+  coreOfficeDesk().areas.flatMap(area => AREA_WORKFLOW[area.id] && area.notify ? [{ workflow: AREA_WORKFLOW[area.id]!, title: area.title, layout: area.layout, notify: area.notify }] : []);
+/** Plain lines for how the office's default Desk changes between two pack versions. */
+export function deskChanges(installed: CustomerPack, target: CustomerPack): string[] {
+  const before = deskAreas(installed), after = deskAreas(target), lines: string[] = [];
+  for (const area of after) {
+    const was = before.find(item => item.workflow === area.workflow);
+    if (!was) { lines.push(`Adds the ${area.title} tab (${DESK_LAYOUT_LABELS[area.layout]})`); continue; }
+    if (was.title !== area.title) lines.push(`Renames the ${was.title} tab to ${area.title}`);
+    if (was.layout !== area.layout) lines.push(`${area.title} layout: ${DESK_LAYOUT_LABELS[was.layout]} → ${DESK_LAYOUT_LABELS[area.layout]}`);
+    if (was.notify !== area.notify) lines.push(`${area.title} notices: ${NOTICE_LEVEL_LABELS[was.notify]} → ${NOTICE_LEVEL_LABELS[area.notify]}`);
+  }
+  for (const area of before) if (!after.some(item => item.workflow === area.workflow)) lines.push(`Removes the ${area.title} tab`);
+  const kept = (areas: PackDeskArea[], other: PackDeskArea[]) => areas.filter(area => other.some(item => item.workflow === area.workflow)).map(area => area.workflow).join();
+  if (kept(before, after) !== kept(after, before)) lines.push('Changes the order of the Desk tabs');
+  return lines;
+}
+
 export async function previewPackChange(entry: PackUpgradeState, targetPack: CustomerPack, allEntries: PackUpgradeState[], deps: Dependencies,
   rollback?: PackSnapshot): Promise<{ preview: CustomerPackChangePreview; change: PackTransition }> {
   const conflicts: string[] = [];
@@ -181,7 +201,7 @@ export async function previewPackChange(entry: PackUpgradeState, targetPack: Cus
     previewDigest:change.previewDigest,...(rollback ? {rollbackRevision:rollback.generation} : {}),recipes:displayed,
     skills:[...new Set([...entry.pack.skills.map(s=>s.id),...targetPack.skills.map(s=>s.id)])].map(id=>({id,
       action:!targetPack.skills.some(s=>s.id===id) ? 'retire' : !entry.pack.skills.some(s=>s.id===id) ? 'add' : artifacts.some(a=>a.key.endsWith(`:${id}`)&&a.before!==a.after) ? 'update' : 'preserve',overrideKept:!!overrides[id]})),
-    instructions:artifacts.filter(a=>a.before!==a.after),conflicts,canApply:conflicts.length===0 } };
+    instructions:artifacts.filter(a=>a.before!==a.after),desk:deskChanges(entry.pack,targetPack),conflicts,canApply:conflicts.length===0 } };
 }
 
 export function checkPackRecipeStage(change: PackTransition, current: Recipe[]): 'before' | 'paused' | 'after' {
