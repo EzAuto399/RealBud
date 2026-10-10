@@ -11,7 +11,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
-import { readSessionToken, primeBrowserSession } from './local-session.mjs';
+import { readSessionToken, primeBrowserSession, enterSampleDeskForQa } from './local-session.mjs';
 
 assert.ok(Number(process.versions.node.split('.')[0]) >= 24, 'Use Node 24 or later.');
 assert.ok(process.env.PLAYWRIGHT_MODULE, 'Set PLAYWRIGHT_MODULE to an installed Playwright module.');
@@ -23,7 +23,7 @@ assert.ok(!existsSync(output), 'Choose a fresh QA_OUTPUT; earlier evidence is pr
 mkdirSync(output, { recursive: true });
 const scratch = mkdtempSync(join(realpathSync(tmpdir()), 'fictional-sidebar-refinement-'));
 const data = join(scratch, 'data'); mkdirSync(data, { mode: 0o700 });
-const sourcePaths = ['src/components/Sidebar.tsx', 'src/components/WorkdayPulse.tsx', 'src/components/YouPage.tsx', 'src/components/you/WorkspaceNextStep.tsx', 'src/components/WorkspaceTabsManager.tsx', 'src/lib/use-dialog-keyboard.ts', 'src/sidebar-utilities.css', 'src/workspace-tabs.css', 'src/styles.css', 'scripts/qa-sidebar-refinement.mjs'];
+const sourcePaths = ['src/components/Sidebar.tsx', 'src/components/shell/ContextSidebar.tsx', 'src/components/WorkdayPulse.tsx', 'src/components/YouPage.tsx', 'src/components/you/WorkspaceNextStep.tsx', 'src/components/WorkspaceTabsManager.tsx', 'src/lib/use-dialog-keyboard.ts', 'src/sidebar-utilities.css', 'src/workspace-tabs.css', 'src/styles.css', 'scripts/qa-sidebar-refinement.mjs'];
 const sourceHashes = () => Object.fromEntries(sourcePaths.map(path => [path, createHash('sha256').update(readFileSync(join(root, path))).digest('hex')]));
 const sourcesAtStart = sourceHashes();
 const checks = [], errors = [], deniedOrigins = [], apiCalls = [], measurements = {}, screenshots = [], cleanupErrors = [];
@@ -54,6 +54,9 @@ const fits = async locator => {
 const focused = locator => locator.evaluate(element => element === document.activeElement);
 const screenshot = async name => { await page.screenshot({ path: join(output, name), animations: 'disabled' }); screenshots.push(name); };
 const nav = () => page.getByRole('navigation', { name: 'Main navigation', exact: true });
+// Saved views sit in the context sidebar beside the rail (src/components/shell/ContextSidebar.tsx, hidden below 960px);
+// the rail keeps only the recovery entry.
+const savedViewsNav = () => page.getByRole('navigation', { name: 'Saved views', exact: true });
 const workspace = () => page.locator('aside.rb-sidebar').getByRole('button', { name: 'Workspace', exact: true });
 const overview = () => page.getByRole('region', { name: 'Workspace overview', exact: true });
 const openOverview = async () => {
@@ -81,6 +84,8 @@ const openSavedViews = async () => {
 const refreshViews = async () => {
   const read = page.waitForResponse(response => new URL(response.url()).pathname === '/api/workspace-tabs' && response.request().method() === 'GET');
   await page.getByRole('button', { name: 'Refresh views', exact: true }).click(); await read;
+  // The window also rereads on the revision the API write announced (src/lib/workspace-tabs.tsx); wait until no read is in flight.
+  await page.getByText('Loading saved views…', { exact: true }).waitFor({ state: 'hidden' });
 };
 const view = (id, label, kind, filter, visible = true) => ({ id, label, visible, view: { kind, filter } });
 
@@ -130,7 +135,18 @@ try {
   await page.goto(uiBase);
   await page.getByLabel('Your name', { exact: true }).fill('Fictional Sidebar Reviewer');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
+  // First run has no sample-desk exit: the QA helper completes it as that button did and passes the office-link screen.
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
+  await enterSampleDeskForQa(page);
+  // Work's composer opens only on a linked computer whose Bud is ready (setup's Ask gate, src/lib/setup-sequence.ts).
+  // From here on, fictional browser-side replies say so, as qa-setup-stages' ready stage does.
+  await context.route('**/api/office-link', route => route.fulfill({ status: 200, contentType: 'application/json',
+    body: JSON.stringify({ state: 'linked', label: 'Fictional Sidebar computer', agencyLabel: 'Fictional Harbour Agency', lastReportedAt: '2026-10-08T00:00:00.000Z' }) }));
+  await context.route('**/api/hermes', async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json(), ready: true, readyOnce: true, restartRequired: false } });
+  });
+  await page.reload(); await page.getByRole('heading', { name: 'Desk', exact: true }).waitFor();
   await nav().waitFor(); assert.equal((await request('/api/onboarding')).stage, 'complete');
   await until(async () => !(await workspace().innerText()).includes('Loading your desk'), 'The status guide reads the actual disposable book');
   assert.equal(await overview().isVisible(), false);
@@ -160,7 +176,7 @@ try {
   const initialViews = await views();
   assert.equal(initialViews.tabs.length, 2);
   await page.getByRole('heading', { name: 'Fictional bills review', exact: true }).waitFor();
-  await nav().getByRole('button', { name: 'Fictional waiting work', exact: true }).waitFor();
+  await savedViewsNav().getByRole('button', { name: 'Fictional waiting work', exact: true }).waitFor();
   const managerHash = new URL(page.url()).hash;
   assert.equal(managerHash, '#/views');
   await openOverview();
@@ -172,7 +188,7 @@ try {
   assert.deepEqual(await views(), initialViews);
   record('API-seeded views appear in the sidebar; Workspace opens Connected apps and its See saved views button returns to the same saved views without changing them');
 
-  await nav().getByRole('button', { name: 'Ask', exact: true }).click();
+  await nav().getByRole('button', { name: 'Work', exact: true }).click();
   const composer = page.locator('.ask-composer textarea').first();
   await composer.fill('Fictional unfinished sidebar check — do not send.');
   const askHash = new URL(page.url()).hash;
@@ -213,10 +229,10 @@ try {
   const hiddenRow = main.getByRole('listitem').filter({ has: page.getByRole('heading', { name: 'Fictional waiting reply', exact: true }) });
   await hiddenRow.getByText('Hidden', { exact: true }).waitFor();
   assert.ok(await hiddenRow.getByRole('button', { name: 'Open Fictional waiting reply', exact: true }).isDisabled());
-  assert.equal(await nav().getByRole('button', { name: 'Fictional waiting reply', exact: true }).count(), 0);
+  assert.equal(await savedViewsNav().getByRole('button', { name: 'Fictional waiting reply', exact: true }).count(), 0);
   await putViews(tabs => [...tabs].reverse().map(tab => ({ ...tab, visible: true })));
   await refreshViews();
-  await nav().getByRole('button', { name: 'Fictional waiting reply', exact: true }).waitFor();
+  await savedViewsNav().getByRole('button', { name: 'Fictional waiting reply', exact: true }).waitFor();
   assert.deepEqual(await main.getByRole('listitem').getByRole('heading').allInnerTexts(), ['Fictional bills review', 'Fictional waiting reply']);
   assert.ok(!(await main.getByRole('button', { name: 'Open Fictional waiting reply', exact: true }).isDisabled()));
   record('Saved views is read-only (no Add, Edit, More actions, Customize desk or View options); API rename, hide, show and reorder reach the list, the Hidden marker and the sidebar after Refresh');
@@ -246,7 +262,7 @@ try {
   record('The 680px compact rail retains the reachable Workspace button; its overview stays within the viewport');
 
   await page.setViewportSize({ width: 390, height: 844 });
-  for (const label of ['Desk', 'Ask', 'Schedule']) {
+  for (const label of ['Desk', 'Work', 'Schedule']) {
     await fits(nav().getByRole('button', { name: label, exact: true }));
   }
   await fits(workspace());
