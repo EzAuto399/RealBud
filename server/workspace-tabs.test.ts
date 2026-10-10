@@ -191,6 +191,23 @@ describe('customizable Desk layout', () => {
     expect(stale?.status).toBe(409);
     expect((await a.read()).state?.desk.sections).toEqual(custom());
   });
+  it('announces every saved write once, marks only Bud\'s, and never announces a refused one', async () => {
+    const a = await fixture();
+    const heard: unknown[] = [];
+    const handler = createWorkspaceTabsHandler({ directory: a.directory, workspaceId: a.workspaceId, onSaved: change => heard.push(change) });
+    const put = (body: unknown, by?: 'bud') => handler.handle('/api/workspace-tabs', 'PUT', body, by);
+    expect(await handler.simpleDeskIfNeverCustomized()).toBe(true);
+    expect((await put({ version: 2, expectedRevision: 1, tabs: [], desk: { sections: custom() } }, 'bud'))?.status).toBe(200);
+    expect((await put({ version: 2, expectedRevision: 1, tabs: [], desk: { sections: custom() } }))?.status).toBe(409);
+    expect((await put({ version: 2, expectedRevision: 2, tabs: [], desk: { sections: [] } }))?.status).toBe(400);
+    expect((await handler.handle('/api/workspace-tabs/revert', 'POST', { expectedRevision: 2, toRevision: 1 }))?.status).toBe(200);
+    expect((await handler.handle('/api/workspace-tabs/reset', 'POST', { expectedRevision: 3, confirm: true }))?.status).toBe(200);
+    expect(heard).toEqual([{ revision: 1 }, { revision: 2, by: 'bud' }, { revision: 3 }, { revision: 4 }]);
+    // A listener that throws never changes the saved outcome.
+    const throwing = createWorkspaceTabsHandler({ directory: a.directory, workspaceId: a.workspaceId, onSaved: () => { throw new Error('closed stream'); } });
+    expect((await throwing.handle('/api/workspace-tabs', 'PUT', { version: 1, expectedRevision: 4, tabs: [tab] }))?.status).toBe(200);
+    expect((await a.read()).state?.tabs).toEqual([tab]);
+  });
   it('keeps the Desk layout when saved view shortcuts are reset', async () => {
     const a = await fixture();
     await a.call('PUT', { version: 2, expectedRevision: 0, tabs: [tab], desk: { sections: custom() } });

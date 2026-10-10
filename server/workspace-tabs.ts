@@ -14,9 +14,14 @@ function fields(value: unknown, allowed: string[]): Record<string, unknown> {
   return value;
 }
 
+/** Who made a saved change, as the open windows are told. Only the host's Bud binding passes "bud". */
+export type WorkspaceTabsChange = { revision: number; by?: 'bud' };
+
 /** One private service owns a DATA_DIR. Queue all windows/store instances before
- * rereading revisions. Office membership cannot change this immutable binding. */
-export function createWorkspaceTabsHandler(options: { directory: string; workspaceId: string; now?: () => number }) {
+ * rereading revisions. Office membership cannot change this immutable binding.
+ * `onSaved` hears every successful write (routes, Bud, boot migrations) so open
+ * windows reread at once. */
+export function createWorkspaceTabsHandler(options: { directory: string; workspaceId: string; now?: () => number; onSaved?: (change: WorkspaceTabsChange) => void }) {
   const now = options.now ?? Date.now;
   if (!/^[a-f0-9-]{36}$/i.test(options.workspaceId)) throw new Error('A private workspace identity is required.');
   const directory = resolve(options.directory, 'workspace-views');
@@ -54,10 +59,11 @@ export function createWorkspaceTabsHandler(options: { directory: string; workspa
     void next.finally(() => { if (queues.get(path) === next) queues.delete(path); }).catch(() => {});
     return next;
   }
-  async function save(state: WorkspaceTabs) {
+  async function save(state: WorkspaceTabs, by?: 'bud') {
     if (!validWorkspaceRevision(state.revision)) throw fail(409, 'tabs_revision_exhausted', 'Saved views need service recovery before further changes. Your business records are unchanged.');
     if (Buffer.byteLength(JSON.stringify(state)) > MAX_BYTES - 200) throw fail(400, 'invalid_tabs', 'Saved views are too large.');
     await writePrivateJson(path, { workspaceId: options.workspaceId, state });
+    try { options.onSaved?.({ revision: state.revision, ...(by ? { by } : {}) }); } catch { /* an announcement never changes the saved outcome */ }
     return { state, recovery: null } satisfies WorkspaceTabsResponse;
   }
   return {
@@ -87,7 +93,8 @@ export function createWorkspaceTabsHandler(options: { directory: string; workspa
         return true;
       });
     },
-    async handle(route: string, method: string, body?: unknown): Promise<{ status: number; body: unknown } | null> {
+    /** `by` is set only by the host's binding for Bud's own tools, never from a request. */
+    async handle(route: string, method: string, body?: unknown, by?: 'bud'): Promise<{ status: number; body: unknown } | null> {
       if (route !== '/api/workspace-tabs' && route !== '/api/workspace-tabs/reset' && route !== '/api/workspace-tabs/revert') return null;
       if (!(route === '/api/workspace-tabs' && ['GET', 'PUT'].includes(method)) && !(route !== '/api/workspace-tabs' && method === 'POST')) return { status: 405, body: { error: 'This saved view action is unavailable.' } };
       try {
@@ -100,10 +107,10 @@ export function createWorkspaceTabsHandler(options: { directory: string; workspa
             if (current.recovery) {
               if (input.resetToken !== current.recovery.resetToken) throw fail(409, 'tabs_changed', 'Saved views changed. Refresh and review the reset again.');
               await rename(path, join(directory, `tabs-recovery-${randomUUID()}.json`));
-              return save({ ...defaults(), revision: 1 });
+              return save({ ...defaults(), revision: 1 }, by);
             }
             if (!validWorkspaceRevision(input.expectedRevision) || input.expectedRevision !== current.state!.revision) throw fail(409, 'tabs_changed', 'Saved views changed in another window. Refresh before resetting.');
-            return save({ ...current.state!, revision: current.state!.revision + 1, tabs: [] });
+            return save({ ...current.state!, revision: current.state!.revision + 1, tabs: [] }, by);
           }
           if (route.endsWith('/revert')) {
             if (!current.state) throw fail(409, 'tabs_recovery_required', 'Saved views need recovery. Reset views before making changes.');
@@ -113,7 +120,7 @@ export function createWorkspaceTabsHandler(options: { directory: string; workspa
             const target = current.state.history.find(entry => entry.revision === input.toRevision);
             if (!target) throw fail(400, 'invalid_tabs', 'That earlier Desk layout is no longer kept.');
             const revision = current.state.revision + 1;
-            return save({ ...current.state, revision, ...withDesk(current.state, revision, target.sections) });
+            return save({ ...current.state, revision, ...withDesk(current.state, revision, target.sections) }, by);
           }
           if (!current.state) throw fail(409, 'tabs_recovery_required', 'Saved views need recovery. Reset views before making changes.');
           // Version 1 bodies change tabs only; version 2 bodies carry the Desk layout
@@ -136,7 +143,7 @@ export function createWorkspaceTabsHandler(options: { directory: string; workspa
             try { shell = parseShellLayout(input.shell); }
             catch (cause) { throw fail(400, 'invalid_shell', `${cause instanceof Error ? cause.message : 'Check the side panel settings.'} No layout was changed.`); }
           }
-          return save({ version: 2, revision, tabs, ...withDesk(current.state, revision, sections), ...(shell ? { shell } : {}) });
+          return save({ version: 2, revision, tabs, ...withDesk(current.state, revision, sections), ...(shell ? { shell } : {}) }, by);
         });
         return { status: 200, body: result };
       } catch (cause) {

@@ -2260,13 +2260,14 @@ async function startSeatTurn(
             return { id: created.id, dueAt: created.dueAt };
           },
         };
-        // Desk saved views through the same service and revision check as the
-        // Desk's own GET/PUT; every change is shown on the one-time card first.
+        // Desk saved views and layout through the same service and revision check as
+        // the Desk's own GET/PUT; saved-view changes show the one-time card first.
+        // Writes are announced as Bud's, so Desk offers Undo.
         integrations.workspaceViews = {
           read: async () => (await workspaceTabs.handle('/api/workspace-tabs', 'GET'))!,
           save: async body => {
             if (desk.memberKeyForWorker() !== reminderMember) throw Object.assign(new Error('The RealBud member changed, so no views were changed.'), { code: 'member_changed' });
-            return (await workspaceTabs.handle('/api/workspace-tabs', 'PUT', body))!;
+            return (await workspaceTabs.handle('/api/workspace-tabs', 'PUT', body, 'bud'))!;
           },
         };
         // Working rules (maintenance month rule, inspection rules, Morning priorities)
@@ -6361,7 +6362,8 @@ setBankProvider({
   listBankAccounts: async () => (await redbark.listBankAccounts()).map(account => ({ ...account, connection: 'redbark-mcp' })),
   listBankTransactions: query => redbark.listBankTransactions(query),
 });
-const workspaceTabs = createWorkspaceTabsHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id });
+// Every saved layout is announced, so an open Desk rereads at once whoever made the change.
+const workspaceTabs = createWorkspaceTabsHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, onSaved: change => broadcast({ kind: "workspace-tabs", ...change }) });
 void workspaceTabs.addGetStartedToAutomaticSimpleDesk()
   .then(applied => { if (applied) oplog("boot", "desk: Get started added to the automatic simple layout"); })
   .catch(() => oplog("boot", "desk: Get started could not be added to the simple layout; the saved layout stays"));

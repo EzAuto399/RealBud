@@ -67,6 +67,13 @@ const object = (value: unknown): value is Record<string, unknown> => !!value && 
 const exact = (value: Record<string, unknown>, keys: string[]) => Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
 export function validWorkspaceRevision(value: unknown): value is number { return Number.isSafeInteger(value) && Number(value) >= 0; }
 export const sameDeskSections = (a: readonly DeskSection[], b: readonly DeskSection[]) => a.length === b.length && a.every((section, index) => section.id === b[index]!.id && section.visible === b[index]!.visible);
+/** One plain line for what changed between two Desk layouts ("showed Mail priorities; hid Activity"). */
+export function deskChangeSummary(before: readonly DeskSection[], after: readonly DeskSection[]): string {
+  const was = new Map(before.map(section => [section.id, section.visible]));
+  const names = (visible: boolean) => after.filter(section => section.visible === visible && was.get(section.id) === !visible).map(section => DESK_SECTION_LABELS[section.id]).join(', ');
+  const moved = before.map(section => section.id).join() !== after.map(section => section.id).join();
+  return [names(true) && `showed ${names(true)}`, names(false) && `hid ${names(false)}`, moved && 'changed the order'].filter(Boolean).join('; ') || 'no change';
+}
 
 /** Strict: every known section exactly once, no unknown or duplicate ids, and
  * Needs you present and visible. Throws a user-facing sentence. */
