@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DeskSnapshot, PortalSession, Recipe } from "../shared/contracts.ts";
 import { executeRecipeJob, jobWorkerToolsets, parsePrepareResult, prepareJobPrompt, sameJobResult, SEARCH_PROVIDER_NOT_CONFIGURED } from "./job-executor.ts";
 import { JobRunStore } from "./job-runs.ts";
+import { workLedger } from "./work-ledger.ts";
 import { JOB_OUTPUT_MAX_CHARS } from "../shared/job-output.ts";
 import { deskContextMarkdown, DESK_CONTEXT_MAX_CHARS } from "./desk-context.ts";
 import { removeFixture } from "./testing/private-fixture.ts";
@@ -305,6 +306,25 @@ describe("executeRecipeJob", () => {
       rmSync(hermes.dir, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it("counts a manual run as working in the update ledger until it settles, and a replayed request not at all", async () => {
+    const runs = store();
+    let answer!: (value: { ok: true; stdout: string }) => void;
+    const started = executeRecipeJob(job({ capabilities: ["analyse"] }), { mode: "prepare", trigger: "manual", idempotencyKey: "ledger-run" }, {
+      store: runs, ask: () => new Promise(resolve => { answer = resolve; }),
+    });
+    await vi.waitFor(() => expect(answer).toBeTypeOf("function"));
+    expect(workLedger.snapshot()).toMatchObject({ working: 1, waiting: 0, byKind: { "job-run": { working: 1, waiting: 0 } } });
+    answer({ ok: true, stdout: JSON.stringify({ summary: "Prepared", evidence: ["Supplied facts"], outputs: ["Draft"], needsApproval: [] }) });
+    expect((await started).run.status).toBe("completed");
+    expect(workLedger.snapshot()).toEqual({ working: 0, waiting: 0, byKind: {} });
+    const replay = executeRecipeJob(job({ capabilities: ["analyse"] }), { mode: "prepare", trigger: "manual", idempotencyKey: "ledger-run" }, { store: runs });
+    expect((await replay).reused).toBe(true);
+    expect(workLedger.snapshot().working).toBe(0);
+    // A refused start still ends its entry.
+    await expect(executeRecipeJob(job(), { mode: "shadow", trigger: "manual", idempotencyKey: "ledger-department" }, { store: runs, department: {} as never })).rejects.toThrow(/reviewed preparation only/);
+    expect(workLedger.snapshot().working).toBe(0);
+  });
 
   it("keeps the worker's Modelvia requests on a run that failed after the worker answered", async () => {
     const usage = { requestIds: ["req-fictional-failed"], calls: 2 };

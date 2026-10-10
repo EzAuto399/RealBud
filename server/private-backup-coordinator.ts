@@ -5,6 +5,7 @@ import { constants } from 'node:fs';
 import { mkdir, open, statfs } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fsyncDir } from './atomic.ts';
+import { workLedger, type WorkLedger } from './work-ledger.ts';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
 import { createBackupOperationStore, type BackupOperationRecord, type BackupResourceRole } from './private-backup-operations.ts';
 import { createBackupResourceRuntime, type BackupResourceWork } from './private-backup-resource-runtime.ts';
@@ -61,6 +62,9 @@ export interface PrivateBackupCoordinatorHost {
   captureLimits?: CatalogLimits;
   /** Code-location diagnostics; no exception text or business values. */
   diagnostic?: (event: PrivateBackupFailureDiagnostic) => void;
+  /** Where a running backup task counts for an update restart (default: the service's). Only the restart reads it:
+   * the backup's own idle check (assertIdle) never does, so a task never holds itself. */
+  workLedger?: WorkLedger;
 }
 export async function createPrivateBackupCoordinator(host: PrivateBackupCoordinatorHost) {
   const directory = resolve(host.directory), root = join(directory, 'private-backup-v2'), key = Buffer.from(host.key), now = host.now ?? Date.now;
@@ -127,7 +131,8 @@ export async function createPrivateBackupCoordinator(host: PrivateBackupCoordina
   }
   function launch(id: string, task: () => Promise<unknown>) {
     if (closing || tasks.has(id)) fail('This backup operation is busy.');
-    const pending = Promise.resolve().then(task).catch(error => { failed(id, error); }).finally(() => { tasks.delete(id); });
+    // A restart fails the check, capture or restore preparation; the person has to start it again.
+    const pending = (host.workLedger ?? workLedger).track('private-backup', Promise.resolve().then(task).catch(error => { failed(id, error); }).finally(() => { tasks.delete(id); }));
     tasks.set(id, pending); void pending.catch(() => {});
   }
   async function input(work: BackupResourceWork, path: string, size: number) {

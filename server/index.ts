@@ -50,6 +50,7 @@ import { createPrivateBackupCoordinator } from './private-backup-coordinator.ts'
 import { handlePrivateBackupV2Http } from './private-backup-http.ts';
 import { withDurablePrivateBackupRestore } from './private-backup-legacy-api.ts';
 import { WorkspaceActivityGate } from './workspace-activity.ts';
+import { workLedger } from './work-ledger.ts';
 import { PRIVATE_BACKUP_MAX_BYTES } from '../shared/private-workspace-backup.ts';
 import type { PrivateBackupBusyReason } from '../shared/private-backup-transfers.ts';
 import { createAgencySetupService } from './agency-setup.ts';
@@ -867,6 +868,8 @@ const askTaskDone = new Map<string, string[]>();
 const recipeTaskStops = new Map<string, AbortController>();
 /** Ask tasks waiting at Start for the person to sign in (server/ask-task-sign-in.ts): ending the task stops the wait. */
 const askSignInWaits = new Map<string, AbortController>();
+// An open Ask browser task holds an update restart: running, at Start waiting for sign-in, paused for sign-in, or a portal read.
+workLedger.probe("ask-browser-task", () => ({ working: new Set([...askTaskTimers.keys(), ...askSignInWaits.keys(), ...recipeTaskStops.keys()]).size }));
 
 /** The task ends when its time runs out, whether it is running or paused for sign-in. */
 function armAskTaskTimer(threadId: string, grant: BrowserTaskGrant): void {
@@ -1158,6 +1161,14 @@ const watchdog = new TurnWatchdog({
   },
 });
 watchdog.start();
+// A turn working holds an update restart: a bot's own, or a room member's (a room turn marks its group, not the bot).
+// A turn parked on an approval card waits on the person: its card is counted as waiting ("approval-card"), not here.
+workLedger.probe("turn", () => {
+  let working = 0;
+  for (const bot of store.bots) if (bot.busy && !watchdog.parkedOnHuman(bot.id)) working++;
+  for (const group of store.groups) if (group.busyBotId && !watchdog.parkedOnHuman(group.busyBotId)) working++;
+  return { working };
+});
 
 // ── server-side event folding (upstream's ingestion worker, miniature) ──
 // The canonical stream is the source of truth; the persisted transcript
@@ -1172,6 +1183,17 @@ const turnStartedAt = new Map<string, { at: number; receivedAt?: number; prelude
 /** A product Ask turn about to be handed to the driver: when RealBud received it and how long it took to get there. */
 const askTurnDispatch = new Map<string, { receivedAt: number; preludeMs: number }>(); // threadId -> timing
 const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> messageId
+// Cards still waiting in this process (answerLiveRequest's registry) wait on the person: a restart leaves them stale.
+// Not working, so "Restart now" still goes ahead; the automatic restart reads the waiting count. A count only.
+workLedger.probe("approval-card", () => {
+  let waiting = 0;
+  for (const key of askMessageByRequest.keys()) {
+    const split = key.indexOf(":");
+    try { if (liveRequestCard(key.slice(0, split), key.slice(split + 1))) waiting++; }
+    catch { /* a conversation that cannot be read cannot answer its card either */ }
+  }
+  return { waiting };
+});
 /** A paired phone's answer: who and where, and the line its receipts show. */
 type PhoneAnswer = { by: ToolCardAnswerer; line: string };
 const phoneAnswers = new Map<string, PhoneAnswer>(); // threadId:requestId, answered by phone until resolved
@@ -1247,6 +1269,8 @@ try {
 // so only one thread may lease it at a time.
 let activeVmThreadId: string | null = null;
 let localVmLifecycleBusy = false;
+// A Local VM setup action (install, start, stop, remove) holds an update restart; a bot driving the VM is its turn.
+workLedger.probe("local-vm", () => ({ working: localVmLifecycleBusy ? 1 : 0 }));
 
 /** Only RealBud's browser broker emits a request that already carries `fence`:
  * it decided the step (server/browser-authority.ts) and the host displays that
@@ -2539,6 +2563,8 @@ function runCostAccess(): { baseUrl: string; key: string } | null {
 // after the worker answered (Desk changed, 409) was still billed: its
 // requests become a "desk recheck" row before the refusal goes back.
 const deskCheckFlight = new SingleFlight<{ snapshot: ReturnType<Desk["snapshot"]>; usage: RunUsage }>();
+// Desk Recheck (and the morning check that shares it) holds an update restart while the worker reads the book.
+workLedger.probe("desk-check", () => ({ working: deskCheckFlight.running() ? 1 : 0 }));
 async function runDeskCheck(origin?: Parameters<Desk["withRoutineOrigin"]>[0]): Promise<{ snapshot: ReturnType<Desk["snapshot"]>; usage?: RunUsage }> {
   let started = false;
   const { snapshot, usage } = await deskCheckFlight.run(async () => {
@@ -2720,9 +2746,8 @@ askLab?.catch(() => {}); // a failed lab start is answered on the next Ask brows
 /** Ask's browser runtime: the work browser, or in the lab its fictional portal once the lab is up. */
 async function askRuntime() { if (askLab) await askLab; return askBrowserRuntime(); }
 async function currentBankProvider() { return w1Lab ? (await w1Lab).provider : (await import("./bank-provider.ts")).connectedBankProvider(); }
+// Once made, the host counts its own work in the update restart's ledger (server/work-ledger.ts).
 let w1HostPromise: Promise<import("./w1-host.ts").W1Host> | undefined;
-/** The host once made, for /api/health's synchronous counts (serviceBusy, waitingApprovals); unset: no bank import runs. */
-let w1Loaded: import("./w1-host.ts").W1Host | undefined;
 // One coverage tracker per process: separate instances on the same file would
 // queue writes independently and could lose each other's updates.
 let bankServicesPromise: ReturnType<typeof import("./bank-source-http.ts").bankSourceServices> | undefined;
@@ -2734,7 +2759,7 @@ function w1Host() {
     const [{ createW1Host }, { localDate }, { connectedBankProvider }, { createTenantDirectoryStore }] = await Promise.all([import("./w1-host.ts"), import("./redbark-source.ts"), import("./bank-provider.ts"), import("./tenant-directory.ts")]);
     const services = await bankServices();
     const lab = w1Lab ? await w1Lab : null;
-    return w1Loaded = createW1Host({ dataDir: DATA_DIR, coverage: services.coverage, store: bankReferenceStore, provider: lab ? () => lab.provider : connectedBankProvider,
+    return createW1Host({ dataDir: DATA_DIR, coverage: services.coverage, store: bankReferenceStore, provider: lab ? () => lab.provider : connectedBankProvider,
       today: async () => localDate(new Date(), (await agencySetup.getConfiguration()).settings.timeZone || undefined),
       tenantDirectory: () => createTenantDirectoryStore(workflowDatabase()).freshness(),
       runtime: lab?.runtime ?? browserRuntime, lab, ...(lab ? { load: lab.load, pollMs: 0 } : {}),
@@ -2760,14 +2785,13 @@ async function resumeReiSignInWaits() {
 
 // ---- BEGIN REI directory refresh (REI Tenants → W1 tenant directory, REI Suppliers → W4 supplier directory). Logic in server/rei-directory-sync.ts. ----
 // Bud reads the list in the work browser under a host-issued read-only grant; the person saves the preview. Same lab as W1.
+// Once made, the refresh counts its own work in the update restart's ledger (server/work-ledger.ts).
 let reiDirectoryPromise: Promise<import("./rei-directory-sync.ts").ReiDirectorySync> | undefined;
-/** The refresh once made, for /api/health's synchronous counts; unset: no refresh runs. */
-let reiDirectoryLoaded: import("./rei-directory-sync.ts").ReiDirectorySync | undefined;
 function reiDirectorySync() {
   return reiDirectoryPromise ??= (async () => {
     const [{ createReiDirectorySync }, { createTenantDirectoryStore }] = await Promise.all([import("./rei-directory-sync.ts"), import("./tenant-directory.ts")]);
     const lab = w1Lab ? await w1Lab : null;
-    return reiDirectoryLoaded = createReiDirectorySync({ runtime: lab?.runtime ?? browserRuntime, ...(lab ? { load: lab.load, pollMs: 0 } : {}),
+    return createReiDirectorySync({ runtime: lab?.runtime ?? browserRuntime, ...(lab ? { load: lab.load, pollMs: 0 } : {}),
       browserId: lab?.browserId ?? (async () => { const status = await browserRuntime.status(); return status.state === "ready" ? status.selectedBrowserId : null; }),
       account: () => readReiAccountRef(DATA_DIR),
       tenants: createTenantDirectoryStore(workflowDatabase()), suppliers: supplierDirectory,
@@ -3340,28 +3364,17 @@ const workerAutoSetup = createWorkerAutoSetup({
   log: message => oplog("boot", message),
 });
 
-/** Work an update must not cut short: a turn that is working (not one parked on a card), a scheduled run doing work (not one parked on the person), a bank import
- * or REI list refresh doing work (person-started or scheduled; not one waiting on an ask or REI's sign-in), an open Ask
- * browser task (running, waiting at Start for sign-in, paused for sign-in, or a portal read), a held workspace operation, Bud setup. */
+// Bud setup holds an update restart until it is told to stop (server/hermes-bridge.ts).
+workLedger.probe("bud-setup", () => ({ working: installBlocksUpdate() ? 1 : 0 }));
+/** Work an update must not cut short, from the one ledger (server/work-ledger.ts): each kind of work registers itself
+ * where it starts or where its state lives. Work that is saved and resumes after a restart is not in it. */
 function serviceBusy() {
-  // A turn parked on an approval card waits on the person: waitingApprovals counts its card.
-  return store.bots.some(bot => bot.busy && !watchdog.parkedOnHuman(bot.id)) || workspaceActivity.active > 0 || !!loops?.working ||
-    (w1Loaded?.activity().working ?? 0) > 0 || (reiDirectoryLoaded?.activity().working ?? 0) > 0 ||
-    askTaskTimers.size > 0 || askSignInWaits.size > 0 || recipeTaskStops.size > 0 || installBlocksUpdate();
+  return workLedger.snapshot().working > 0;
 }
-/** Bud waiting on a person: cards still waiting in this process (answerLiveRequest's registry; a restart leaves them
- * stale), a bank import's or REI list refresh's step ask (person-started or scheduled; the only asks a scheduled run
- * parks on), and an REI refresh's unsaved preview or a person's own REI sign-in. A scheduled REI sign-in wait is
- * neither this nor busy: it is saved and resumes after a restart. Not
+/** Work waiting on the person that a restart would drop (cards, asks, unsaved previews, a person's own sign-in). Not
  * `busy`, so "Restart to update" still works; the automatic restart reads this count. A count only: no ids or content. */
 function waitingApprovals(): number {
-  let waiting = (w1Loaded?.activity().asks ?? 0) + (reiDirectoryLoaded?.activity().asks ?? 0);
-  for (const key of askMessageByRequest.keys()) {
-    const split = key.indexOf(":");
-    try { if (liveRequestCard(key.slice(0, split), key.slice(split + 1))) waiting++; }
-    catch { /* a conversation that cannot be read cannot answer its card either */ }
-  }
-  return waiting;
+  return workLedger.snapshot().waiting;
 }
 /** The one way a waiting card is answered (both respond routes). The request
  * must still be waiting in this process: a persisted card from another client

@@ -2,6 +2,7 @@
  * without clearing its channel queues. Pressure cancels the snapshot, not work.
  * This does not replace authorization or durable request identities. */
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { workLedger, type WorkLedger } from './work-ledger.ts';
 
 export type WorkspaceActivity = <T>(work: () => T | Promise<T>) => Promise<T>;
 export interface WorkspaceSnapshotLease { assertCurrent(): void; release(): void }
@@ -23,11 +24,13 @@ export class WorkspaceActivityGate {
   private readonly context = new AsyncLocalStorage<{ active: boolean }>();
   private readonly maxWaiting: number;
   private readonly assertAdmission: () => void;
-  constructor(options: { maxWaiting?: number; assertAdmission?: () => void } = {}) {
+  constructor(options: { maxWaiting?: number; assertAdmission?: () => void; workLedger?: WorkLedger } = {}) {
     const maxWaiting = options.maxWaiting ?? 256;
     if (!Number.isSafeInteger(maxWaiting) || maxWaiting < 1 || maxWaiting > 1024) throw new Error('Invalid workspace pause queue limit.');
     this.maxWaiting = maxWaiting;
     this.assertAdmission = options.assertAdmission ?? (() => {});
+    // An update restart waits for admitted work, work held behind a backup pause, and the pause itself (the capture).
+    (options.workLedger ?? workLedger).probe('workspace', () => ({ working: this.running + this.waiting + (this.owner ? 1 : 0) }));
   }
   get paused() { return !!this.owner; }
   get active() { return this.running; }

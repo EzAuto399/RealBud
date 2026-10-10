@@ -55,6 +55,7 @@ import { reiSignInWaits, withReiSignInWait, type ReiWaitCopy } from "./w1-sign-i
 import { REDBARK_ACCOUNT_ID } from "../shared/bank-source.ts";
 import { bankReviewVersion } from "../shared/bank-review.ts";
 import { parseBrowserTaskGrant, type BrowserTaskGrant, type BrowserTaskUpload } from "../shared/browser-task.ts";
+import { workLedger, type WorkLedger } from "./work-ledger.ts";
 
 const fail = (status: number, message: string): never => { throw Object.assign(new Error(message), { status }); };
 const message = (error: unknown) => error instanceof Error ? error.message : "Something went wrong.";
@@ -123,6 +124,8 @@ export interface W1HostDeps {
   now?: () => number;
   /** How often a scheduled sign-in wait checks for its midday reminder. */
   waitPollMs?: number;
+  /** Where this host counts its work for an update restart (default: the service's; tests pass their own). */
+  workLedger?: WorkLedger;
 }
 
 type Ask = { requestId: string; tool: string; summary: string; at: string };
@@ -485,13 +488,13 @@ export function createW1Host(deps: W1HostDeps) {
     working.set(id, slot);
     return job;
   }
-  /** What an update restart must respect (server/index.ts /api/health), as counts: advances doing work now, and asks
+  /** What an update restart must respect (server/work-ledger.ts, /api/health), as counts: advances doing work now, and asks
    * waiting on the person. A run waiting at REI's sign-in is neither (a scheduled wait is saved and resumes after a restart). */
-  function activity(): { working: number; asks: number } {
+  (deps.workLedger ?? workLedger).probe("bank-import", () => {
     let busy = 0, asked = 0;
     for (const id of working.keys()) { if (asks.has(id)) asked++; else if (!signingIn.has(id)) busy++; }
-    return { working: busy, asks: asked };
-  }
+    return { working: busy, waiting: asked };
+  });
   /** Person-driven steps run in the background: an ask can wait minutes for the person. */
   function kick(id: string) {
     if (working.has(id)) return;
@@ -612,6 +615,6 @@ export function createW1Host(deps: W1HostDeps) {
     return run.attention ? { ok: true, status: "awaiting-approval", detail: `${run.attention.message} Continue in Schedule → Bank reference review.` } : waiting;
   }
 
-  return { handle, runLoop, status, activity, workflow, store, importProof: currentProof };
+  return { handle, runLoop, status, workflow, store, importProof: currentProof };
 }
 export type W1Host = ReturnType<typeof createW1Host>;

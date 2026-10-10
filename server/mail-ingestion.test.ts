@@ -16,6 +16,7 @@ import { WorkflowDatabase } from './workflow-database.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { mailRecordId } from './mail-records.ts';
 import { removeFixture } from './testing/private-fixture.ts';
+import { workLedger } from './work-ledger.ts';
 const services: ReturnType<typeof createNormalizedMailService>[] = [];
 const databases: WorkflowDatabase[] = [];
 // Existing behavioral scenarios deliberately use the explicit compatibility
@@ -333,11 +334,15 @@ describe('durable private mail acquisition and work list', () => {
       throw new Error('Unexpected continuation');
     });
     const running = f.service.collect(); await started;
+    // A scan in flight holds an update restart (server/work-ledger.ts); a refused second scan adds nothing.
     await expect(f.service.collect()).rejects.toMatchObject({ status: 409 });
+    expect(workLedger.snapshot()).toEqual({ working: 1, waiting: 0, byKind: { 'mail-collect': { working: 1, waiting: 0 } } });
     expect((await f.service.get()).latestScan?.status).toBe('running');
     f.service.cancel(); await expect(running).rejects.toThrow('Synthetic cancellation');
+    expect(workLedger.snapshot().working).toBe(0);
     expect((await f.service.get()).latestScan?.status).toBe('interrupted'); expect(f.scan).toHaveBeenCalledTimes(1);
     expect((await f.service.collect()).latestScan?.status).toBe('complete');
+    expect(workLedger.snapshot()).toEqual({ working: 0, waiting: 0, byKind: {} });
   });
 
   it.each(['done', 'snoozed'] as const)('preserves %s and manual decisions on identical evidence, reopening only substantive new mail', async status => {

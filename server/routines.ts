@@ -18,6 +18,7 @@ import type { ExecutionHistoryQuery } from '../shared/execution-history.ts';
 import { MANUAL_JOB_REQUEST_ID } from "../shared/manual-job-request.ts";
 import { cadenceIncludesDay, validCalendarCadence, type CalendarCadence } from '../shared/routine-clock.ts';
 import { redactSecretsInText } from "./redact.ts";
+import { workLedger, type WorkLedger } from "./work-ledger.ts";
 import { DATA_DIR } from "./config.ts";
 import { oplog } from "./oplog.ts";
 import { evaluatorForLoop } from "../shared/workflow-catalog.ts";
@@ -65,6 +66,8 @@ export interface LoopManagerOptions {
   >;
   /** Pause/resume from the clock writes through to the job's status. */
   setRecipeEnabled?: (recipeId: string, enabled: boolean) => void;
+  /** Where a working run is counted for an update restart (tests pass their own). */
+  workLedger?: WorkLedger;
 }
 
 /** A worker that answered some addresses and held the rest is not a miss. */
@@ -385,6 +388,7 @@ export class LoopManager {
   /** Per loop, the run this start interrupted (markResumed). */
   private restartInterrupted = new Map<LoopId, string>();
   private ledger?: ExecutionHistory<LoopRun, Omit<LoopsFile, "version" | "runs">>;
+  private readonly releaseWork: () => void;
 
   constructor(options: LoopManagerOptions) {
     this.options = options;
@@ -471,6 +475,9 @@ export class LoopManager {
       } catch { /* recovery is visible; startup remains available */ }
     }
     if (this.recovery.active) this.emitRecovery();
+    // An update restart waits for the clock or a run doing work. A run parked on the person counts nothing here: the
+    // host it waits in counts its ask (w1-host.ts, rei-directory-sync.ts), and a saved sign-in wait resumes after a restart.
+    this.releaseWork = (options.workLedger ?? workLedger).probe("loop", () => ({ working: this.working ? 1 : 0 }));
   }
 
   get recovery(): { active: boolean; detail: string; generation: string } {
@@ -506,7 +513,7 @@ export class LoopManager {
     return this.readHistory(() => this.ledger!.page({ ...query, subjectId: query.loopId }));
   }
 
-  close() { this.stop(); this.ledger?.close(); }
+  close() { this.stop(); this.releaseWork(); this.ledger?.close(); }
 
   activeRun(loopId: LoopId): LoopRun | null {
     const run = this.runs.find((r) => r.loopId === loopId && ["queued", "running"].includes(r.status));

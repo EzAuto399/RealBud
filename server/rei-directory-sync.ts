@@ -36,6 +36,7 @@ import { reiSignInWaits, withReiSignInWait, type ReiWaitCopy } from "./w1-sign-i
 import { workflowDatabase } from "./workflow-services.ts";
 import { normalizeSupplierRows, type Supplier } from "../shared/supplier-directory.ts";
 import { parseBrowserTaskGrant, type BrowserActionClass } from "../shared/browser-task.ts";
+import { workLedger, type WorkLedger } from "./work-ledger.ts";
 
 export type ReiDirectoryKind = "tenants" | "suppliers";
 const PORTAL = "rei-cloud";
@@ -77,6 +78,8 @@ export interface ReiDirectorySyncDeps {
   now?: () => number;
   /** How often the scheduled check's sign-in wait checks for its midday reminder. */
   waitPollMs?: number;
+  /** Where this refresh counts its work for an update restart (default: the service's; tests pass their own). */
+  workLedger?: WorkLedger;
 }
 
 export interface ReiDirectoryPreview {
@@ -364,17 +367,17 @@ export function createReiDirectorySync(deps: ReiDirectorySyncDeps) {
     const parts = [preview.added && `${preview.added} added`, preview.removed && `${preview.removed} removed`, emails && `${emails} email${emails === 1 ? "" : "s"} changed`].filter(Boolean);
     return { ok: true, status: "awaiting-approval", detail: `Supplier list changed in REI: ${parts.length ? parts.join(", ") : "supplier details changed"} — review in ${WHERE}.` };
   }
-  /** What an update restart must respect (server/index.ts /api/health), as counts: a refresh reading REI now, or one
+  /** What an update restart must respect (server/work-ledger.ts, /api/health), as counts: a refresh reading REI now, or one
    * waiting on the person: an ask, a person's own sign-in, or a preview that can still be saved (neither is kept
    * across a restart). A scheduled sign-in wait is neither: it is saved and resumes after a restart. */
-  function activity(): { working: number; asks: number } {
-    if (!current) return { working: 0, asks: 0 };
-    if (!working) return { working: 0, asks: current.phase === "preview" && current.preview?.countMatches ? 1 : 0 };
+  (deps.workLedger ?? workLedger).probe("rei-directory", () => {
+    if (!current) return {};
+    if (!working) return { waiting: current.phase === "preview" && current.preview?.countMatches ? 1 : 0 };
     const waiting = !!current.ask || (!!current.signIn && current.origin === "person");
-    return { working: current.ask || current.signIn ? 0 : 1, asks: waiting ? 1 : 0 };
-  }
+    return { working: current.ask || current.signIn ? 0 : 1, waiting: waiting ? 1 : 0 };
+  });
   /** Settles when the run in flight ends (tests). */
   const settled = async () => { await working; };
-  return { handle, status, activity, settled, checkSuppliers };
+  return { handle, status, settled, checkSuppliers };
 }
 export type ReiDirectorySync = ReturnType<typeof createReiDirectorySync>;

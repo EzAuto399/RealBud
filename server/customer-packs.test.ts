@@ -15,6 +15,7 @@ import { workerScope } from './worker-state.ts';
 import { LoopManager } from './routines.ts';
 import { FICTIONAL_PACK_KEYS, withFictionalPublisher } from './testing/pack-publisher.ts';
 import { privateTempRoot, removeFixture } from './testing/private-fixture.ts';
+import { createWorkLedger } from './work-ledger.ts';
 const createCustomerPackService = withFictionalPublisher(createPackService);
 
 const roots: string[] = [];
@@ -85,6 +86,22 @@ describe('portable customer pack lifecycle', () => {
     expect(f.recipes().every(recipe => recipe.status === 'shadow' && recipe.schedule === null && recipe.approvedRevision === null)).toBe(true);
     expect(await readFile(join(f.root, 'vault/workflow-support/email-inbox-triage/SKILL.md'), 'utf8')).toBe(pack.skills[0].instructions);
     expect(await readFile(join(f.root, 'profile/skills/realbud-austin-office-email-inbox-triage/SKILL.md'), 'utf8')).toContain('permissions or schedules');
+  });
+  it('counts an install in progress as working for an update restart until it settles, and a refused one not after', async () => {
+    const f = await fixture(), pack = austinCustomerPack(), ledger = createWorkLedger();
+    let release!: () => void; const paused = new Promise<void>(resolve => { release = resolve; });
+    let reached!: () => void; const pausing = new Promise<void>(resolve => { reached = resolve; });
+    const service = createCustomerPackService({ ...f.options, workLedger: ledger, pauseSchedules: async () => { reached(); await paused; } });
+    const preview = await service.preview(pack);
+    expect(ledger.snapshot()).toEqual({ working: 0, waiting: 0, byKind: {} });
+    const installing = service.install(pack, preview.digest);
+    expect(ledger.snapshot()).toEqual({ working: 1, waiting: 0, byKind: { 'pack-change': { working: 1, waiting: 0 } } });
+    await pausing;
+    expect(ledger.snapshot().working).toBe(1);
+    release(); expect((await installing).localReady).toBe(true);
+    expect(ledger.snapshot()).toEqual({ working: 0, waiting: 0, byKind: {} });
+    await expect(service.install(pack, 'f'.repeat(64))).rejects.toThrow(/changed/);
+    expect(ledger.snapshot().working).toBe(0);
   });
   it('names every unobserved prerequisite in human words and never as a raw id', async () => {
     const f = await installedFixture(), saved = (await f.service.list()).installations;

@@ -13,6 +13,7 @@ import { askWorker } from "./recipe-draft.ts";
 import { parsePrepareResult } from "./job-executor.ts";
 import { productBudSystemPrompt } from "./ask-book.ts";
 import { addRunUsage, cleanRunUsage, emptyRunUsage } from "./run-cost.ts";
+import { workLedger, type WorkLedger } from "./work-ledger.ts";
 
 const MAX_OUTPUT = 24_000;
 const excerpt = (text: string, limit: number) => text.length > limit ? `${text.slice(0, limit - 70)}\n[Excerpt only: additional source text was not included.]` : text;
@@ -28,6 +29,8 @@ type Dependencies = {
   canRecover?: () => boolean;
   ask?: typeof askWorker;
   retryDelayMs?: number;
+  /** Where a preparing batch counts for an update restart (default: the service's; tests pass their own). */
+  workLedger?: WorkLedger;
 };
 
 
@@ -210,11 +213,13 @@ export class BatchService {
   }
   private kick(id: string) {
     if (this.runners.has(id)) return;
-    const task = Promise.resolve().then(() => this.run(id)).catch(() => {
+    // Working until this runner stops: a restart pauses the batch and leaves the current property to retry. A batch
+    // paused to wait for Bud has no runner; it is saved and continues by itself once the connection is ready.
+    const task = (this.deps.workLedger ?? workLedger).track("batch", Promise.resolve().then(() => this.run(id)).catch(() => {
       // A persistence failure must stop dispatch; never silently mark work done.
       this.error = "Batch progress could not be saved. Preparation stopped. Check available disk space and reopen RealBud.";
       console.warn("RealBud batch preparation stopped: progress persistence failed");
-    }).finally(() => this.runners.delete(id));
+    }).finally(() => this.runners.delete(id)));
     this.runners.set(id, task);
   }
   async wait(id: string) { await this.runners.get(id); }

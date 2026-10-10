@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { WorkspaceActivityGate } from './workspace-activity.ts';
+import { createWorkLedger } from './work-ledger.ts';
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return { promise, resolve }; };
 const turn = () => new Promise<void>(resolve => setImmediate(resolve));
 const thrown = (work: () => unknown) => { try { work(); } catch (error) { return error; } throw new Error('Expected a throw'); };
@@ -38,6 +39,19 @@ describe('queue-preserving workspace snapshot pause', () => {
     const failure = expect(pending).rejects.toThrow(/pause ended/); controller.abort(); await failure;
     finish.resolve(); await active;
     const old = await gate.pause(); old.release(); const current = await gate.pause(); old.release(); expect(gate.paused).toBe(true); current.assertCurrent(); current.release();
+  });
+  it('counts admitted work, a backup pause and the work held behind it as working for an update restart, and none once released', async () => {
+    const ledger = createWorkLedger(), gate = new WorkspaceActivityGate({ workLedger: ledger }), finish = deferred();
+    const working = () => ledger.snapshot().byKind.workspace?.working ?? 0;
+    expect(ledger.snapshot()).toEqual({ working: 0, waiting: 0, byKind: {} });
+    const current = gate.run(() => finish.promise); expect(working()).toBe(1);
+    const pending = gate.pause(); expect(working()).toBe(2);
+    const held = gate.run(() => {}); await turn(); expect(working()).toBe(3);
+    finish.resolve(); await current; const lease = await pending;
+    // The capture itself, with the held work queued behind it.
+    expect(working()).toBe(2); expect(ledger.snapshot().waiting).toBe(0);
+    lease.release(); await held;
+    expect(ledger.snapshot()).toEqual({ working: 0, waiting: 0, byKind: {} });
   });
   it('bounds capture time and resumes waiting work on timeout', async () => {
     const gate = new WorkspaceActivityGate(), lease = await gate.pause({ timeoutMs: 10 }); let executed = false;

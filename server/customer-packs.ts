@@ -11,6 +11,7 @@ import { parsePortalRecipePack } from './portal-recipe.ts';
 import type { CustomerPack, CustomerPackCheck, CustomerPackCheckId, CustomerPackInstallation, CustomerPackPreview, CustomerPackArchivePreview, CustomerPackArchivedHistory, CustomerPackHistoryItem, PackSkillProposal, PackSkillRevisionMetadata, PackSkillHistorySummary, PackSkillArchivePreview, PackSkillArchiveConfirmation, PackSkillHistoryPage, PackSkillHistorySelection, PackSkillRevertPreview } from '../shared/customer-packs.ts';
 import { loadRecipes, parseRecipeSchedule, resetRecipeApprovalsAtomically, saveRecipesAtomically, validateRecipe } from './recipes.ts';
 import { mkdirPrivate, privateDirectory, readPrivateJson, writePrivateJson } from './private-json.ts';
+import { workLedger, type WorkLedger } from './work-ledger.ts';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
 import { austinAccountsCustomerPack, austinCustomerPack, latestAustinAccountsCustomerPack, latestAustinCustomerPack, austinPropertyCustomerPack, austinReiFiles } from './customer-pack-definition.ts';
 import { officeCoreCustomerPack } from './office-core-pack.ts';
@@ -224,6 +225,8 @@ export interface CustomerPackServiceOptions {
   selectWorkflowPack?: (packId: string) => Promise<unknown>;
   /** Packs the office uploaded on the website (server/office-link.ts). Untrusted until admitted with a signature. */
   officePacks?: () => Promise<OfficePacksSource>;
+  /** Where a pack change in progress counts for an update restart (default: the service's; tests pass their own). */
+  workLedger?: WorkLedger;
 }
 /** On import (preview, install, upgrade, the office's pack list): this core can show each preset area
  * as laid out. Saved journals are read by shape only, so a later core or a downgrade never sends an
@@ -329,11 +332,12 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
     if (upgrade.pendingId && upgrade.pendingDigest) complete.proposalReceipts = [...entry.proposalReceipts ?? [], { id: upgrade.pendingId, digest: upgrade.pendingDigest, outcome: 'applied', at: new Date().toISOString() }];
     return { ...entries, [entry.pack.id]: complete };
   }
-  // Cooperating service instances in this host share the same write lane.
+  // Cooperating service instances in this host share the same write lane. A change waiting in it or running (install,
+  // upgrade, rollback, archive, instruction review) holds an update restart: one cut short is left for recovery or resume.
   const exclusive = <T>(work: () => Promise<T>): Promise<T> => {
     const key=resolve(path), previous=packWriters.get(key) ?? Promise.resolve(), next=previous.then(work,work);
     const settled=next.catch(()=>{}); packWriters.set(key,settled);
-    void settled.then(()=>{if(packWriters.get(key)===settled)packWriters.delete(key);}); return next;
+    void settled.then(()=>{if(packWriters.get(key)===settled)packWriters.delete(key);}); return (options.workLedger ?? workLedger).track('pack-change',next);
   };
   async function journals(): Promise<Record<string, Journal>> {
     const saved = await readPrivateJson(path, PACK_JOURNAL_MAX_BYTES+SKILL_ARCHIVE_INTENT_ALLOWANCE);

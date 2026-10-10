@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadPortalRecipePack, loadShippedPortalRecipePack } from "./portal-recipe-task.ts";
 import { runPortalRecipes } from "./portal-recipe-runner.ts";
 import { createReiDirectorySync, SUPPLIER_BIG_DROP, supplierChanges } from "./rei-directory-sync.ts";
+import { createWorkLedger } from "./work-ledger.ts";
 import { createSupplierDirectory } from "./supplier-directory.ts";
 import { createTenantDirectoryStore } from "./tenant-directory.ts";
 import { createW1Lab } from "./testing/w1-lab.ts";
@@ -37,8 +38,11 @@ async function fixture(options: { account?: boolean; load?: (() => ReturnType<ty
   const db = new WorkflowDatabase({ dir, key: Buffer.alloc(32, 5) }); dbs.push(db);
   const lab = await createW1Lab(dir, { fetch: (async () => new Response("{}", { status: 404 })) as never });
   const tenants = createTenantDirectoryStore(db), suppliers = createSupplierDirectory({ file: join(dir, "suppliers.json") });
+  const ledger = createWorkLedger();
   const sync = createReiDirectorySync({ runtime: lab.runtime, browserId: lab.browserId, account: async () => options.account === false ? null : { marker: FICTIONAL_BUSINESS },
-    tenants, suppliers, ...(options.load === null ? {} : { load: async () => (options.load ?? fictionalReiPack)() }), signIn: () => lab.openForSignIn, signInHolding: () => false, pollMs: 0 });
+    tenants, suppliers, ...(options.load === null ? {} : { load: async () => (options.load ?? fictionalReiPack)() }), signIn: () => lab.openForSignIn, signInHolding: () => false, pollMs: 0, workLedger: ledger });
+  /** What this refresh put in the update restart's ledger (server/work-ledger.ts): working, and waiting on the person. */
+  const work = () => { const { working, waiting, byKind } = ledger.snapshot(); expect(Object.keys(byKind).every(kind => kind === "rei-directory")).toBe(true); return { working, waiting }; };
   const call = async (path: string, body?: unknown) => {
     const result = await sync.handle(path, path.endsWith("/status") ? "GET" : "POST", async () => body);
     if (result.status !== 200) throw Object.assign(new Error(JSON.stringify(result.body)), { status: result.status });
@@ -62,7 +66,7 @@ async function fixture(options: { account?: boolean; load?: (() => ReturnType<ty
     return Object.assign(now, { tools });
   };
   const save = async (expectedRevision: number) => call(`/api/rei-directory/runs/${(await sync.status()).run!.id}/save`, { expectedRevision });
-  return { lab, sync, tenants, suppliers, call, settle, start, finish, save };
+  return { lab, sync, tenants, suppliers, call, settle, start, finish, save, work };
 }
 
 describe("refresh from REI (fictional portal)", () => {
@@ -163,7 +167,7 @@ describe("refresh from REI (fictional portal)", () => {
     expect((await f.suppliers.read()).revision).toBe(1);
   });
 
-  // What an update restart reads (server/index.ts /api/health): `working` holds every restart, `asks` only the automatic one.
+  // What an update restart reads (server/work-ledger.ts, /api/health): `working` holds every restart, `waiting` only the automatic one.
   it("a refresh reading REI counts as working, at an ask as one approval, and at REI's sign-in as neither", async () => {
     const f = await fixture();
     await f.lab.handle({ action: "sign-in" });
@@ -175,27 +179,27 @@ describe("refresh from REI (fictional portal)", () => {
       await options.approve!("browser_download", {}, "Fictional: allow a step in REI", options.signal!);
       return real(options);
     });
-    expect(f.sync.activity()).toEqual({ working: 0, asks: 0 });
+    expect(f.work()).toEqual({ working: 0, waiting: 0 });
     await f.call("/api/rei-directory/runs", { kind: "tenants" });
-    expect(f.sync.activity()).toEqual({ working: 1, asks: 0 });
+    expect(f.work()).toEqual({ working: 1, waiting: 0 });
     go();
     let now = await f.settle();
     expect(now.run!.ask).toMatchObject({ tool: "browser_download" });
-    expect(f.sync.activity()).toEqual({ working: 0, asks: 1 });
+    expect(f.work()).toEqual({ working: 0, waiting: 1 });
     await f.call(`/api/rei-directory/runs/${now.run!.id}/answer`, { requestId: now.run!.ask!.requestId, allowed: true });
     now = await f.finish();
     expect(now.run!.phase, now.run!.message ?? "").toBe("preview");
     // A preview that can still be saved waits on the person: a restart would drop it.
-    expect(f.sync.activity()).toEqual({ working: 0, asks: 1 });
+    expect(f.work()).toEqual({ working: 0, waiting: 1 });
     await f.call(`/api/rei-directory/runs/${now.run!.id}/stop`, {});
-    expect(f.sync.activity()).toEqual({ working: 0, asks: 0 });
+    expect(f.work()).toEqual({ working: 0, waiting: 0 });
     // Signed out: a person's own sign-in waits on them too (it isn't saved, unlike a scheduled wait).
     await f.lab.handle({ action: "handover" }); await f.lab.handle({ action: "sign-out" });
     now = await f.start("tenants");
     expect(now.run!.signIn).toMatch(/^rei-dir-/);
-    expect(f.sync.activity()).toEqual({ working: 0, asks: 1 });
+    expect(f.work()).toEqual({ working: 0, waiting: 1 });
     await f.call(`/api/rei-directory/runs/${now.run!.id}/stop`, {});
-    expect(f.sync.activity()).toEqual({ working: 0, asks: 0 });
+    expect(f.work()).toEqual({ working: 0, waiting: 0 });
   });
 
   it("refuses before the browser: no saved REI account, or a recipe that needs more than reading", async () => {
@@ -265,13 +269,13 @@ describe("scheduled Supplier list check (fictional portal)", () => {
     const check = f.sync.checkSuppliers((detail, waiting) => { notes.push([detail, waiting]); });
     const now = await f.settle();
     expect(now.run).toMatchObject({ origin: "schedule", signIn: expect.stringMatching(/^rei-dir-/) });
-    expect(f.sync.activity()).toEqual({ working: 0, asks: 0 });
+    expect(f.work()).toEqual({ working: 0, waiting: 0 });
     expect(notes.at(-1)).toEqual([expect.stringMatching(/^Sign in to REI Cloud so Bud can check the supplier list/), true]);
     await f.lab.handle({ action: "sign-in" });
     await f.finish();
     expect(await check).toMatchObject({ status: "awaiting-approval" });
     // Its changed list waits for the person's review, which a restart would drop.
-    expect(f.sync.activity()).toEqual({ working: 0, asks: 1 });
+    expect(f.work()).toEqual({ working: 0, waiting: 1 });
     // Only the sign-in lines waited on the person; reading REI did not.
     expect(notes.filter(([, waiting]) => waiting).every(([detail]) => /Sign in to REI Cloud/.test(detail))).toBe(true);
     expect(notes).toContainEqual(["Reading REI's supplier list. Nothing in REI changes.", false]);

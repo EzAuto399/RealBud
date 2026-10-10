@@ -11,6 +11,7 @@ import { encryptJson, decryptJson } from './desk-crypto.ts';
 import { createPrivateWorkspaceBackup } from './private-workspace-backup.ts';
 import { createPrivateBackupCoordinator, privateBackupFailureReason, privateBackupStackLocations, type PrivateBackupCoordinatorHost, type PrivateBackupFailureDiagnostic } from './private-backup-coordinator.ts';
 import { WorkspaceActivityGate } from './workspace-activity.ts';
+import { createWorkLedger, workLedger } from './work-ledger.ts';
 import { withDurablePrivateBackupRestore } from './private-backup-legacy-api.ts';
 import { createPrivateBackupV2Api } from './private-backup-v2-api.ts';
 import { handlePrivateBackupV2Http } from './private-backup-http.ts';
@@ -48,6 +49,24 @@ async function exported(f: Awaited<ReturnType<typeof fixture>>) {
 afterEach(async () => { vi.restoreAllMocks(); for (const service of services.splice(0)) await service.close(); for (const root of roots.splice(0)) await removeFixture(root); });
 
 describe('durable private backup coordinator', () => {
+  it('counts a backup export and its capture pause as working for an update restart until it settles, and the export still completes', async () => {
+    const f = await fixture(), ledger = createWorkLedger(), gate = new WorkspaceActivityGate({ workLedger: ledger });
+    await f.service.close(); services.splice(services.indexOf(f.service), 1);
+    let release!: () => void; const paused = new Promise<void>(resolve => { release = resolve; });
+    // The host's real shape (server/index.ts): the capture holds the workspace pause. Its idle check is its own list and never reads the ledger.
+    Object.assign(f.host, { workLedger: ledger, snapshotLease: async () => { const lease = await gate.pause(); await paused; return lease; } });
+    const service = await createPrivateBackupCoordinator(f.host); services.push(service);
+    const id = randomUUID(); await service.startExport(id, phrase);
+    await vi.waitFor(() => expect(gate.paused).toBe(true));
+    expect(ledger.snapshot()).toEqual({ working: 2, waiting: 0, byKind: { 'private-backup': { working: 1, waiting: 0 }, workspace: { working: 1, waiting: 0 } } });
+    release();
+    expect((await service.settled(id)).phase).toBe('ready');
+    expect(ledger.snapshot()).toEqual({ working: 0, waiting: 0, byKind: {} });
+    // Without a ledger of its own, a coordinator counts in the service's.
+    const g = await fixture(), other = randomUUID(); await g.service.startExport(other, phrase);
+    expect(workLedger.snapshot().byKind['private-backup']).toEqual({ working: 1, waiting: 0 });
+    await g.service.settled(other); expect(workLedger.snapshot().working).toBe(0);
+  });
   it('retains independent streamed chunks until the consumer finishes and verifies the delivered digest', async () => {
     const f = await fixture(); await write(f.directory, 'vault/workflow-inputs/large.txt', randomBytes(3 * CHUNK + 17));
     const id = randomUUID(); await f.service.startExport(id, phrase); const op = await f.service.settled(id); expect(op.phase).toBe('ready');

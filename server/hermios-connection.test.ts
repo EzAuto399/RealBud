@@ -11,6 +11,7 @@ import {
 import { createHermiosConnectionService, type HermiosConnectionContext } from './hermios-connection.ts';
 import { createPrivateVault } from './private-vault.ts';
 import { needsSession } from './session-auth.ts';
+import { createWorkLedger, workLedger } from './work-ledger.ts';
 
 // Fictional Hermios: a local HTTP server standing in for api.hermios.app. The
 // service still validates real https *.hermios.app endpoints; only the injected
@@ -203,6 +204,31 @@ describe('Hermios connection service', () => {
     expect((await svc.state()).status).toBe('connecting');
     t += 10 * 60_000 + 1;
     expect((await svc.state()).status).toBe('not_connected');
+  });
+
+  it('counts a pending sign-in as waiting on the person for an update restart, until its callback, its expiry or close', async () => {
+    const ledger = createWorkLedger(), svc = service({ workLedger: ledger });
+    const idle = { working: 0, waiting: 0, byKind: {} };
+    expect(ledger.snapshot()).toEqual(idle);
+    const started = await svc.handle(HERMIOS_CONNECTION_START_API, 'POST', {});
+    expect(ledger.snapshot()).toEqual({ working: 0, waiting: 1, byKind: { 'hermios-sign-in': { working: 0, waiting: 1 } } });
+    // Counts only: no member, state or link.
+    expect(JSON.stringify(ledger.snapshot())).not.toContain(new URL((started.body as { authorizeUrl: string }).authorizeUrl).searchParams.get('state')!);
+    expect((await svc.callback(approve((started.body as { authorizeUrl: string }).authorizeUrl, ALICE))).status).toBe(200);
+    expect(ledger.snapshot()).toEqual(idle);
+    await svc.handle(HERMIOS_CONNECTION_START_API, 'POST', {});
+    expect(ledger.snapshot().waiting).toBe(1);
+    t += 10 * 60_000 + 1;
+    expect(ledger.snapshot()).toEqual(idle);
+    await svc.handle(HERMIOS_CONNECTION_START_API, 'POST', {});
+    svc.close();
+    expect(ledger.snapshot()).toEqual(idle);
+    // Without a ledger of its own, the service counts in the service-wide one (other tests' services may count there too).
+    const shared = service(), before = workLedger.snapshot().waiting;
+    await shared.handle(HERMIOS_CONNECTION_START_API, 'POST', {});
+    expect(workLedger.snapshot().waiting).toBe(before + 1);
+    shared.close();
+    expect(workLedger.snapshot().waiting).toBe(before);
   });
 
   it('refuses a reused, expired, unknown or other-member state without exchanging a code', async () => {
