@@ -11,7 +11,8 @@ const button = 'min-h-11 rounded-lg border border-line px-3 py-2 text-[14px] tex
 const input = 'min-h-11 w-full rounded-lg border border-line bg-sheet px-3 py-2 text-[14px] text-ink focus-visible:outline-2 focus-visible:outline-agency';
 const accessLabels = { none: 'No access', read: 'Read only', write: 'Read and edit' };
 
-export function CompanyDepartments({ draftActor }: { draftActor: DepartmentDraftActor }) {
+/** `onAvailable` gets each confirmed first page (null when it could not be checked) for the office card's status list. */
+export function CompanyDepartments({ draftActor, onAvailable }: { draftActor: DepartmentDraftActor; onAvailable?: (page: DepartmentPage | null) => void }) {
   useSyncExternalStore(departmentConfigurationDrafts.subscribe, departmentConfigurationDrafts.snapshot, departmentConfigurationDrafts.snapshot);
   const ended = departmentConfigurationDrafts.reviewEnded(companyApi.sessionVersion());
   const [endedReview, setEndedReview] = useState<EndedDepartmentDraftReview | null>(null);
@@ -61,6 +62,7 @@ export function CompanyDepartments({ draftActor }: { draftActor: DepartmentDraft
       const members = selected && next.canManage && next.departments.some(item => item.id === selected) ? await companyApi.departmentAccess(selected, memberOffset) : null;
       if (!alive.current || generation.current !== version || companyApi.sessionVersion() !== epoch) return;
       setData(next); setAccess(members); setDrafts({}); setConfirm(null);
+      if (offset === 0) onAvailable?.(next);
       setRetirement(current => current && next.canManage ? next.departments.find(item => item.id === current.id && Boolean(item.retiredAt) === Boolean(current.retiredAt)) ?? null : null); setRetirementConfirmed(false);
       if (!next.canManage) { setRetirement(null); setRetirementNote(''); setRetirementConfirmed(false); setUncertainRetirement(null); retirementRequest.current = null; }
     } catch (cause) {
@@ -68,6 +70,7 @@ export function CompanyDepartments({ draftActor }: { draftActor: DepartmentDraft
         setData(null); setAccess(null); setConfirm(null); setRetirement(null); setRetirementConfirmed(false);
         if (!departmentMutationUncertain(cause)) { setUncertainRetirement(null); retirementRequest.current = null; }
         setError(cause instanceof Error ? cause.message : 'Departments could not be checked. Refresh when the office host is available.');
+        onAvailable?.(null);
       }
     } finally { if (alive.current && generation.current === version) setLoading(false); }
   };
@@ -107,7 +110,7 @@ export function CompanyDepartments({ draftActor }: { draftActor: DepartmentDraft
     } catch (cause) {
       if (alive.current && epoch === companyApi.sessionVersion()) {
         setData(null); setAccess(null); setConfirm(null); setRetirement(null); setRetirementConfirmed(false);
-        setError(cause instanceof Error ? cause.message : 'Saved change could not be checked. Use Connection and work recovery if the original office is unavailable.');
+        setError(cause instanceof Error ? cause.message : 'Saved change could not be checked. Use Office settings → Connection and work recovery if the original office is unavailable.');
       }
     } finally { pending.current = false; if (alive.current) setBusy(false); }
   };
@@ -158,10 +161,10 @@ export function CompanyDepartments({ draftActor }: { draftActor: DepartmentDraft
         <h4 className="font-medium">A saved department change needs your attention</h4>
         <p className="break-words">{departmentOperationTitle(outbox.pending)}</p>
         <p>{outbox.pending.phase === 'confirmed' ? 'The office host confirmed this change. Acknowledge it before starting another change.' : 'The last result is uncertain. Retry resends the exact saved change. If the host has not recorded it and it is still allowed, the change may be applied. An already recorded change is not applied twice.'}</p>
-        <p className="text-ink-secondary">This request is stored privately on this installation. If the original office or membership is unavailable, use Connection and work recovery.</p>
+        <p className="text-ink-secondary">This request is stored privately on this installation. If the original office or membership is unavailable, use Office settings → Connection and work recovery.</p>
         <button className={button} disabled={busy || loading} onClick={() => void resume()}>{outbox.pending.phase === 'confirmed' ? 'Acknowledge saved department change' : 'Retry saved department change'}</button>
       </section>}
-      {outbox?.otherOfficePending && <p role="status">Another office has a saved department change on this installation. Use Connection and work recovery before starting new department work.</p>}
+      {outbox?.otherOfficePending && <p role="status">Another office has a saved department change on this installation. Use Office settings → Connection and work recovery before starting new department work.</p>}
       {loading && <p role="status">Checking departments…</p>}
       {data && <>
         {!data.canManage && <p className="text-ink-secondary">Your office owner manages access. Only departments available to you appear here.</p>}

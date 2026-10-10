@@ -83,7 +83,8 @@ try {
   else await request(client, '/api/company/credentials', bobby);
   assert.equal(member.company.id, owner.company.id); assert.notEqual(member.member.id, owner.member.id);
   assert.equal((await request(client, '/api/company/status')).transport, 'encrypted-company');
-  await request(client, '/api/company/join', { invitationToken: invite.invitationToken, ...(atomicEnrollment ? { credential: bobby } : {}) }, 401);
+  const replay = await request(client, '/api/company/join', { invitationToken: invite.invitationToken, ...(atomicEnrollment ? { credential: bobby } : {}) }, 409);
+  assert.equal(replay.code, 'seat_identity_conflict');
   passed('Host provision, owner enrollment, pinned TLS join and separate member enrollment; invitation cannot replay');
   const privateScope = (await request(host, '/api/company/scopes', { kind: 'private', name: 'Alice private synthetic scope' }, 201)).scope;
   await request(client, '/api/company/knowledge/read', { scopeId: privateScope.id, key: 'private' }, 404);

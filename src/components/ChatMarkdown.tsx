@@ -6,10 +6,13 @@
 // as plain <pre> and nothing is cached — partial fences would poison it.
 // Only plain https links are clickable; the desktop window refuses every other
 // scheme, so mailto:, tel:, http: and the rest read as text the person can copy.
-import { isValidElement, memo, useEffect, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
+// A ```chart block becomes a drawn chart (lazy chunk, chat-chart/): a calm
+// placeholder while streaming, then the chart, a table of what could be read,
+// or a note with the raw data. It can never take the message down with it.
+import { Component, Suspense, isValidElement, lazy, memo, useEffect, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
 import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Check, Copy } from "lucide-react";
+import { BarChart3, Check, Copy, Info } from "lucide-react";
 import { useCopyText } from "@/lib/use-copy-text";
 import { BANK_FEED_CONNECT_HREF } from "@shared/ask-controls";
 import { BankFeedConnect } from "./ConnectedAppsCard";
@@ -91,6 +94,56 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
   );
 }
 
+const loadChart = () => import("./chat-chart/ChatChartBlock");
+const ChatChartBlock = lazy(loadChart);
+
+/** Same footprint while Bud is still writing the block and while the chart
+ * code loads, so the reply does not flash raw data or jump. */
+function ChartPlaceholder({ figures, streaming }: { figures: boolean; streaming: boolean }) {
+  useEffect(() => { void loadChart().catch(() => {}); }, []);
+  return (
+    <div role="status" className={`chat-chart-placeholder my-2 flex ${streaming ? "w-[640px]" : "w-full"} max-w-full min-w-0 items-center justify-center gap-2 rounded-lg border border-line bg-sheet text-[13px] text-ink-muted ${figures ? "h-[220px]" : "h-[360px]"}`}>
+      <BarChart3 size={16} aria-hidden />
+      Drawing chart…
+    </div>
+  );
+}
+
+/** Last line of defence for a chart: if its code cannot load or throws, show
+ * a note and the data rather than losing the rest of the reply. */
+class ChartSlotBoundary extends Component<{ code: string; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="chat-chart-fallback my-2 min-w-0 overflow-hidden rounded-lg border border-line bg-sheet">
+        <p className="flex items-center gap-2 px-4 pt-3 text-[14px] font-medium text-ink"><Info size={16} className="shrink-0 text-ink-muted" aria-hidden />This chart couldn’t be drawn</p>
+        <details className="px-4 pb-3">
+          <summary className="flex min-h-10 cursor-pointer items-center text-[13px] text-ink-secondary hover:text-ink">Show data</summary>
+          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-inset p-3 text-[12px] leading-relaxed text-ink">{this.props.code.slice(0, 20_000)}</pre>
+        </details>
+      </div>
+    );
+  }
+}
+
+function ChartSlot({ code, streaming }: { code: string; streaming: boolean }) {
+  // a row of figures is shorter than a plotted chart; size the wait to match
+  const figures = /"type"\s*:\s*"stats"/.test(code);
+  // the streaming bubble shrinks to its content, so the wait claims a width
+  if (streaming) return <ChartPlaceholder figures={figures} streaming />;
+  return (
+    <ChartSlotBoundary key={code} code={code}>
+      <Suspense fallback={<ChartPlaceholder figures={figures} streaming={false} />}>
+        <ChatChartBlock code={code} />
+      </Suspense>
+    </ChartSlotBoundary>
+  );
+}
+
 const LINK_CLASS = "break-words text-accent underline decoration-accent/40 hover:decoration-accent";
 
 /** The same rule as the desktop window (electron/external-links.mjs): https,
@@ -145,6 +198,7 @@ function ChatMarkdownComponent({ text, streaming = false }: { text: string; stre
             const flat = (n: any): string =>
               typeof n === "string" ? n : Array.isArray(n) ? n.map(flat).join("") : (n?.props?.children ? flat(n.props.children) : "");
             const code = flat(child?.props?.children).replace(/\n$/, "");
+            if (lang.toLowerCase() === "chart") return <ChartSlot code={code} streaming={streaming} />;
             return <CodeBlock code={code} lang={lang} streaming={streaming} />;
           },
           img({ src, alt }: { src?: string; alt?: string }) {

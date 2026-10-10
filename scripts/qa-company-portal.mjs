@@ -100,12 +100,13 @@ try {
   observe(page);
   const open = async () => {
     await page.goto(base + '/#/you');
-    const office = page.locator('details').filter({ has: page.getByText('Office details', { exact: true }) }).first();
+    const office = page.locator('details#you-company');
     await office.waitFor(); await office.evaluate(node => { node.open = true; });
-    const summary = page.locator('summary').filter({ hasText: /^Company member website identity$/ }); await summary.waitFor();
-    await summary.evaluate(node => { node.parentElement.open = true; });
+    // The card is folded inside Office settings; open it with its parents.
+    const summary = page.locator('summary').filter({ hasText: /^Colleagues’ website identity$/ }); await summary.waitFor({ state: 'attached' });
+    await summary.evaluate(node => { for (let element = node; element; element = element.parentElement) if (element.tagName === 'DETAILS') element.open = true; });
   };
-  const card = () => page.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^Company member website identity$/ }) }).last();
+  const card = () => page.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^Colleagues’ website identity$/ }) }).last();
   await open(); await card().getByLabel('Active member', { exact: true }).selectOption(ownerId);
   await card().getByRole('button', { name: 'Create member mapping', exact: true }).click();
   const mapCode = await card().getByLabel('Member mapping code', { exact: true }).inputValue();

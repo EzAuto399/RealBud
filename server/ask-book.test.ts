@@ -231,6 +231,20 @@ describe("ask book", () => {
     expect(prompt).not.toMatch(/Make this repeatable|did not turn the clock on|answer in two short sentences: open \*\*Schedule/);
   });
 
+  it("draws charts only from real numbers, in the exact chart block shape", () => {
+    const prompt = productBudSystemPrompt();
+    expect(prompt).toMatch(/fenced code block whose language is chart and whose body is JSON only/);
+    expect(prompt).toMatch(/"type":"bar"\|"line"\|"area"\|"stats"\|"heatmap"/);
+    expect(prompt).toMatch(/"series":\[\{"name":"…","values":\[number or null/);
+    expect(prompt).toMatch(/"source":"where these numbers came from"/);
+    expect(prompt).toMatch(/Never invent, estimate or pad numbers for a chart/);
+    expect(prompt).toMatch(/at least three data points, or a clear comparison/);
+    expect(prompt).toMatch(/one-sentence takeaway in prose/);
+    expect(prompt).not.toMatch(/Hermes|MCP/);
+    // field names the secret redactor would mask must never be part of the shape
+    expect(prompt).not.toMatch(/"(?:key|token|secret|password)"/);
+  });
+
   it("turns internal workroom and unknown failures into safe recovery copy", () => {
     const workroom = productAskFailure("execute_code failed: Unknown environment type: none; token=sk-secret-value");
     expect(workroom).toMatch(/workroom is not ready/i);

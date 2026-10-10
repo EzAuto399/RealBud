@@ -51,7 +51,7 @@ describe("settings navigation", () => {
     ["#attach-model", "you-worker"], ["#you-worker", "you-worker"],
     ["#connected-apps", "you-connected-apps"], ["#you-connected-apps", "you-connected-apps"],
     ["#you-recovery", "you-recovery"], ["#you-private-backup", "you-private-backup"], ["#you-packs", "you-packs"], ["#you-jobs", "you-jobs"],
-    ["#you-phone", "you-phone"], ["#you-office", "you-office"], ["#you-profile", "you-profile"],
+    ["#you-phone", "you-phone"], ["#you-office", "you-office"], ["#you-company", "you-company"], ["#you-profile", "you-profile"],
     ["#you-website", "you-website"], ["#you-website-code", "you-website-code"],
     ["#you-advanced", "you-advanced"],
     ["#you-service-admin", "you-service-admin"],

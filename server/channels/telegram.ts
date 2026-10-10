@@ -1,6 +1,7 @@
 import type { WorkspaceActivity } from '../workspace-activity.ts';
 import { matchesPairingCode, clearPairingCode } from "../channel-pairing.ts";
 import { channelContinuation } from "../channel-continuation.ts";
+import { replaceChartBlocksWithText } from "../../shared/chat-chart.ts";
 // RealBud owns the Telegram channel: Bot API long-poll over HTTPS, then
 // ordinary Ask turns on the canonical Bud thread. The Hermes worker stays
 // per-turn and untouched. Token never appears in API responses or logs.
@@ -491,7 +492,7 @@ function collectAssistantAfter(threadId: string, userMessageId: string, store: S
   const messages = store.messagesFor(threadId);
   const idx = messages.findIndex((m) => m.id === userMessageId);
   const slice = idx === -1 ? messages : messages.slice(idx + 1);
-  return slice.filter((m) => m.role === "bot" && m.kind === "text" && m.text).map((m) => m.text as string);
+  return slice.filter((m) => m.role === "bot" && m.kind === "text" && m.text).map((m) => replaceChartBlocksWithText(m.text as string));
 }
 
 async function relayPendingFromStore(deps: TelegramDeps, relay: PendingRelay = pendingRelay!): Promise<void> {

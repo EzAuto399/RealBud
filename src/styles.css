@@ -69,6 +69,29 @@
      3.38:1 on the ask paper. #825a22 measures 5.60:1 there. */
   --color-warning: #825a22;
 
+  /* Chat charts (src/components/chat-chart). Categorical slots are assigned in
+     this order and never cycled; the order is the colour-blind safety
+     mechanism. Validated on --color-sheet (#fffbf2) with the dataviz
+     validate_palette.js, light mode: lightness band, chroma floor, adjacent
+     CVD (worst 9.1) and normal-vision floor (worst 19.6) pass. Slots 3, 4 and
+     5 sit below 3:1 on sheet, so every chart ships a legend and a table view.
+     Sequential is one blue ramp, light to dark (ordinal check passes). */
+  --color-chart-1: #2a78d6;
+  --color-chart-2: #eb6834;
+  --color-chart-3: #1baf7a;
+  --color-chart-4: #eda100;
+  --color-chart-5: #e87ba4;
+  --color-chart-6: #008300;
+  --color-chart-7: #4a3aa7;
+  --color-chart-8: #e34948;
+  --color-chart-seq-1: #cde2fb;
+  --color-chart-seq-2: #9ec5f4;
+  --color-chart-seq-3: #6da7ec;
+  --color-chart-seq-4: #3987e5;
+  --color-chart-seq-5: #256abf;
+  --color-chart-seq-6: #184f95;
+  --color-chart-seq-7: #0d366b;
+
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 

@@ -45,3 +45,33 @@ describe("readable response structure", () => {
     expect(html).not.toContain('<img src="x"');
   });
 });
+
+describe("chart blocks", () => {
+  const chart = '```chart\n{"type":"bar","title":"Rent collected","x":["Jul","Aug","Sep"],"series":[{"name":"Collected","values":[1,2,3]}]}\n```';
+
+  it("shows a calm placeholder while streaming, never the raw chart data", () => {
+    for (const partial of [chart, chart.slice(0, 40), "```chart\n"]) {
+      const html = render(`Collections improved.\n\n${partial}`, true);
+      expect(html).toContain('role="status"');
+      expect(html).toContain("Drawing chart…");
+      expect(html).not.toContain("&quot;type&quot;");
+      expect(html).not.toContain("Copy code");
+      expect(html).toContain("Collections improved.");
+    }
+  });
+
+  it("keeps the placeholder footprint until the chart code arrives, with the rest of the reply formatted", () => {
+    const html = render(`**Collections improved.**\n\n${chart}\n\n- Chase one tenancy`);
+    expect(html).toContain("<strong>Collections improved.</strong>");
+    expect(html).toContain("Drawing chart…");
+    expect(html).toContain("<li>Chase one tenancy</li>");
+    expect(html).not.toContain("&quot;series&quot;");
+  });
+
+  it("leaves other code blocks as code", () => {
+    const html = render('```json\n{"type":"bar"}\n```');
+    expect(html).toContain('aria-label="json code"');
+    expect(html).not.toContain("Drawing chart…");
+  });
+});
+
