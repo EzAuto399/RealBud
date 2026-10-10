@@ -69,19 +69,23 @@ try {
   const panel = page.getByRole('dialog', { name: 'Arrange Desk', exact: true });
   await panel.waitFor();
   assert.equal(await panel.getByRole('checkbox', { name: 'Needs you always shows', exact: true }).isDisabled(), true);
-  await panel.getByText(/Saved on this computer/).waitFor();
+  await panel.getByText(/Changes this computer's Desk\. Your office's workflows and permissions stay the same\./).waitFor();
   await panel.getByRole('heading', { name: 'On this computer', exact: true }).waitFor();
   await panel.getByRole('combobox', { name: 'Spacing', exact: true }).waitFor();
-  pass('Arrange Desk opens from More with Needs you fixed, a "Saved on this computer" line and this computer\'s layout options');
-  // Keyboard reorder: move Needs you to the top with the keyboard, hide mail/bills/shared work.
-  for (let i = 0; i < 6; i++) { const up = panel.getByRole('button', { name: 'Move Needs you up', exact: true }); await up.focus(); await page.keyboard.press('Enter'); }
+  assert.equal(await panel.getByRole('button', { name: 'Move Needs you up', exact: true }).count(), 0, 'Cards on Tasks keep their order');
+  pass('Arrange Desk opens from More with Needs you fixed, a "Changes this computer\'s Desk" line and this computer\'s layout options');
+  // Keyboard reorder: move Shared work to the first work area with the keyboard, then hide mail/bills/shared work.
+  for (let i = 0; i < 2; i++) { const up = panel.getByRole('button', { name: 'Move Shared work up', exact: true }); await up.focus(); await page.keyboard.press('Enter'); }
+  assert.equal(await panel.getByRole('button', { name: 'Move Shared work up', exact: true }).isDisabled(), true, 'Shared work is the first work area');
+  // Its Up button disables at the top; keyboard focus stays on the row's other mover.
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Move Shared work down');
   for (const label of ['Mail priorities', 'Bills and calendar', 'Shared work']) await panel.getByRole('checkbox', { name: `Show ${label} on my Desk`, exact: true }).uncheck();
   await panel.screenshot({ animations: 'disabled', path: join(output, 'arrange-desk-draft.png') });
   await panel.getByRole('button', { name: 'Save', exact: true }).click();
   await panel.getByText('Desk arrangement saved.', { exact: true }).waitFor();
   const saved = (await call('/api/workspace-tabs')).body.state;
-  assert.deepEqual(saved.desk.sections.map(s => s.id), ['queue', 'brief', 'mail', 'bills', 'bank', 'shared-work', 'go-live', 'activity']);
-  assert.deepEqual(saved.desk.sections.filter(s => !s.visible).map(s => s.id), ['mail', 'bills', 'shared-work']);
+  assert.deepEqual(saved.desk.sections.map(s => s.id), ['brief', 'shared-work', 'mail', 'bank', 'bills', 'go-live', 'queue', 'activity']);
+  assert.deepEqual(saved.desk.sections.filter(s => !s.visible).map(s => s.id), ['shared-work', 'mail', 'bills']);
   assert.equal(saved.history.length, 2);
   pass('Save persists the reordered layout with history (earlier layout kept)');
   await panel.screenshot({ animations: 'disabled', path: join(output, 'arrange-desk-saved.png') });
@@ -103,7 +107,7 @@ try {
   assert.equal(await nav.getByRole('button', { name: /^Tasks(?:\s*\d+)?$/ }).getAttribute('aria-pressed'), 'true');
   await page.locator('.desk-content .desk-work-tasks').waitFor();
   await page.locator('.desk-queue-column').getByRole('combobox', { name: 'Status', exact: true }).waitFor();
-  const deskTabs = async () => (await nav.locator('.desk-workspace-tabs > button').allTextContents()).map(text => text.replace(/\d+$/, '').trim());
+  const deskTabs = async () => (await nav.locator('.desk-workspace-tabs > button').allTextContents()).map(text => text.replace(/[!\d]+$/, '').trim());
   for (const label of ['Mail priorities', 'Bills and calendar', 'Shared work']) {
     assert.equal(await nav.getByRole('button', { name: label, exact: true }).count(), 0);
   }
@@ -129,7 +133,7 @@ try {
   const labels = { mail: 'Mail priorities', bills: 'Bills and calendar', 'shared-work': 'Shared work' };
   assert.deepEqual(await deskTabs(), ['Tasks', ...before.sections.filter(section => section.visible && labels[section.id]).map(section => labels[section.id]), 'Hermios']);
   await nav.getByRole('button', { name: 'Mail priorities', exact: true }).click();
-  const mail = page.locator('.desk-other-work-surface[data-other-work="mail"]');
+  const mail = page.locator('.desk-area-surface[data-other-work="mail"]');
   await mail.waitFor();
   assert.equal(await nav.getByRole('button', { name: 'Mail priorities', exact: true }).getAttribute('aria-pressed'), 'true');
   assert.equal(await page.locator('.desk-work-tasks').isVisible(), false, 'A work-area tab replaces Tasks');

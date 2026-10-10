@@ -1,7 +1,7 @@
 import { usePhoneConnections } from "@/lib/phone-connections";
 import { useWorkspaceScroll, useWorkspaceViewState } from "@/lib/workspace-view-state";
 import { openWorkspaceSetup } from "@/lib/workspace-setup";
-import { useDeskViewState, visibleDeskAreas } from "@/lib/desk-view-state";
+import { openDeskArea, useDeskViewState, type DeskOtherWork } from "@/lib/desk-view-state";
 import type { PropertyScope } from "@/lib/book-groups";
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Building2, CircleAlert, Loader2, MessageSquare, X } from "lucide-react";
@@ -40,12 +40,15 @@ import { ExpectedBillsBoard } from "./desk/ExpectedBillsBoard";
 import { MailWorkPanel } from './desk/MailWorkPanel';
 import { RemindersPanel } from "./desk/RemindersPanel";
 import { DeskRecoveryNotice, DeskRemindersDisclosure, DeskWorkArea, LicenseeBadge } from "./desk/DeskSections";
-import type { DeskOtherWork } from "@/lib/desk-view-state";
-import { CardMenu, DeskCardMenu } from "./shell/DeskArrangement";
+import { NeedsYouPanel } from "./desk/NeedsYouPanel";
+import { CardMenu, DeskCardMenu, useDeskArrangement } from "./shell/DeskArrangement";
+import { AreaBadgeMarks, areaTabBadge } from "./shell/AreaTabs";
 import { setDeskTabSlot } from "./shell/use-desk-nav";
 import { openArrangeDesk, useDeskDataStatus } from "./shell/shell-layout";
 import { useWorkspaceTabs } from "@/lib/workspace-tabs";
-import { DESK_SECTION_LABELS, deskSectionsOrDefault } from "@shared/workspace-tabs";
+import { useNeedsYou } from "@/lib/needs-you";
+import { coreOfficeDesk } from "@shared/desk-areas";
+import { DESK_SECTION_LABELS, deskSectionsOrDefault, effectiveDeskAreas } from "@shared/workspace-tabs";
 import { BatchWorkspace } from "./desk/BatchWorkspace";
 import { CASE_KIND_LABELS } from "./desk/labels";
 import { MorningBrief, MorningEmpty, TASK_CHECK_FAILED_EMPTY, TASK_CHECK_NEVER } from "./desk/MorningBrief";
@@ -56,8 +59,9 @@ import { recheckProgress } from "@/lib/task-progress";
 import { api, useStore } from "@/state/store";
 import { HermiosMark } from "./HermiosMark";
 
-// Hermios is its own chunk: Desk never downloads it until the tab is opened.
+// Hermios and Bank references are their own chunks: Desk never downloads them until their tab is opened.
 const HermiosTab = lazy(() => import("./desk/HermiosTab").then((module) => ({ default: module.HermiosTab })));
+const BankReferenceReview = lazy(() => import("./schedule/BankReferenceReview").then((module) => ({ default: module.BankReferenceReview })));
 
 /** A Hermios asset that fails to load must not take Tasks with it. */
 class HermiosBoundary extends Component<{ children: ReactNode; onLeave: () => void }, { failed: boolean }> {
@@ -111,12 +115,18 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   // (here or from the shell's queue shortcuts) leaves it, and a fresh Desk opens on Tasks.
   const [hermiosOpen, setHermiosOpen] = useDeskViewState("hermios");
   useEffect(() => () => setHermiosOpen(false), []);
-  // A work-area tab (mail, bills, shared work) replaces the task area while open. Opened
-  // surfaces stay mounted (hidden) so their unsaved drafts and request identities survive switching.
-  // Bank references has no Desk surface yet (a later slice), so its tab is not offered.
-  const areas: DeskOtherWork[] = visibleDeskAreas(deskLayout, workspaceTabs.office).filter(id => id !== "bank");
+  // A work-area tab replaces the task area while open. Opened surfaces stay mounted (hidden)
+  // so their unsaved drafts and request identities survive switching.
+  const deskAreas = effectiveDeskAreas(deskSectionsOrDefault(deskLayout), workspaceTabs.office ?? coreOfficeDesk());
+  const areas = deskAreas.filter(area => area.visible);
+  const areaTitle = (id: DeskOtherWork) => deskAreas.find(area => area.id === id)?.title ?? DESK_SECTION_LABELS[id];
   const [otherWork, setOtherWork] = useDeskViewState("otherWork");
   const [openedOther, setOpenedOther] = useState<ReadonlySet<DeskOtherWork>>(() => new Set(otherWork ? [otherWork] : []));
+  // An area opened from a notice or a Needs you row stays mounted after it, like one opened here.
+  useEffect(() => { if (otherWork) setOpenedOther(current => (current.has(otherWork) ? current : new Set([...current, otherWork]))); }, [otherWork]);
+  // One Needs you read while Desk shows: the Tasks panel and every area tab's count share it.
+  const needsYou = useNeedsYou();
+  const arrangement = useDeskArrangement();
   const setMode = (next: typeof mode) => {
     setHermiosOpen(false);
     setOtherWork(null);
@@ -126,7 +136,6 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
     setHermiosOpen(false);
     setDeskMode("cases");
     setQueueState(false);
-    setOpenedOther(current => (current.has(id) ? current : new Set([...current, id])));
     setOtherWork(id);
   };
   const [jobRunsOpen, setJobRunsOpen] = useWorkspaceViewState("deskResults");
@@ -165,6 +174,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
     closeMenu(moreRef.current);
   };
   const [announce, setAnnounce] = useState("");
+  const tabStrip = useScrollCue();
   const [query, setQuery] = useDeskViewState("query");
   const [taskScope, setTaskScope] = useDeskViewState("taskScope");
   const [batchScope, setBatchScope] = useDeskViewState("batchScope");
@@ -446,7 +456,8 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   }, [queueOpen]);
 
   // A work area hidden from the saved layout (here, by Bud or another window) closes back to Tasks.
-  useEffect(() => { if (otherWork && !areas.includes(otherWork)) setOtherWork(null); }, [otherWork, areas.join()]);
+  const areaIds = areas.map(area => area.id).join();
+  useEffect(() => { if (otherWork && !areaIds.split(",").includes(otherWork)) setOtherWork(null); }, [otherWork, areaIds]);
 
   // One scroll owner for Desk; each surface keeps its own return position.
   const contentScrollRef = useWorkspaceScroll(`desk-content:${otherWork ?? mode}`, ready && snap != null && !hermiosOpen);
@@ -584,6 +595,8 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
           <DeskCardMenu id="brief" />
         </div>
       ) : null}
+      <NeedsYouPanel state={needsYou} active={tasksActive} areas={deskAreas} inert={drawerOpen}
+        onShowArea={id => void arrangement.setSection(id, true).then(saved => { if (saved) openDeskArea(id); })} />
       {emptyWorkspace ? (
         <div className="desk-empty-workspace">
           {empty}
@@ -799,16 +812,19 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
             </details>
           </div>
         </div>
-        <nav className="desk-workspace-nav" aria-label="Desk workspace">
+        <nav ref={tabStrip} className="desk-workspace-nav" aria-label="Desk workspace">
           <div className="desk-workspace-tabs">
             <button type="button" aria-pressed={tasksActive} onClick={() => setMode("cases")}>
               Tasks{counts.now > 0 ? <span>{counts.now}</span> : null}
             </button>
-            {areas.map(id => (
-              <button key={id} type="button" aria-pressed={mode === "cases" && !hermiosOpen && otherWork === id} onClick={() => openOtherWork(id)}>
-                {DESK_SECTION_LABELS[id]}
-              </button>
-            ))}
+            {areas.map(area => {
+              const badge = areaTabBadge(area.title, needsYou.snapshot, area.id);
+              return (
+                <button key={area.id} type="button" aria-pressed={mode === "cases" && !hermiosOpen && otherWork === area.id} aria-label={badge?.name} onClick={() => openOtherWork(area.id)}>
+                  {area.title}{badge ? <AreaBadgeMarks badge={badge} countClass="area-tab-count" /> : null}
+                </button>
+              );
+            })}
             <button type="button" aria-pressed={hermiosOpen} onClick={() => { setOtherWork(null); setHermiosOpen(true); }}>
               <HermiosMark size={18} />
               Hermios
@@ -886,18 +902,42 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
           <DeskWorkArea
             active={otherWork}
             opened={openedOther}
+            title={areaTitle}
             tasks={tasks}
             panels={{
               mail: <><div className="rb-card-menu-row"><DeskCardMenu id="mail" /></div><MailWorkPanel /></>,
-              bills: <><div className="rb-card-menu-row"><DeskCardMenu id="bills" /></div><ExpectedBillsBoard /></>,
+              bills: <><div className="rb-card-menu-row"><DeskCardMenu id="bills" /></div><ExpectedBillsBoard layout={deskAreas.find(area => area.id === "bills")?.layout === "review-list" ? "review-list" : "calendar"} /></>,
+              bank: (
+                <><div className="rb-card-menu-row"><DeskCardMenu id="bank" /></div>
+                  <Suspense fallback={<p role="status" className="flex items-center gap-2 text-[14px] text-ink-muted"><Loader2 size={16} className="animate-spin motion-reduce:animate-none" aria-hidden />Opening Bank references…</p>}>
+                    <BankReferenceReview area />
+                  </Suspense>
+                </>
+              ),
               "shared-work": <><div className="rb-card-menu-row"><DeskCardMenu id="shared-work" /></div><SharedWorkPanel initialExpanded /></>,
-              bank: null,
             }}
           />
         </div>
       )}
     </main>
   );
+}
+
+/** Marks the tab strip's overflowing edges (data-more-start / data-more-end) so CSS fades them:
+ *  at 390 px the strip scrolls sideways on its own and the fade says there is more. */
+function useScrollCue() {
+  return useCallback((node: HTMLElement | null) => {
+    if (!node) return;
+    const mark = () => {
+      node.toggleAttribute("data-more-start", node.scrollLeft > 1);
+      node.toggleAttribute("data-more-end", node.scrollLeft + node.clientWidth < node.scrollWidth - 1);
+    };
+    mark();
+    node.addEventListener("scroll", mark, { passive: true });
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(mark) : null;
+    for (const element of [node, ...node.children]) observer?.observe(element);
+    return () => { node.removeEventListener("scroll", mark); observer?.disconnect(); };
+  }, []);
 }
 
 const WIDE_DESK_QUERY = "(min-width: 960px)";

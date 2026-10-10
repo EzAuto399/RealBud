@@ -62,7 +62,7 @@ try {
   await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
   await page.getByRole('heading', { name: 'Desk', exact: true }).waitFor();
   const deskRow = page.locator('.pm-desk-header').getByRole('navigation', { name: 'Desk workspace', exact: true });
-  const rowTabs = async () => (await deskRow.locator('.desk-workspace-tabs > button').allTextContents()).map(text => text.replace(/\d+$/, '').trim());
+  const rowTabs = async () => (await deskRow.locator('.desk-workspace-tabs > button').allTextContents()).map(text => text.replace(/[!\d]+$/, '').trim());
   const showsTabs = expected => until(async () => JSON.stringify(await rowTabs()) === JSON.stringify(expected), `Desk tabs read ${expected.join(', ')}`);
   const standard = ['Tasks', 'Mail priorities', 'Bills and calendar', 'Shared work', 'Hermios'];
   await showsTabs(standard);

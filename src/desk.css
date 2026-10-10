@@ -2,9 +2,13 @@
    holding the task queue beside the case in normal flow. No nested scrollers. */
 .desk-workspace { min-height: 0; background: var(--color-sheet); }
 .desk-workspace .pm-desk-header { padding: 8px 24px 0; }
-/* One line of tabs at every width: the strip scrolls sideways on its own, never the page. */
+/* One line of tabs at every width: the strip scrolls sideways on its own, never the page,
+   and fades at an edge with more tabs beyond it. */
 .desk-workspace-nav { display: flex; align-items: center; gap: 16px; margin-top: 2px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
 .desk-workspace-nav > * { flex: none; }
+.desk-workspace-nav[data-more-end] { mask-image: linear-gradient(to right, var(--color-ink) calc(100% - 40px), transparent); }
+.desk-workspace-nav[data-more-start] { mask-image: linear-gradient(to right, transparent, var(--color-ink) 40px); }
+.desk-workspace-nav[data-more-start][data-more-end] { mask-image: linear-gradient(to right, transparent, var(--color-ink) 40px, var(--color-ink) calc(100% - 40px), transparent); }
 .desk-content { display: flex; flex-direction: column; overscroll-behavior: contain; background: var(--color-sheet); }
 .desk-content[data-drawer-open="true"] { overflow: hidden; }
 /* Properties and batch work flow inside the same scroll owner. */
@@ -13,7 +17,7 @@
 .desk-notices:empty { display: none; }
 .desk-status-row { flex-shrink: 0; padding: 14px 24px; border-bottom: 1px solid var(--color-line); }
 .desk-check-details { margin-top: 6px; padding-bottom: 4px; }
-.desk-work-tasks:not([hidden]), .desk-other-work-surface:not([hidden]) { flex: 1 0 auto; }
+.desk-work-tasks:not([hidden]), .desk-area-surface:not([hidden]) { flex: 1 0 auto; }
 .desk-work-tasks:not([hidden]):has(> .desk-task-split),
 .desk-work-tasks:not([hidden]):has(> .desk-empty-workspace) { display: flex; flex-direction: column; }
 .desk-task-split { display: flex; flex: 1 0 auto; align-items: stretch; min-width: 0; }
@@ -58,7 +62,7 @@
 .desk-evidence { font-size: 14px; color: var(--color-ink); }
 /* Review actions stay in view at the bottom of the one scroll region. */
 .desk-case-column .desk-decision { position: sticky; bottom: 0; z-index: 1; background: var(--color-sheet); }
-.desk-other-work-surface { padding: 24px; }
+.desk-area-surface { padding: 24px; }
 /* Reminders: collapsed shows only the heading (with its due count) and alerts. */
 .desk-reminders-disclosure .desk-reminders { margin-top: 0; }
 .desk-reminders-toggle { flex: 0 0 auto; min-height: 44px; padding: 0 6px; font-size: 14px; font-weight: 500; white-space: nowrap; color: var(--color-agency); }
@@ -69,7 +73,9 @@
 .desk-workspace-tabs > button { display: flex; align-items: center; gap: 8px; min-height: 48px; border-bottom: 3px solid transparent; font-size: 14px; color: var(--color-ink-muted); font-weight: 500; white-space: nowrap; }
 .desk-workspace-tabs > button[aria-pressed="true"] { border-color: var(--color-agency); color: var(--color-agency); }
 .desk-workspace-tabs > button:focus-visible { outline: 2px solid var(--color-agency); outline-offset: -2px; }
-.desk-workspace-tabs > button > span { padding: 1px 7px; border-radius: 5px; background: var(--color-selected); font-size: 11px; }
+.desk-workspace-tabs > button > span { padding: 1px 7px; border-radius: 5px; background: var(--color-selected); font-size: 11px; font-variant-numeric: tabular-nums; }
+/* A work area with a problem: a "!" before its count, in text as well as colour. */
+.desk-workspace-tabs > button > .area-tab-problem, .area-tab-problem { padding: 1px 7px; border-radius: 5px; background: color-mix(in srgb, var(--color-danger) 12%, transparent); color: var(--color-danger); font-size: 11px; font-weight: 700; }
 .desk-more { position: relative; }
 .desk-more > summary { cursor: pointer; list-style: none; }
 .desk-more > summary::-webkit-details-marker { display: none; }
@@ -142,7 +148,7 @@
     background: color-mix(in srgb, var(--color-ink) 28%, transparent);
   }
   .desk-workspace .desk-task-split[data-queue-open="true"] .desk-queue-close.desk-queue-close { display: inline-flex; }
-  .desk-notices, .desk-status-row, .desk-other-work-surface { padding-left: 16px; padding-right: 16px; }
+  .desk-notices, .desk-status-row, .desk-area-surface { padding-left: 16px; padding-right: 16px; }
 }
 @media (max-width: 719px) {
   .desk-empty-canvas { padding: 20px 16px; }
@@ -218,4 +224,39 @@
 @media (max-width: 719px) {
   .area-status-actions { width: 100%; }
   .area-status-actions > button { flex: 1 1 auto; }
+}
+/* Needs you on the Tasks tab: what each workflow found, problems first. */
+.needs-you { flex-shrink: 0; padding: 14px 24px 12px; border-bottom: 1px solid var(--color-line); }
+.needs-you-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.needs-you-head > h2 { font-size: 16px; font-weight: 600; color: var(--color-ink); }
+.needs-you-head > p, .needs-you-quiet > p { font-size: 13px; color: var(--color-ink-secondary-strong); font-variant-numeric: tabular-nums; }
+.needs-you-quiet { padding-top: 10px; padding-bottom: 10px; }
+.needs-you-group { max-width: 64rem; margin-top: 8px; }
+.needs-you-group > h3 { padding: 4px 0; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--color-ink-secondary-strong); }
+.needs-you-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 0; border-top: 1px solid var(--color-line); }
+.needs-you-text { display: flex; flex: 1 1 20rem; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.needs-you-source { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; color: var(--color-ink-secondary-strong); }
+.needs-you-item { font-size: 14px; font-weight: 500; color: var(--color-ink); }
+.needs-you-reason { font-size: 13px; line-height: 1.45; color: var(--color-ink-muted); }
+.needs-you-action { flex: 0 1 auto; max-width: 100%; min-height: 44px; padding: 8px 14px; border: 1px solid var(--color-line); border-radius: 6px; background: var(--color-sheet); font-size: 14px; color: var(--color-ink); text-align: left; }
+.needs-you-action:hover { background: var(--color-raised); }
+.needs-you-action:focus-visible, .needs-you-more:focus-visible { outline: 2px solid var(--color-agency); outline-offset: 2px; }
+.needs-you-more { min-height: 44px; margin-top: 4px; font-size: 14px; font-weight: 500; color: var(--color-agency); }
+.needs-you-more:hover { text-decoration: underline; text-underline-offset: 3px; }
+.needs-you-error { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; max-width: 64rem; margin-top: 8px; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--color-danger) 8%, transparent); font-size: 13px; color: var(--color-danger); }
+.needs-you-error > span { flex: 1 1 16rem; }
+.needs-you-skeleton > span { display: block; height: 12px; border-radius: 4px; background: var(--color-raised); }
+.needs-you-skeleton > span:nth-child(1) { width: 8rem; }
+.needs-you-skeleton > span:nth-child(2) { width: min(22rem, 80%); height: 16px; margin: 4px 0; }
+.needs-you-skeleton > span:nth-child(3) { width: min(30rem, 95%); }
+.needs-you-skeleton-action { width: 10rem; height: 44px; border-radius: 6px; background: var(--color-raised); }
+@media (prefers-reduced-motion: no-preference) {
+  .needs-you-skeleton > span, .needs-you-skeleton-action { animation: needs-you-pulse 1.4s ease-in-out infinite; }
+}
+@keyframes needs-you-pulse { 50% { opacity: .55; } }
+@media (max-width: 959px) {
+  .needs-you { padding-left: 16px; padding-right: 16px; }
+}
+@media (max-width: 719px) {
+  .needs-you-action { flex-basis: 100%; }
 }

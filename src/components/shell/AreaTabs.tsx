@@ -1,6 +1,23 @@
 import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import type { NeedsYouArea, NeedsYouSnapshot } from "@shared/needs-you";
 
-export type AreaTab = { id: string; label: string; count?: number };
+/** What a work area's tab says about its Needs you items: none while unread or at zero.
+ *  A source that couldn't be read is one problem, as it is in Needs you. */
+export type AreaBadge = { total: number; problem: number; name: string };
+export function areaTabBadge(title: string, snapshot: NeedsYouSnapshot | null | undefined, area: NeedsYouArea): AreaBadge | null {
+  const counts = snapshot?.counts[area];
+  const problem = (counts?.problem ?? 0) + (snapshot?.unavailable.some(source => source.area === area) ? 1 : 0);
+  const total = problem + (counts?.review ?? 0);
+  if (!total) return null;
+  const problems = problem ? `, ${problem} problem${problem === 1 ? "" : "s"}` : "";
+  return { total, problem, name: `${title}, ${total} need${total === 1 ? "s" : ""} you${problems}` };
+}
+/** The count, with a "!" text marker before it when any is a problem (never colour alone). */
+export function AreaBadgeMarks({ badge, countClass }: { badge: AreaBadge; countClass: string }) {
+  return <>{badge.problem ? <span className="area-tab-problem" aria-hidden>!</span> : null}<span className={countClass} aria-hidden>{badge.total}</span></>;
+}
+
+export type AreaTab = { id: string; label: string; count?: number; badge?: AreaBadge | null };
 
 /** Next tab index for an arrow/Home/End key, wrapping; null for other keys. */
 export function tabKeyTarget(key: string, index: number, length: number): number | null {
@@ -51,9 +68,9 @@ export function AreaTabs({ label, tabs, selected, onSelect, panelId }: { label: 
     <div ref={list} role="tablist" aria-label={label} className="rb-area-tabs">
       {tabs.map((tab, index) => (
         <button key={tab.id} type="button" role="tab" id={`rb-area-tab-${tab.id}`} aria-selected={tab.id === selected} aria-controls={panelId}
-          tabIndex={index === focusIndex ? 0 : -1} className="rb-area-tab" onClick={() => { keyed = null; onSelect(tab.id); }} onKeyDown={event => onKeyDown(event, index)}>
+          tabIndex={index === focusIndex ? 0 : -1} className="rb-area-tab" aria-label={tab.badge?.name} onClick={() => { keyed = null; onSelect(tab.id); }} onKeyDown={event => onKeyDown(event, index)}>
           <span className="truncate">{tab.label}</span>
-          {tab.count ? <span className="rb-area-tab-count">{tab.count}</span> : null}
+          {tab.badge ? <AreaBadgeMarks badge={tab.badge} countClass="rb-area-tab-count" /> : tab.count ? <span className="rb-area-tab-count">{tab.count}</span> : null}
         </button>
       ))}
       {bar ? <span aria-hidden className="rb-area-tab-highlight" style={{ transform: `translateX(${bar.left}px)`, width: bar.width }} /> : null}
