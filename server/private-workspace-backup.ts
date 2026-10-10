@@ -193,7 +193,7 @@ function validateBusinessFile(path: string, value: unknown) {
     validateAgencySettings({ ...value.settings, workflowPackId: value.settings.workflowPackId ?? null });
     for (const [name, review] of Object.entries(value.reviews)) if (!['bank-references','bills-calendar','morning-priorities'].includes(name) || !object(review) || review.settingsRevision !== value.revision || !hex(review.evidenceDigest) || typeof review.reviewedAt !== 'number' || typeof review.actorId !== 'string') fail('Saved agency reviews need recovery.', 400);
   } else if (path === 'workspace-views/tabs.json') {
-    // Accepts version 1 (migrated on read) and version 2 with a strict Desk layout.
+    // Accepts versions 1 and 2 (migrated on read) and version 3 with a strict Desk layout.
     if (!object(value)) fail('Saved views need recovery.', 400);
     try { parseWorkspaceTabs(value.state); } catch { fail('Saved views or the Desk layout need recovery.', 400); }
   }

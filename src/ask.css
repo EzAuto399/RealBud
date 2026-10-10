@@ -168,7 +168,7 @@
 .ask-next-trailing { display: inline-flex; align-items: center; gap: 10px; }
 .ask-next-trailing .pm-control { padding-inline: 8px; }
 .ask-next-actions[open] > summary svg { transform: rotate(180deg); }
-.ask-next-body { max-height: min(32vh, 260px); overflow-y: auto; max-width: none; padding-bottom: 6px; }
+.ask-next-body { max-width: none; padding-bottom: 6px; }
 .ask-composer { padding: 4px 24px 8px; flex-shrink: 0; max-height: 52%; overflow-y: auto; }
 .ask-context-layout[data-context-open] .ask-composer { max-height: max(180px, 52%); }
 /* As wide as the conversation column it sits under; a light hairline that turns agency on focus. */

@@ -1,4 +1,4 @@
-import { readSessionToken, primeBrowserSession } from './local-session.mjs';
+import { readSessionToken, primeBrowserSession, enterSampleDeskForQa } from './local-session.mjs';
 // "Show Bud a task" drawer (Schedule header button and #schedule-learn): built renderer + real isolated
 // source service with seeded fictional learned-recipe drafts. Never presses
 // "Start showing" (it opens a real work browser). No worker, no portal.
@@ -83,8 +83,9 @@ try {
   await page.goto(base + '/');
   await page.getByLabel('Your name', { exact: true }).fill('Fictional Learn Person');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
-  await page.getByRole('heading', { name: 'Desk', exact: true }).waitFor();
+  // First run has no sample-desk exit: the QA helper completes it as that button did and passes the office-link screen.
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
+  await enterSampleDeskForQa(page);
   pass('Fictional sample Desk opens');
 
   // Staff path: Schedule → "Show Bud a task" in the header. Then the deep link.

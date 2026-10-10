@@ -64,6 +64,14 @@ try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   await primeBrowserSession(context, base, await readSessionToken(data));
   await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+  // Work's composer opens only on a linked computer whose Bud is ready (setup's Ask gate,
+  // src/lib/setup-sequence.ts). Fictional browser-side replies say so, as qa-workspace-unification does.
+  await context.route("**/api/office-link", route => route.fulfill({ status: 200, contentType: "application/json",
+    body: JSON.stringify({ state: "linked", label: "Fictional Telegram computer", agencyLabel: "Fictional Harbour Agency", lastReportedAt: "2026-10-08T00:00:00.000Z" }) }));
+  await context.route("**/api/hermes", async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json(), ready: true, readyOnce: true, restartRequired: false } });
+  });
   await context.addInitScript(() => {
     window.copyAttempts = []; window.failCopy = false;
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async text => {
@@ -82,8 +90,8 @@ try {
   await request.getByRole("button", { name: "Copy request", exact: true }).click();
   assert.equal(await page.evaluate(() => window.copyAttempts.at(-1)), short);
   const composer = page.locator(".ask-composer textarea").first();
-  // Product status requests remain available without a live model. Exercise
-  // composition keys on an enabled composer without sending any work.
+  // The composer is enabled by the linked-and-ready replies above. Exercise
+  // composition keys on it without sending any work.
   await composer.fill("What's connected?");
   await composer.dispatchEvent("keydown", { key: "Enter", keyCode: 229, isComposing: false, bubbles: true });
   assert.equal(await composer.inputValue(), "What's connected?", "IME final key cannot submit");

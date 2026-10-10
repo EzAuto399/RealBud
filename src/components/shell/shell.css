@@ -106,6 +106,9 @@
 .rb-card-menu-anchor > .rb-card-menu-corner { position: absolute; top: 4px; right: 4px; z-index: 5; }
 
 /* Status bar. */
+/* Toasts sit above the phone navigation and the status bar, never over them. */
+@media (max-width: 599px) { .rb-toast-stack { bottom: calc(72px + env(safe-area-inset-bottom, 0px)); } }
+@media (min-width: 960px) { .rb-toast-stack { bottom: 46px; } }
 .rb-status-bar { display: none; }
 @media (min-width: 960px) {
   .rb-status-bar { display: flex; flex-shrink: 0; align-items: center; gap: 18px; min-height: 30px; padding: 0 12px; overflow: hidden; border-top: 1px solid var(--color-line); background: var(--color-sheet); color: var(--color-ink-secondary); font-size: 12px; white-space: nowrap; }
@@ -133,10 +136,10 @@
 }
 
 /* Shell tabs inside Desk's own tab row: one row on Desk, styled like Desk's tabs. */
-.desk-shell-tabs { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; }
+.desk-shell-tabs { display: flex; align-items: center; gap: 8px; }
 .desk-shell-tabs:empty { display: none; }
-/* Wraps with the row instead of scrolling, so .desk-content stays Desk's only scroller. */
-.desk-shell-tabs .rb-area-tabs { flex-wrap: wrap; overflow: visible; }
+/* Never a second scroller: Desk's whole tab row is one line that scrolls as one strip. */
+.desk-shell-tabs .rb-area-tabs { overflow: visible; }
 .desk-shell-tabs .rb-area-tab { min-height: 48px; padding: 0 11px; border-bottom: 3px solid transparent; border-radius: 0; color: var(--color-ink-muted); font-weight: 500; }
 .desk-shell-tabs .rb-area-tab[aria-selected="true"] { border-bottom-color: var(--color-agency); color: var(--color-agency); font-weight: 500; }
 .desk-shell-tabs .rb-area-tab-highlight { display: none; }

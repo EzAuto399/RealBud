@@ -1,21 +1,25 @@
 import { isValidElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, clearedStream, flushedStream, StoreProvider, toolStartedStream } from './store';
+import { WORKSPACE_TABS_CHANGED } from '@/lib/workspace-tabs';
+import { NEEDS_YOU_STALE } from '@/lib/needs-you';
+import { productRuntimeEventVisible } from '../../server/product-mode.ts';
 
 // Render StoreProvider once, without a DOM, to reach its real dispatch.
-const hook = vi.hoisted(() => ({ state: null as null | ((initial: unknown) => unknown), raw: [] as Array<{ type: string }> }));
+const hook = vi.hoisted(() => ({ state: null as null | ((initial: unknown) => unknown), raw: [] as Array<{ type: string }>, effects: null as null | Array<() => unknown> }));
 vi.mock('react', async importOriginal => ({ ...await importOriginal<typeof import('react')>(),
   useReducer: (_reducer: unknown, initial: unknown) => [hook.state ? hook.state(initial) : initial, (action: { type: string }) => { hook.raw.push(action); }],
   useState: (initial: unknown) => [initial, () => {}],
   useRef: (initial: unknown) => ({ current: initial }),
   useMemo: (factory: () => unknown) => factory(),
   useCallback: (callback: unknown) => callback,
-  useEffect: () => {},
+  useEffect: (effect: () => unknown) => { hook.effects?.push(effect); },
 }));
 vi.mock('@/lib/local-session', () => ({ ensureSession: async () => '', clearLocalSession: () => {} }));
 // Sending also asks for the office member session (loaded on demand); with fake timers a real
 // module load would land after the timed window, so it answers at once here.
 vi.mock('@/lib/company-api', () => ({ companyApi: { memberSessionHeaders: async () => ({}) } }));
+vi.mock('@/lib/connected-apps-refresh', () => ({ officeSources: { accept: () => {}, invalidate: () => {} }, watchOfficeSources: () => () => {} }));
 
 // A stalled service: the request only ends when its signal aborts. Its health check is refused.
 const stalled = vi.fn((path: string, init: RequestInit) => new Promise((_resolve, reject) => {
@@ -86,5 +90,73 @@ describe('Ask step line in the live stream', () => {
     expect(toolStartedStream(bank, 't', 'tool').step).toEqual({});
     expect(clearedStream({ ...bank, step: { ...bank.step, other: 'Checking Gmail…' } }, 't').step).toEqual({ other: 'Checking Gmail…' });
     expect(clearedStream(empty, 't')).toBe(empty);
+  });
+});
+
+describe('saved Desk layout announcements in the event stream', () => {
+  afterEach(() => { vi.unstubAllGlobals(); hook.effects = null; hook.raw.length = 0; });
+  it("rereads Desk once per announced save, from the service's frame alone", async () => {
+    const win = Object.assign(new EventTarget(), { location: { hash: '' } });
+    vi.stubGlobal('window', win);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    const sources: Array<{ onmessage: ((event: { data: string }) => void) | null }> = [];
+    vi.stubGlobal('EventSource', class { onmessage = null; onopen = null; onerror = null; constructor() { sources.push(this); } close() {} });
+    const heard: unknown[] = [];
+    win.addEventListener(WORKSPACE_TABS_CHANGED, event => { heard.push((event as CustomEvent).detail); });
+    hook.effects = [];
+    StoreProvider({ children: null });
+    const stops = hook.effects.map(effect => effect());
+    await vi.waitFor(() => expect(sources).toHaveLength(1));
+    const frame = (value: unknown) => sources[0]!.onmessage!({ data: JSON.stringify(value) });
+
+    // A product-mode Ask turn where Bud arranges Desk, as the service forwards it
+    // (server/index.ts): the tool's completion never reaches the client, and no runtime event rereads.
+    const turn = [
+      { type: 'turn.started', threadId: 'fictional-thread', turnId: 'fictional-turn' },
+      { type: 'item.started', threadId: 'fictional-thread', turnId: 'fictional-turn', itemType: 'tool', itemId: 'tool-1', title: 'mcp__workspace_views__desk_arrange' },
+      { type: 'item.completed', threadId: 'fictional-thread', turnId: 'fictional-turn', itemType: 'tool', itemId: 'tool-1', ok: true },
+      { type: 'turn.completed', threadId: 'fictional-thread', turnId: 'fictional-turn' },
+    ];
+    const forwarded = turn.filter(event => productRuntimeEventVisible(event) || event.type === 'turn.started');
+    expect(forwarded.map(event => event.type)).toEqual(['turn.started', 'item.started', 'turn.completed']);
+    for (const event of forwarded) frame({ kind: 'runtime', event });
+    expect(heard).toEqual([]);
+
+    // The service's own announcement: exactly one reread signal per frame, carrying who saved it.
+    frame({ kind: 'workspace-tabs', revision: 2, by: 'bud' });
+    expect(heard).toEqual([{ revision: 2, by: 'bud' }]);
+    frame({ kind: 'workspace-tabs', revision: 3 });
+    expect(heard).toEqual([{ revision: 2, by: 'bud' }, { revision: 3 }]);
+    // A reconnect may have missed announcements: one signal with no revision rereads.
+    frame({ kind: 'hello', streams: [] });
+    expect(heard).toHaveLength(3);
+    expect(heard[2]).toBeNull();
+    for (const stop of stops) if (typeof stop === 'function') stop();
+  });
+
+  it('marks Needs you stale on every frame that can change it, and on no other', async () => {
+    const win = Object.assign(new EventTarget(), { location: { hash: '' } });
+    vi.stubGlobal('window', win);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    const sources: Array<{ onmessage: ((event: { data: string }) => void) | null }> = [];
+    vi.stubGlobal('EventSource', class { onmessage = null; onopen = null; onerror = null; constructor() { sources.push(this); } close() {} });
+    let stale = 0;
+    win.addEventListener(NEEDS_YOU_STALE, () => { stale++; });
+    hook.effects = [];
+    StoreProvider({ children: null });
+    const stops = hook.effects.map(effect => effect());
+    await vi.waitFor(() => expect(sources).toHaveLength(1));
+    const frame = (value: unknown) => sources[0]!.onmessage!({ data: JSON.stringify(value) });
+    const run = { id: 'fictional-run', loopId: 'weekly-bills', loopName: 'Weekly bills review', status: 'completed', detail: 'Nothing new.' };
+    frame({ kind: 'workspace-tabs', revision: 2 });
+    frame({ kind: 'group.deleted', groupId: 'fictional-group' });
+    expect(stale).toBe(0);
+    frame({ kind: 'loop', loop: { id: 'weekly-bills' } });
+    frame({ kind: 'loop.run', run });
+    frame({ kind: 'loops.recovery', recovery: { active: false } });
+    frame({ kind: 'job.run', run: { id: 'fictional-job-run' } });
+    frame({ kind: 'desk', snapshot: { properties: [], lastRunAt: null } });
+    expect(stale).toBe(5);
+    for (const stop of stops) if (typeof stop === 'function') stop();
   });
 });

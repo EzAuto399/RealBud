@@ -1,6 +1,7 @@
 import type { BudAutoSetup, HermesStatus } from "@/state/store";
 import { isManagedModelChoice, type ManagedModelChoiceId } from "@shared/managed-model-choices";
 import { CONTACT_SUPPORT, CONTACT_SUPPORT_INLINE } from "@shared/support";
+import { youRecoveryTarget } from "./you-navigation";
 
 export type BudSetupStage = "checking" | "install" | "safeguards" | "model" | "verify" | "ready";
 export type BudSetupStep = Exclude<BudSetupStage, "checking" | "ready">;
@@ -197,6 +198,68 @@ export function budFirstSetupCover(status: HermesStatus | null, context: { conne
   const state = status?.autoSetup?.state;
   if (context.recovering || !status || status.readyOnce || !state || state === "idle" || state === "ready" || !budAutoSetupView(status)) return null;
   return context.connected && !context.statusError && (state === "installing" || state === "verifying") ? "running" : "stopped";
+}
+
+/** sessionStorage key: recovery took this app session past the office-link screen. */
+export const LINK_GATE_LEFT = "realbud.linkGateLeft";
+// Blocked storage still keeps the choice until this window reloads.
+let leftInMemory = false;
+
+/** Whether recovery took this app session past the office-link screen. */
+export function linkGateLeft(): boolean {
+  if (leftInMemory) return true;
+  try { return sessionStorage.getItem(LINK_GATE_LEFT) === "1"; } catch { return false; }
+}
+
+/** Pass the office-link screen for this app session, for recovery only: a
+ * reload keeps it, the next launch asks again. */
+export function leaveLinkGate() {
+  leftInMemory = true;
+  try { sessionStorage.setItem(LINK_GATE_LEFT, "1"); } catch { /* kept in memory for this window */ }
+}
+
+/** First run's saved recovery choice ("Restore a private backup", "Open
+ * recovery") reopens Workspace at that recovery section on every launch until
+ * the person goes back to welcome. It never passes the office-link screen by
+ * itself, or every later launch would skip it with no click: the screen offers
+ * "Continue recovery" instead. True when first run started recovery. */
+export function resumeSavedRecovery(stage: string | undefined, at: { hash: string }): boolean {
+  if (stage !== "recovery") return false;
+  at.hash = youRecoveryTarget(at.hash);
+  return true;
+}
+
+/** The office-link screen's "Continue recovery": back to the recovery section
+ * first run started (a staged restore keeps its private-backup target), past
+ * the screen for this app session only. */
+export function continueRecovery(at: { hash: string }) {
+  at.hash = youRecoveryTarget(at.hash);
+  leaveLinkGate();
+}
+
+export type OfficeLinkGate = "checking" | "unavailable" | "not-linked" | "revoked";
+
+/**
+ * Every computer links to its office before anything else opens. Once the
+ * local service is connected: "checking" until both the link and the book have
+ * been read (the book says whether recovery comes first, so nothing flashes
+ * and recovery is never held), "unavailable" when the link read failed, else
+ * "not-linked" or "revoked". While disconnected, a computer whose last
+ * successful read was not linked or revoked keeps that screen; otherwise
+ * (unread, unavailable or linked) the shell's own startup and reconnect UI
+ * stays. Null when linked, during book recovery, in a design preview, or once
+ * recovery took this session past it. Presentation only; the server stays the
+ * authority on every action.
+ */
+export function officeLinkGate(
+  office: { link: "linked" | "not-linked" | "unavailable" | undefined; revoked: boolean },
+  context: { connected: boolean; bookRead: boolean; recovering: boolean; preview: boolean; left: boolean },
+): OfficeLinkGate | null {
+  if (context.recovering || context.preview || context.left || office.link === "linked") return null;
+  if (!context.connected) return office.link === "not-linked" ? (office.revoked ? "revoked" : "not-linked") : null;
+  if (office.link === undefined || !context.bookRead) return "checking";
+  if (office.link === "unavailable") return "unavailable";
+  return office.revoked ? "revoked" : "not-linked";
 }
 
 /** First run's "Continue to Bud setup" opens Bud status over Desk. Once every

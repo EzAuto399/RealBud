@@ -25,6 +25,7 @@ const SERVER_STEPS: Record<string, Record<string, string>> = {
   reminders: { set_reminder: "Setting a reminder…" },
   workspace_views: {
     views_list: "Checking your saved views…",
+    desk_arrange: "Arranging your Desk…",
     views_create: "Preparing a change to your views…",
     views_rename: "Preparing a change to your views…",
     views_set_visible: "Preparing a change to your views…",

@@ -4,6 +4,9 @@ import { sweepStaleTempFiles } from "./temp-sweep.ts";
 import { LiveStreamRecovery } from "../shared/live-stream.ts";
 import { sendToSseClients } from "./sse-clients.ts";
 import { createWorkspaceTabsHandler } from "./workspace-tabs.ts";
+import { createNeedsYouHandler } from "./needs-you.ts";
+import { officeDesk } from "./desk-preset.ts";
+import { coreOfficeDesk } from "../shared/desk-areas.ts";
 import { createRemindersService } from "./reminders.ts";
 import { createOnboardingHandler } from "./onboarding.ts";
 import { createCustomerPackService } from "./customer-packs.ts";
@@ -2260,13 +2263,14 @@ async function startSeatTurn(
             return { id: created.id, dueAt: created.dueAt };
           },
         };
-        // Desk saved views through the same service and revision check as the
-        // Desk's own GET/PUT; every change is shown on the one-time card first.
+        // Desk saved views and layout through the same service and revision check as
+        // the Desk's own GET/PUT; saved-view changes show the one-time card first.
+        // Writes are announced as Bud's, so Desk offers Undo.
         integrations.workspaceViews = {
           read: async () => (await workspaceTabs.handle('/api/workspace-tabs', 'GET'))!,
           save: async body => {
             if (desk.memberKeyForWorker() !== reminderMember) throw Object.assign(new Error('The RealBud member changed, so no views were changed.'), { code: 'member_changed' });
-            return (await workspaceTabs.handle('/api/workspace-tabs', 'PUT', body))!;
+            return (await workspaceTabs.handle('/api/workspace-tabs', 'PUT', body, 'bud'))!;
           },
         };
         // Working rules (maintenance month rule, inspection rules, Morning priorities)
@@ -3678,6 +3682,11 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         limit: url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : undefined,
         loopId: url.searchParams.get('loopId') ?? undefined,
       }));
+    }
+    if (path === '/api/needs-you') {
+      res.setHeader('cache-control', 'no-store');
+      const result = await needsYou.handle(method);
+      return json(res, result.status, result.body);
     }
     if (path === "/api/loops" && method === "GET") {
       const fromParam = url.searchParams.get("from");
@@ -6361,10 +6370,19 @@ setBankProvider({
   listBankAccounts: async () => (await redbark.listBankAccounts()).map(account => ({ ...account, connection: 'redbark-mcp' })),
   listBankTransactions: query => redbark.listBankTransactions(query),
 });
-const workspaceTabs = createWorkspaceTabsHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id });
+// Every saved layout is announced, so an open Desk rereads at once whoever made the change.
+// The office's Desk preset comes from its chosen workflow pack (server/desk-preset.ts). A damaged
+// setup shows the core Desk; a damaged pack journal keeps the office's selected workflows without the pack preset.
+// Setup and Workspace report the damage themselves.
+const readOfficeDesk = () => officeDesk({ agency: async () => (await agencySetup.getConfiguration()).settings,
+  installedPack: id => customerPacks.installedPack(id).catch(() => { oplog("storage", "desk: the workflow pack record could not be read; Desk shows the core work areas"); return null; }),
+}).catch(() => coreOfficeDesk());
+const workspaceTabs = createWorkspaceTabsHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, officeDesk: readOfficeDesk, onSaved: change => broadcast({ kind: "workspace-tabs", ...change }) });
 void workspaceTabs.addGetStartedToAutomaticSimpleDesk()
   .then(applied => { if (applied) oplog("boot", "desk: Get started added to the automatic simple layout"); })
-  .catch(() => oplog("boot", "desk: Get started could not be added to the simple layout; the saved layout stays"));
+  .then(() => workspaceTabs.showAreaTabsOnAutomaticSimpleDesk())
+  .then(applied => { if (applied) oplog("boot", "desk: work-area tabs shown on the automatic simple layout"); })
+  .catch(() => oplog("boot", "desk: the automatic simple layout could not be updated; the saved layout stays"));
 // One-off reminders per workspace and member. Its own interval only marks them
 // due; nothing is sent or started. The office zone is read, never guessed.
 // Weekly-bills follow-ups: owner, date, resolve/reopen per finding; survives repeat runs.
@@ -6532,6 +6550,15 @@ const mailWorkspace = createMailIngestionService({ directory: DATA_DIR, workspac
     if (!binding || binding.accountId !== authority.accountId) throw new Error('The reviewed Gmail binding is unavailable.');
     return scanGmailReadOnly({ ...binding, assertAuthority }, request, signal);
   },
+});
+// Needs you: one read of what needs a person across the office's workflows (server/needs-you.ts).
+const needsYou = createNeedsYouHandler({
+  selectedWorkflows: async () => (await agencySetup.getConfiguration()).settings.selectedWorkflows,
+  officeDesk: readOfficeDesk,
+  mail: mailWorkspace, billFollowUps: billFollowUpsApi,
+  weeklyBills: () => latestRoutineResult(workflowDatabase(), 'weekly-bills'),
+  w1Status: async () => (await w1Host()).status(),
+  loops: () => loops!, jobRuns: () => jobRuns.list(), savedJobs: () => listRecipes().map(recipe => recipe.id),
 });
 // Restore only the connection. An interrupted browser job always stays held.
 const sourceBillRegisters = new WeakMap<ReturnType<typeof workflowDatabase>, SourceBillRegister>();

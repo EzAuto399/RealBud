@@ -241,6 +241,43 @@ describe("Ask model relay", () => {
     expect(keys[2]).not.toBe(keys[0]);
   });
 
+  it("gives the SDK's retry of an error answer a new idempotency key, and keeps it after a 409", async () => {
+    const statuses = [502, 200, 409, 409];
+    const gateway: Upstream = await upstream((response) => {
+      response.writeHead(statuses[gateway.seen.length - 1] ?? 200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+    const root = home();
+    grantManagedAccess(root, { baseUrl: gateway.url });
+    const { relay, token } = await relayFor(root);
+    const body = { model: "deepseek-v4.1-flash", messages };
+    const other = { model: "deepseek-v4.1-flash", messages: [...messages, { role: "user", content: "Fictional follow-up." }] };
+    await post(relay, body, token, { "x-stainless-retry-count": "0" });
+    await post(relay, body, token, { "x-stainless-retry-count": "1" });
+    await post(relay, other, token, { "x-stainless-retry-count": "0" });
+    await post(relay, other, token, { "x-stainless-retry-count": "1" });
+    const keys = gateway.seen.map(request => request.headers["idempotency-key"]);
+    expect(keys[1]).not.toBe(keys[0]);
+    expect(keys[3]).toBe(keys[2]);
+  });
+
+  it("keeps Hermes and RealBud tools and trims app and connector tools to Modelvia's 64", async () => {
+    const root = home(), gateway = await upstream(json({}));
+    grantManagedAccess(root, { baseUrl: gateway.url });
+    const { relay, token } = await relayFor(root);
+    const tool = (name: string) => ({ type: "function", function: { name, parameters: { type: "object" } } });
+    const own = [...Array.from({ length: 15 }, (_, i) => tool(`core_${i}`)), ...Array.from({ length: 20 }, (_, i) => tool(`mcp__realbud_${i}__read`))];
+    const apps = [...Array.from({ length: 40 }, (_, i) => tool(`mcp__connected_apps__GMAIL_${i}`)), ...Array.from({ length: 10 }, (_, i) => tool(`mcp_office_connectors_tool_${i}`))];
+    await post(relay, { model: "deepseek-v4.1-flash", messages, tools: [...apps.slice(0, 5), ...own, ...apps.slice(5)] }, token);
+    await post(relay, { model: "deepseek-v4.1-flash", messages, tools: own }, token);
+    const sent = gateway.seen.map(request => (request.body as { tools: { function: { name: string } }[] }).tools.map(t => t.function.name));
+    expect(sent[0]).toHaveLength(64);
+    expect(sent[0]).toEqual(expect.arrayContaining(own.map(t => t.function.name)));
+    expect(sent[0].slice(0, 5)).toEqual(apps.slice(0, 5).map(t => t.function.name));
+    expect(sent[0]).not.toContain("mcp_office_connectors_tool_0");
+    expect(sent[1]).toHaveLength(35);
+  });
+
   it("re-checks the grant and entitlement on every request", async () => {
     const root = home(), gateway = await upstream(json({}));
     grantManagedAccess(root, { baseUrl: gateway.url });

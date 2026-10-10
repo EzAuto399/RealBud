@@ -1,10 +1,10 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { NotNoiseButton, sendNotNoise } from './MailWorkPanel';
+import { MailWorkPanel, NotNoiseButton, sendNotNoise, visibleMailGroups } from './MailWorkPanel';
 import type { MailWorkItem } from '@shared/mail-ingestion';
 
-vi.mock('@/state/store', () => ({ api: vi.fn(), useStore: () => ({ dispatch: vi.fn() }) }));
+vi.mock('@/state/store', () => ({ api: vi.fn(), useStore: () => ({ dispatch: vi.fn(), refreshActivity: vi.fn(), state: { connected: true, loops: [], loopRuns: [], activityLoad: { routines: 'ready' }, scheduleRecovery: { active: false, detail: '' }, desk: null } }) }));
 vi.mock('@/lib/workspace-tabs', () => ({ useWorkspaceTabs: () => ({ data: null }) }));
 
 const item = (over: Partial<MailWorkItem> = {}): MailWorkItem => ({ id: 'm1', revision: 7, accountId: 'a', threadId: 't', subject: 'Fictional newsletter', sourceMessageIds: [], sourceDigest: 'd',
@@ -38,5 +38,28 @@ describe('MailWorkPanel Not noise', () => {
     const request = vi.fn().mockRejectedValue(new Error('Network down')), refresh = vi.fn().mockRejectedValue(new Error('offline'));
     await expect(sendNotNoise(request, item(), refresh)).rejects.toThrow('Network down');
     expect(refresh).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('MailWorkPanel as a work area', () => {
+  it('hides empty filters but always shows Needs attention and the selected filter', () => {
+    expect(visibleMailGroups({ open: 0, waiting: 0, reference: 2, snoozed: 0, done: 0 }, 'open')).toEqual(['open', 'reference']);
+    expect(visibleMailGroups({ open: 0, waiting: 0, reference: 0, snoozed: 0, done: 0 }, 'done')).toEqual(['open', 'done']);
+    expect(visibleMailGroups(undefined, 'open')).toEqual(['open']);
+  });
+
+  it('reads status line, then the work, then Setup collapsed, with one filled button and no second run path', () => {
+    const html = renderToStaticMarkup(createElement(MailWorkPanel));
+    const status = html.indexOf('aria-label="Mail priorities status"'), setup = html.indexOf('<details class="area-setup"><summary>Setup</summary>');
+    expect(status).toBeGreaterThan(0);
+    expect(setup).toBeGreaterThan(status);
+    expect(html.indexOf('Loading saved mail work')).toBeGreaterThan(status);
+    expect(html.indexOf('Loading saved mail work')).toBeLessThan(setup);
+    expect(html.slice(setup)).toContain('>Collect reviewed Gmail scope</button>');
+    expect(html.slice(setup)).toContain('>Refresh saved mail work</button>');
+    expect(html.slice(setup)).toContain('Morning schedule');
+    expect(html).not.toContain('Collect and prepare priorities with Bud');
+    expect(html.match(/ bg-agency /g)).toHaveLength(1);
+    expect(html).toContain('>Check now</button>');
   });
 });

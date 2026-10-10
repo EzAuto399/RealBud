@@ -53,8 +53,7 @@ async function runJob(name, id) {
 }
 async function otherWork(label, region) {
   await openDesk();
-  await page.locator('.desk-other-work > summary').click();
-  await page.getByRole('group', { name: 'Other work', exact: true }).getByRole('button', { name: label, exact: true }).click();
+  await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: label, exact: true }).click();
   const panel = page.getByRole('region', { name: region }); await panel.waitFor(); return panel;
 }
 
@@ -190,9 +189,7 @@ try {
     await card.waitFor();
     await shot('w4-chat-card');
     await card.getByRole('button', { name: /Open$/ }).click();
-    await page.locator('.desk-other-work > summary').waitFor();
-    await page.locator('.desk-other-work > summary').click();
-    await page.getByRole('group', { name: 'Other work', exact: true }).getByRole('button', { name: 'Bills and calendar', exact: true }).click();
+    await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: 'Bills and calendar', exact: true }).click();
     const panel = page.getByRole('region', { name: 'Maintenance checks' }); await panel.waitFor();
     const repeat = panel.getByRole('listitem', { name: /^Several invoices this month · 1 Fictional Oak Street/ });
     await repeat.waitFor();

@@ -212,7 +212,7 @@ export interface SetupSequenceInput {
   sharedGmailBlocked?: boolean;
   /** The Gmail the office's mode asks for is connected and readable here (`gmailReadyHere`). */
   gmailReady?: GmailReady;
-  /** Steps the person skipped for now on this computer. Bud's own step can't be skipped. */
+  /** Steps the person skipped for now on this computer. Bud's own step and the office link can't be skipped. */
   skipped?: readonly SetupStepId[];
   /** The office-link facts beyond linked / not linked (`readOfficeLinkFacts`). */
   office?: OfficeLinkFacts;
@@ -669,7 +669,8 @@ export function setupSequence(input: SetupSequenceInput): SetupStep[] {
     const { fact, status, actionLabel, target, ownerRequest, ownerOnly } = facts[step.id];
     let state: SetupStepState;
     if (fact === "done") state = "done";
-    else if (input.skipped?.includes(step.id)) state = "skipped";
+    // The office link comes before anything else: an older saved skip of it is ignored.
+    else if (step.id !== "link" && input.skipped?.includes(step.id)) state = "skipped";
     else if (!currentTaken) {
       state = "current";
       currentTaken = true;

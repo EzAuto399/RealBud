@@ -2,6 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultDeskSections, type WorkspaceTab, type WorkspaceTabsResponse } from '@shared/workspace-tabs';
+import { coreOfficeDesk } from '@shared/desk-areas';
 import { WorkspaceTabsManager } from './WorkspaceTabsManager';
 
 const context = vi.hoisted(() => ({ data: null as WorkspaceTabsResponse | null, loading: false, saving: false, error: '', refresh: vi.fn(), save: vi.fn(), reset: vi.fn() }));
@@ -12,7 +13,7 @@ const tabs: WorkspaceTab[] = [
   { id: 'view-waiting', label: 'Waiting for a reply', visible: true, view: { kind: 'tasks', filter: 'waiting' } },
   { id: 'view-bills', label: 'Bills to review', visible: false, view: { kind: 'bills', filter: 'needs-you' } },
 ];
-const response = (items = tabs): WorkspaceTabsResponse => ({ state: { version: 2, revision: 4, tabs: items, desk: { sections: defaultDeskSections() }, history: [] }, recovery: null });
+const response = (items = tabs): WorkspaceTabsResponse => ({ state: { version: 3, revision: 4, tabs: items, desk: { sections: defaultDeskSections() }, history: [] }, recovery: null, office: coreOfficeDesk() });
 const render = () => renderToStaticMarkup(createElement(WorkspaceTabsManager));
 const control = (html: string, name: string) => html.match(new RegExp(`<button[^>]*aria-label="${name}"[^>]*>`))?.[0];
 beforeEach(() => { Object.assign(context, { data: response(), loading: false, saving: false, error: '' }); vi.clearAllMocks(); });
@@ -38,7 +39,7 @@ describe('saved views screen (read-only; Bud changes views)', () => {
   });
 
   it('keeps the recovery alert and reset path when saved settings are damaged', () => {
-    context.data = { state: null, recovery: { message: 'Saved views need recovery.', resetToken: 'a'.repeat(64) } };
+    context.data = { state: null, recovery: { message: 'Saved views need recovery.', resetToken: 'a'.repeat(64) }, office: coreOfficeDesk() };
     const html = render();
     expect(html).toContain('role="alert"');
     expect(html).toContain('Saved views need recovery.');

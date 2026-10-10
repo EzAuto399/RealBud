@@ -11,6 +11,7 @@ import { BrowserSignInStrip, useBrowserSignIns } from "../BrowserSignInStrip";
 import { parseReiAccount, ReiDirectoryRefresh } from "../ReiDirectoryRefresh";
 import { NAVIGATION_CANCELLED, registerNavigationGuard } from '@/lib/navigation-guard';
 import { useRunPoll } from "@/lib/run-poll";
+import { AreaStatusLine } from "../desk/AreaStatusLine";
 
 const request = <T,>(method: string, path: string, body?: unknown): Promise<T> => api(path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 
@@ -60,10 +61,11 @@ const control = "min-h-11 rounded border border-line bg-sheet px-3 py-2 text-sm 
 const firstPassDecision = (row: FirstPassRow, choice: "import" | "hold" | "exclude", reason: string): Decision =>
   choice === "import" && row.propertyId ? { rowId: row.rowId, action: "assign", propertyId: row.propertyId, reason } : { rowId: row.rowId, action: choice === "exclude" ? "exclude" : "keep", reason };
 
-/** Bank review is operational work inside the bank job's detail. Saved review
- * history loads only when the person opens Earlier reviews. `registerCloseGuard`
- * lets the surrounding detail ask before closing over unsaved work. */
-export function BankReferenceReview({ registerCloseGuard }: { registerCloseGuard?: (guard: () => boolean) => () => void } = {}) {
+/** Bank review is operational work inside the bank job's detail, or a Desk work area
+ * (`area`: its status line on top and its own scroll region). Saved review history
+ * loads only when the person opens Earlier reviews. `registerCloseGuard` lets the
+ * surrounding detail ask before closing over unsaved work. */
+export function BankReferenceReview({ registerCloseGuard, area = false }: { registerCloseGuard?: (guard: () => boolean) => () => void; area?: boolean }) {
   const [source, setSource] = useState<BankSourceUpload | null>(null);
   const [readingFile, setReadingFile] = useState(false);
   const fileRead = useRef(0);
@@ -99,8 +101,9 @@ export function BankReferenceReview({ registerCloseGuard }: { registerCloseGuard
   const unfinished = useRef(false), reading = useRef(false);
   unfinished.current = unsaved || Boolean((source || settingsDirty.current) && !samePreparation);
   reading.current = readingFile;
-  // This lazy card may mount before App mirrors its door into the address bar.
-  const stayingUrl = useRef(typeof location === 'undefined' ? '' : `${location.pathname}${location.search}#/schedule`);
+  // Cancelled navigation returns to this card's door. The Schedule drawer may mount before App
+  // mirrors its door into the address bar; a Desk area mounts inside Desk, so it keeps Desk's hash.
+  const stayingUrl = useRef(typeof location === 'undefined' ? '' : `${location.pathname}${location.search}${area ? (location.hash.startsWith('#/desk') ? location.hash : '#/desk') : '#/schedule'}`);
   useEffect(() => {
     const removeClose = registerCloseGuard?.(() => {
       if (!unfinished.current && !reading.current && !pending.current) return true;
@@ -173,8 +176,12 @@ export function BankReferenceReview({ registerCloseGuard }: { registerCloseGuard
     const link = document.createElement("a"); link.href = url; link.download = result.filename; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  return <section className="space-y-4" aria-labelledby="bank-review-title">
-    <div><h3 id="bank-review-title" className="font-medium text-ink">Prepare bank references</h3>
+  const Heading = area ? "h2" : "h3";
+  return <section className={`space-y-4${area ? " min-h-0 overflow-y-auto" : ""}`} aria-labelledby="bank-review-title">
+    <div><Heading id="bank-review-title" className="font-medium text-ink">Prepare bank references</Heading>
+      {/* One way to start an import here: the strip's Start bank import (attended REI sign-in, asks answered in place).
+          Check now would start the same run through the clock, which waits on REI sign-in until the office day ends (server/w1-host.ts). */}
+      {area && <div className="mt-2"><AreaStatusLine area="bank" checkNow={false} /></div>}
       <p className="mt-1 text-sm text-ink-secondary">Review the daily bank export, match incoming payments to property references, then download a checked CSV copy.</p>
       <p className="mt-1 text-xs text-ink-muted">Pull from the bank feed or choose a bank CSV. The last bank mapping and property references are reused for the next file. Original dates, amounts and order stay intact.</p></div>
     <W1RunPanel accounts={bank.accounts} error={bank.error} onLoadAccounts={() => void bank.load()} onOpenBatch={id => perform(() => open(id))}

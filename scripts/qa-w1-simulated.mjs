@@ -143,8 +143,10 @@ async function capture(name, locator) {
 async function openBankJob() {
   await page.goto(`${uiBase}/#/desk`);
   await page.getByRole('button', { name: /^Schedule\b/ }).first().click();
-  // A fresh office has no role pack, so Schedule's list leaves the Auston job out (#54); the sidebar's deep link opens it.
-  await page.getByRole('button', { name: /^Bank reference review\b/ }).first().click();
+  // A fresh office has no role pack, so Schedule's list and sidebar leave the Auston job out (#54); its deep link opens it
+  // (as qa-bank-amendments.mjs does). Schedule must be mounted first: an earlier job hash reads as an unknown door.
+  await page.getByRole('list', { name: 'Jobs', exact: true }).waitFor();
+  await page.evaluate(() => { location.hash = 'job-bank-references'; });
   await strip().or(page.getByRole('region', { name: 'Set up bank imports', exact: true })).first().waitFor();
 }
 const stripSays = text => strip().getByText(text, { exact: false }).first().waitFor({ timeout: 30_000 });

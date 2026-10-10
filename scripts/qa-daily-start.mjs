@@ -2,7 +2,8 @@
 // Austin demo office (scripts/seed-austin-demo.mjs) the REI morning refresh misses for sign-in and
 // a W1 bank import waits at REI's sign-in page. Desk then shows one primary action, "Sign in to
 // REI", reached by keyboard, answering within 400 ms and bringing the waiting sign-in page forward
-// (no second REI tab); the status bar says "REI: sign in needed". The simulated person signs in on
+// (no second REI tab); the status bar's setup item (step 4, as this PC has never signed in to REI)
+// opens the same sign-in. The simulated person signs in on
 // the fictional portal's own page; the bank import carries on by itself, the missed refresh runs
 // again, and the status bar says "REI: signed in". Get started shows progress, Skip and Back work,
 // and the first-day guide's "Try it with Bud" fills Work's composer for Kevin's three workflows
@@ -129,14 +130,19 @@ try {
   await reiCard().getByText('Bud is waiting to finish Bank reference review and REI morning refresh.', { exact: true }).waitFor();
   await reiCard().getByText('You type your password on REI’s own page. Bud never sees it.', { exact: true }).waitFor();
   await reiCard().getByText('REI’s sign-in page is open in your work browser. Bud carries on by itself once you’re signed in.', { exact: true }).waitFor();
-  await statusBar().getByRole('button', { name: 'REI: sign in needed', exact: true }).waitFor();
+  // This PC has never been signed in to REI (the pack's "Signed in to REI Cloud once" is open), so the status bar's
+  // one setup item is step 4 and its fix opens REI's sign-in; the separate REI item stays hidden until then (3628545e).
+  const setupItem = statusBar().getByRole('button', { name: 'Setup 4 of 5 · Connect what your workflows read', exact: true });
+  await setupItem.waitFor();
+  assert.equal(await setupItem.getAttribute('title'), 'REI’s sign-in page is open in the work browser. Type your password there.');
+  assert.equal(await statusBar().getByText(/^REI:/).count(), 0, 'no second REI item beside the setup step that opens REI sign-in');
   const filled = await page.evaluate(() => [...document.querySelectorAll('main button')]
     .filter(b => b.offsetParent && !b.closest('#desk-case-column') && /\bbg-agency\b/.test(b.className) && /\btext-white\b/.test(b.className)).map(b => b.textContent.trim()));
   assert.deepEqual(filled, ['Sign in to REI'], `Desk's only filled action outside the case decision: ${JSON.stringify(filled)}`);
   const bodyText = await page.locator('body').innerText();
   assert.ok(!/cookie|token|Hermes/i.test(bodyText), 'no engine words on Desk');
   await capture('01-desk-rei-sign-in-needed', reiCard());
-  pass(`Desk shows one filled action, "Sign in to REI" (${timings['desk-to-sign-in-action-ms']} ms from load), naming the waiting work; status bar: "REI: sign in needed"; no engine words`);
+  pass(`Desk shows one filled action, "Sign in to REI" (${timings['desk-to-sign-in-action-ms']} ms from load), naming the waiting work; status bar: "Setup 4 of 5 · Connect what your workflows read" ("REI’s sign-in page is open…"), no second REI item; no engine words`);
 
   // ── 3. Keyboard only: Tab to Sign in to REI, Enter; feedback under 400 ms; the same sign-in page comes forward ──
   // From where a fresh Desk puts keyboard focus (the first Tab lands in the selected case), Shift+Tab goes up to the card.

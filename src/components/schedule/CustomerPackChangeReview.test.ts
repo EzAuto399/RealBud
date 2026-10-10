@@ -6,7 +6,7 @@ import type {CustomerPackChangePreview,CustomerPackRecipe} from '@shared/custome
 const recipe:CustomerPackRecipe={id:'wf-fixture',title:'Review the inbox',description:'Preserve the source.',steps:['Check the message.'],evidence:'Source links.',capabilities:['read-files','analyse','draft'],limits:{maxRuntimeMinutes:2,maxTurns:6},siteNotes:null,schedule:null,allowedOrigins:[]};
 const preview:CustomerPackChangePreview={action:'upgrade',pack:{format:'realbud-customer-pack',version:1,id:'fixture-office',title:'Fictional office',revision:2,
   workflows:[{id:'inbox',title:'Review inbox',recipeIds:[recipe.id],checks:['input-coverage']}],recipes:[recipe],skills:[],dependencies:{runtime:'hermes-property',mode:'supplied-source-preparation',schedules:'off',permissions:'local-review-required'}},digest:'a'.repeat(64),installedDigest:'b'.repeat(64),installedRevision:1,previewDigest:'c'.repeat(64),
-  recipes:[{id:recipe.id,action:'update',before:recipe,after:{...recipe,description:'Check verified source dates.'}}],skills:[],instructions:[{key:'guidance:fixture',before:'Old text\n  Preserve spaces.',after:'<script>fictional literal text</script>\n  Keep indentation.'}],conflicts:[],canApply:true};
+  recipes:[{id:recipe.id,action:'update',before:recipe,after:{...recipe,description:'Check verified source dates.'}}],skills:[],instructions:[{key:'guidance:fixture',before:'Old text\n  Preserve spaces.',after:'<script>fictional literal text</script>\n  Keep indentation.'}],desk:[],conflicts:[],canApply:true};
 describe('plain-language pack change review',()=>{
   it('renders readable plans and escaped literal instruction changes with approval initially disabled',()=>{
     const html=renderToStaticMarkup(createElement(CustomerPackChangeReview,{preview,busy:false,apply:()=>{},cancel:()=>{}}));
@@ -14,6 +14,12 @@ describe('plain-language pack change review',()=>{
     expect(html).toContain('Check the message.');expect(html).toContain('require fresh approval');expect(html).not.toContain('&quot;maxRuntimeMinutes&quot;');
     expect(html).toContain('&lt;script&gt;fictional literal text&lt;/script&gt;');expect(html).toContain('\n  Keep indentation.');expect(html).not.toContain('<script>');
     expect(html).toMatch(/disabled=""[^>]*>Apply reviewed upgrade/);expect(html).toContain('I reviewed this exact change');
+  });
+  it('lists Desk changes under a Desk heading only when the office default changes',()=>{
+    expect(renderToStaticMarkup(createElement(CustomerPackChangeReview,{preview,busy:false,apply:()=>{},cancel:()=>{}}))).not.toContain('>Desk<');
+    const html=renderToStaticMarkup(createElement(CustomerPackChangeReview,{preview:{...preview,desk:['Adds the Bank references tab (List)','Removes the Mail priorities tab']},busy:false,apply:()=>{},cancel:()=>{}}));
+    expect(html).toContain('<h5 class="font-medium">Desk</h5>');expect(html).toContain('<li>Adds the Bank references tab (List)</li>');expect(html).toContain('<li>Removes the Mail priorities tab</li>');
+    expect(html).toContain('no access or work changes');
   });
   it('keeps conflicts visible and prevents confirmation while a change is unavailable',()=>{
     const html=renderToStaticMarkup(createElement(CustomerPackChangeReview,{preview:{...preview,canApply:false,conflicts:['Your local steps conflict with this version.']},busy:false,apply:()=>{},cancel:()=>{}}));

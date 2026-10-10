@@ -2,13 +2,14 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { defaultDeskSections, defaultShellLayout } from '@shared/workspace-tabs';
+import type { NeedsYouSnapshot } from '@shared/needs-you';
 
 // DesktopShell's imports read window at load (desktop capabilities); node has none.
 vi.hoisted(() => { vi.stubGlobal('window', {}); });
 const store = vi.hoisted(() => ({ state: { connected: true, desk: null as unknown, loops: [] as unknown[] } }));
 vi.mock('@/state/store', () => ({ api: vi.fn(), useStore: () => ({ state: store.state, dispatch: vi.fn() }) }));
 import { clampPanelWidth, deskDataStatus, deskRunStatus, nextLoop, nextLoopLine, withDeskSection, withShellPanel } from './shell-layout';
-import { tabKeyTarget, AreaTabs } from './AreaTabs';
+import { tabKeyTarget, AreaTabs, areaTabBadge } from './AreaTabs';
 import { parseShellBrowser } from './shell-status';
 import { StatusBar } from './StatusBar';
 import { CardMenu } from './DeskArrangement';
@@ -70,6 +71,23 @@ describe('desktop shell markup', () => {
     expect(html).toContain('aria-label="Desk views"');
     expect(html.match(/tabindex="0"/g)).toHaveLength(1);
     expect(html).toMatch(/aria-selected="true"[^>]*tabindex="0"/);
+  });
+  it('keeps a work area tab named by its title, describes its count, marks problems in text, and shows nothing while unread or at zero', () => {
+    const read = (fields: Partial<NeedsYouSnapshot> = {}): NeedsYouSnapshot => ({ checkedAt: '2026-10-10T00:00:00.000Z', items: [], counts: {}, unavailable: [], ...fields });
+    expect(areaTabBadge(null, 'mail')).toBeNull();
+    expect(areaTabBadge(read({ counts: { mail: { problem: 0, review: 0 } } }), 'mail')).toBeNull();
+    expect(areaTabBadge(read({ counts: { bills: { problem: 0, review: 1 } } }), 'bills')).toEqual({ total: 1, problem: 0, description: '1 item' });
+    // A source that couldn't be read is a problem on its tab, never a quiet one.
+    expect(areaTabBadge(read({ unavailable: [{ area: 'bills', reason: "Bills and calendar couldn't be checked." }] }), 'bills'))
+      .toEqual({ total: 1, problem: 1, description: '1 item, 1 problem' });
+    const badge = areaTabBadge(read({ counts: { mail: { problem: 2, review: 1 } } }), 'mail');
+    expect(badge).toEqual({ total: 3, problem: 2, description: '3 items, 2 problems' });
+    const html = renderToStaticMarkup(createElement(AreaTabs, { label: 'Desk views', tabs: [{ id: 'mail', label: 'Mail priorities', badge }, { id: 'bills', label: 'Bills and calendar', badge: null }], selected: 'mail', onSelect: () => {}, panelId: 'p' }));
+    // The name is the title alone (no aria-label); the count is the description, read once, beside the tab.
+    expect(html).not.toContain('aria-label="Mail');
+    expect(html).toMatch(/<button [^>]*id="rb-area-tab-mail"[^>]*aria-describedby="rb-area-tab-mail-count"[^>]*><span class="truncate">Mail priorities<\/span><span class="area-tab-problem" aria-hidden="true">!<\/span><span class="rb-area-tab-count" aria-hidden="true">3<\/span><\/button><span id="rb-area-tab-mail-count" hidden="">3 items, 2 problems<\/span>/);
+    expect(html).toMatch(/<button [^>]*id="rb-area-tab-bills"(?![^>]*aria-describedby)[^>]*><span class="truncate">Bills and calendar<\/span><\/button>/);
+    expect(html).not.toMatch(/need(s)? you/);
   });
   it('shows Stop only while a browser task runs and labels sample facts and hides unreported spend', () => {
     store.state = { connected: true, desk: desk({ demo: true }), loops: [] };

@@ -11,9 +11,11 @@ const fixture = vi.hoisted(() => ({
   cells: [] as { value: unknown }[], cursor: 0,
   api: vi.fn(), dispatch: vi.fn(), onDone: vi.fn(), track: vi.fn(), emailGate: vi.fn(),
   config: { profile: { name: '', email: '' } },
+  desk: null as { recovery: { active: boolean } } | null,
   connect: null as unknown as { office: string | null; view: ConnectOfficeViewProps },
   personName: undefined as string | undefined,
   epoch: 0,
+  session: new Map<string, string>(),
 }));
 // Exercise the real rendered handlers while keeping state across explicit
 // rerenders. No DOM, server, effect-driven API request or browser storage.
@@ -35,7 +37,7 @@ vi.mock('react', async importOriginal => {
     },
   };
 });
-vi.mock('@/state/store', () => ({ api: fixture.api, useStore: () => ({ state: { config: fixture.config }, dispatch: fixture.dispatch }) }));
+vi.mock('@/state/store', () => ({ api: fixture.api, useStore: () => ({ state: { config: fixture.config, desk: fixture.desk }, dispatch: fixture.dispatch }) }));
 vi.mock('@/lib/analytics', () => ({ identifyEmail: vi.fn(), setEmailGateDone: fixture.emailGate, track: fixture.track }));
 vi.mock('@/lib/company-api', () => ({ companyApi: { sessionVersion: () => fixture.epoch } }));
 vi.mock('./Avatar', () => ({ MausAvatar: () => null }));
@@ -54,7 +56,7 @@ function connection(status: OfficeLinkStatus | null, phase: ConnectOfficeViewPro
 }
 
 const initial: OnboardingState = { version: 1, scope: 'a'.repeat(64), revision: 3, stage: 'profile' };
-type NodeProps = { children?: ReactNode; disabled?: boolean; type?: string; role?: string; onClick?: () => void };
+type NodeProps = { children?: ReactNode; disabled?: boolean; type?: string; role?: string; onClick?: () => void; onSubmit?: (event: { preventDefault: () => void }) => void };
 type Node = ReactElement<NodeProps>;
 function nodes(value: ReactNode): Node[] {
   if (Array.isArray(value)) return value.flatMap(nodes);
@@ -75,6 +77,10 @@ function button(tree: ReactNode, label: string) {
   expect(matches).toHaveLength(1);
   return matches[0];
 }
+function submitWelcome(tree: ReactNode) {
+  const form = nodes(tree).find(node => node.type === 'form');
+  form!.props.onSubmit!({ preventDefault: () => {} });
+}
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>(yes => { resolve = yes; });
@@ -84,17 +90,21 @@ function deferred<T>() {
 beforeEach(() => {
   vi.clearAllMocks(); fixture.api.mockReset(); fixture.cells = []; fixture.cursor = 0;
   fixture.config = { profile: { name: '', email: '' } };
+  fixture.desk = null;
   fixture.connect = connection({ state: 'linked', agencyLabel: OFFICE, provisioned: true });
   fixture.epoch = 0;
+  fixture.session = new Map();
+  vi.stubGlobal('sessionStorage', { getItem: (key: string) => fixture.session.get(key) ?? null, setItem: (key: string, value: string) => void fixture.session.set(key, value) });
   let hash = '#welcome';
-  vi.stubGlobal('location', { get hash() { return hash; }, set hash(value: string) { hash = '#' + value.replace(/^#/, ''); } });
+  vi.stubGlobal('location', { get hash() { return hash; }, set hash(value: string) { hash = '#' + value.replace(/^#/, ''); }, pathname: '/', search: '' });
+  vi.stubGlobal('history', { replaceState: vi.fn() });
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('welcome finish recovery', () => {
   const saved = { ...initial, stage: 'office-rules' as const };
 
-  it('re-enables both destinations when the desk read times out, then completes on retry', async () => {
+  it('re-enables Continue to Bud setup when the desk read times out, then completes on retry', async () => {
     vi.useFakeTimers(); fixture.config.profile.name = 'Fictional Draft';
     fixture.api.mockImplementationOnce(() => new Promise(() => {})).mockImplementation(async path => {
       if (path === '/api/desk') return desk();
@@ -106,19 +116,21 @@ describe('welcome finish recovery', () => {
     first.props.onClick!(); first.props.onClick!();
     expect(fixture.api).toHaveBeenCalledTimes(1);
     expect(fixture.api.mock.calls[0]).toEqual(['/api/desk', { signal: expect.any(AbortSignal) }, { timeoutMs: 60_000 }]);
-    expect(button(render(saved), 'Open the sample desk first').props.disabled).toBe(true);
+    expect(button(render(saved), 'Continue to Bud setup').props.disabled).toBe(true);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(text(render(saved))).toContain('local service did not respond within a minute');
     expect(fixture.api.mock.calls[0][1].signal.aborted).toBe(true);
     expect(button(render(saved), 'Continue to Bud setup').props.disabled).toBe(false);
-    expect(button(render(saved), 'Open the sample desk first').props.disabled).toBe(false);
     expect(fixture.onDone).not.toHaveBeenCalled();
 
-    button(render(saved), 'Open the sample desk first').props.onClick!();
+    button(render(saved), 'Continue to Bud setup').props.onClick!();
     await vi.waitFor(() => expect(fixture.onDone).toHaveBeenCalledTimes(1));
+    expect(fixture.onDone).toHaveBeenCalledWith('bud');
     expect(fixture.api.mock.calls.map(([path]) => path)).toEqual(['/api/desk', '/api/desk', '/api/desk', '/api/onboarding', '/api/desk']);
     expect(fixture.api.mock.calls[3][2]).toEqual({ timeoutMs: 60_000 });
     expect(fixture.dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'showDesk' });
+    // Finishing first run never passes the office-link screen; only recovery does.
+    expect(fixture.session.has('realbud.linkGateLeft')).toBe(false);
   });
 
   it('retries a timed-out completion without writing the contact or stage twice', async () => {
@@ -144,11 +156,11 @@ describe('welcome finish recovery', () => {
       throw new Error('Unexpected fixture request');
     });
 
-    button(render(saved), 'Open the sample desk first').props.onClick!();
+    button(render(saved), 'Continue to Bud setup').props.onClick!();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(fixture.onDone).not.toHaveBeenCalled();
-    expect(button(render(saved), 'Open the sample desk first').props.disabled).toBe(false);
-    button(render(saved), 'Open the sample desk first').props.onClick!();
+    expect(button(render(saved), 'Continue to Bud setup').props.disabled).toBe(false);
+    button(render(saved), 'Continue to Bud setup').props.onClick!();
     await vi.waitFor(() => expect(fixture.onDone).toHaveBeenCalledTimes(1));
     expect(fixture.api.mock.calls.map(([path]) => path)).toEqual(['/api/desk', '/api/desk/agency', '/api/desk', '/api/desk', '/api/onboarding', '/api/desk', '/api/desk', '/api/onboarding', '/api/desk']);
     expect(fixture.api.mock.calls.filter(([path]) => path === '/api/desk/agency')).toHaveLength(1);
@@ -160,7 +172,7 @@ describe('welcome finish recovery', () => {
   });
   it('holds legacy desk replies without host workspace metadata before any contact write', async () => {
     fixture.config.profile.name = 'Fictional Draft'; fixture.api.mockResolvedValue({ revision: 4, book: { office: { pmUser: '' } } });
-    button(render(saved), 'Open the sample desk first').props.onClick!();
+    button(render(saved), 'Continue to Bud setup').props.onClick!();
     await vi.waitFor(() => expect(text(render(saved))).toContain('reply could not be admitted'));
     expect(fixture.api.mock.calls.map(([path]) => path)).toEqual(['/api/desk']); expect(fixture.dispatch).not.toHaveBeenCalled(); expect(fixture.onDone).not.toHaveBeenCalled();
   });
@@ -172,7 +184,7 @@ describe('welcome finish recovery', () => {
       if (path === '/api/desk/agency') return { ...replacement, revision: 5, book: { office: { pmUser: 'Fictional Draft' } } };
       throw Object.assign(new Error('Your workspace changed. Reopen setup before continuing.'), { status: 409 });
     });
-    button(render(saved), 'Open the sample desk first').props.onClick!();
+    button(render(saved), 'Continue to Bud setup').props.onClick!();
     expect(fixture.api).toHaveBeenCalledTimes(1);
     first.resolve(replacement);
     await vi.waitFor(() => expect(nodes(render(saved)).some(node => node.props.role === 'alert')).toBe(true));
@@ -183,7 +195,7 @@ describe('welcome finish recovery', () => {
   it('holds a Desk reply without its authoritative setup scope before any contact write', async () => {
     fixture.config.profile.name = 'Fictional Draft';
     const { onboardingScope: _scope, ...legacy } = desk(''); fixture.api.mockResolvedValue(legacy);
-    button(render(saved), 'Open the sample desk first').props.onClick!();
+    button(render(saved), 'Continue to Bud setup').props.onClick!();
     await vi.waitFor(() => expect(text(render(saved))).toContain('old reply could not be admitted'));
     expect(fixture.api.mock.calls.map(([path]) => path)).toEqual(['/api/desk']);
     expect(fixture.dispatch).not.toHaveBeenCalled(); expect(fixture.onDone).not.toHaveBeenCalled();
@@ -191,7 +203,7 @@ describe('welcome finish recovery', () => {
   it('holds a later same-workspace Desk reply from a different private member scope before completion', async () => {
     fixture.config.profile.name = 'Fictional Draft'; const later = deferred<unknown>();
     fixture.api.mockResolvedValueOnce(desk()).mockReturnValueOnce(later.promise);
-    button(render(saved), 'Open the sample desk first').props.onClick!();
+    button(render(saved), 'Continue to Bud setup').props.onClick!();
     await vi.waitFor(() => expect(fixture.api).toHaveBeenCalledTimes(2));
     later.resolve(desk('Fictional Draft', WORKSPACE, 4, 'b'.repeat(64)));
     await vi.waitFor(() => expect(text(render(saved))).toContain('old reply could not be admitted'));
@@ -201,7 +213,7 @@ describe('welcome finish recovery', () => {
   it.each(['workspace', 'actor'] as const)('rejects delayed contact reply after %s change without dispatch or completion', async change => {
     fixture.config.profile.name = 'Fictional Draft'; const reply = deferred<unknown>();
     fixture.api.mockImplementation(path => path === '/api/desk' ? Promise.resolve(desk('')) : path === '/api/desk/agency' ? reply.promise : Promise.reject(new Error('Unexpected fixture request')));
-    button(render(saved), 'Open the sample desk first').props.onClick!();
+    button(render(saved), 'Continue to Bud setup').props.onClick!();
     await vi.waitFor(() => expect(fixture.api).toHaveBeenCalledTimes(2));
     const payload = JSON.parse(fixture.api.mock.calls[1][1].body); expect(payload).toMatchObject({ expectedWorkspaceId: WORKSPACE, expectedRevision: 4 });
     if (change === 'actor') fixture.epoch++;
@@ -216,7 +228,7 @@ describe('welcome finish recovery', () => {
   it('checks current physical workspace after a delayed completion before entering the app', async () => {
     fixture.config.profile.name = 'Fictional Draft'; const reply = deferred<OnboardingState>(); let workspaceId = WORKSPACE;
     fixture.api.mockImplementation(path => path === '/api/desk' ? Promise.resolve(desk('Fictional Draft', workspaceId)) : path === '/api/onboarding' ? reply.promise : Promise.reject(new Error('Unexpected fixture request')));
-    button(render(saved), 'Open the sample desk first').props.onClick!();
+    button(render(saved), 'Continue to Bud setup').props.onClick!();
     await vi.waitFor(() => expect(fixture.api.mock.calls.some(([path]) => path === '/api/onboarding')).toBe(true));
     workspaceId = 'replacement-workspace'; reply.resolve({ ...saved, stage: 'complete', revision: 4 });
     await vi.waitFor(() => expect(text(render(saved))).toContain('old reply could not be admitted'));
@@ -239,6 +251,8 @@ describe('welcome backup restore', () => {
     response.resolve({ ...saved, stage: 'recovery', revision: 4 });
     await vi.waitFor(() => expect(fixture.onDone).toHaveBeenCalledTimes(1));
     expect(fixture.onDone).toHaveBeenCalledWith(); expect(location.hash).toBe('#you-private-backup');
+    // Recovery never waits behind the office-link screen.
+    expect(fixture.session.get('realbud.linkGateLeft')).toBe('1');
     expect(fixture.dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'showYou' });
     expect(fixture.api).toHaveBeenCalledTimes(1); expect(fixture.emailGate).not.toHaveBeenCalled();
     expect(fixture.track).not.toHaveBeenCalledWith('onboarding_completed', expect.anything());
@@ -268,10 +282,9 @@ describe('welcome backup restore', () => {
     const saved = { ...initial, stage }, response = deferred<OnboardingState>(); fixture.api.mockReturnValue(response.promise);
     const tree = render(saved), restore = button(tree, 'Restore a private backup');
     restore.props.onClick!(); restore.props.onClick!();
-    if (stage === 'profile') button(tree, 'Explore the sample desk').props.onClick!();
+    if (stage === 'profile') submitWelcome(tree);
     else {
       button(tree, 'Continue to Bud setup').props.onClick!();
-      button(tree, 'Open the sample desk first').props.onClick!();
       button(tree, 'Back').props.onClick!();
     }
     expect(fixture.api).toHaveBeenCalledTimes(1);
@@ -281,13 +294,14 @@ describe('welcome backup restore', () => {
   });
 
   it('does not enter restore while an earlier profile save is still unconfirmed', async () => {
+    fixture.config.profile.name = 'Fictional Draft';
     const response = deferred<unknown>(); fixture.api.mockReturnValueOnce(response.promise)
       .mockResolvedValueOnce({ ...initial, stage: 'office-rules', revision: 4 });
     const tree = render();
-    button(tree, 'Explore the sample desk').props.onClick!();
+    submitWelcome(tree);
     button(tree, 'Restore a private backup').props.onClick!();
     expect(fixture.api).toHaveBeenCalledTimes(1); expect(fixture.api.mock.calls[0][0]).toBe('/api/config');
-    response.resolve({ profile: { name: 'Sample PM', email: '' } });
+    response.resolve({ profile: { name: 'Fictional Draft', email: '' } });
     await vi.waitFor(() => expect(text(render())).toContain('Step 1 of 5'));
     expect(fixture.api).toHaveBeenCalledTimes(2); expect(fixture.onDone).not.toHaveBeenCalled();
     expect(location.hash).toBe('#welcome');
@@ -332,9 +346,40 @@ describe('connect this computer to your office', () => {
     expect(markup).not.toContain('<details');
     expect(markup).toContain('aria-label="You stay in charge"');
     expect(markup).not.toContain('Continue to Bud setup');
-    expect(button(render(saved), 'Open the sample desk first').props.disabled).toBe(false);
+    // Connecting is the only way on: no sample desk, only Back and backup restore.
+    expect(markup).not.toMatch(/sample desk/i);
+    expect(button(render(saved), 'Back').props.disabled).toBe(false);
     expect(button(render(saved), 'Restore a private backup').props.disabled).toBe(false);
     expect(markup).not.toMatch(/Hermes|MCP|broker|grant|installation/i);
+  });
+
+  it('offers Open recovery beside linking when the book here is already in recovery, before any link', async () => {
+    fixture.config.profile.name = 'Fictional Draft';
+    fixture.connect = connection({ state: 'unlinked' });
+    fixture.desk = { recovery: { active: true } };
+    const markup = html();
+    expect(markup).toContain('A protected book is already on this computer. Open recovery to unlock it or preserve it before starting again.');
+    expect(markup).not.toContain('Try again');
+    // Recovery never waits behind the office link, and linking stays available beside it.
+    expect(markup).toContain('Connect with this code');
+    expect(button(render(saved), 'Restore a private backup').props.disabled).toBe(false);
+    fixture.api.mockResolvedValue({ ...saved, stage: 'recovery', revision: 4 });
+    button(render(saved), 'Open recovery').props.onClick!();
+    await vi.waitFor(() => expect(fixture.onDone).toHaveBeenCalledTimes(1));
+    expect(fixture.api).toHaveBeenCalledExactlyOnceWith('/api/onboarding', { method: 'PUT', body: JSON.stringify({ expectedScope: saved.scope, expectedRevision: saved.revision, stage: 'recovery' }) });
+    expect(location.hash).toBe('#you-recovery');
+    expect(fixture.session.get('realbud.linkGateLeft')).toBe('1');
+    expect(fixture.dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'showYou' });
+  });
+
+  it('replaces Continue to Bud setup with Open recovery on a linked computer whose book is in recovery', () => {
+    fixture.config.profile.name = 'Fictional Draft';
+    fixture.desk = { recovery: { active: true } };
+    const markup = html();
+    expect(markup).not.toContain('Continue to Bud setup');
+    expect(button(render(saved), 'Open recovery').props.disabled).toBe(false);
+    fixture.desk = { recovery: { active: false } };
+    expect(html()).not.toContain('Open recovery');
   });
 
   it('shows the code to match while the browser approval waits', () => {
@@ -362,34 +407,35 @@ describe('connect this computer to your office', () => {
     });
     button(render(saved), 'Continue to Bud setup').props.onClick!();
     await vi.waitFor(() => expect(fixture.onDone).toHaveBeenCalledWith('bud'));
+    expect(fixture.session.has('realbud.linkGateLeft')).toBe(false);
     // Get started lives on Desk, the store's first view, so the setup sheet opens over it and no view change closes it.
     expect(fixture.dispatch).toHaveBeenCalledWith({ type: 'showDesk' });
     expect(fixture.dispatch).not.toHaveBeenCalledWith({ type: 'showAsk' });
     expect(replaceState).toHaveBeenCalledTimes(1);
   });
 
-  it('explores the sample desk without saving a placeholder as the person’s name, and can still finish', async () => {
+  it('offers no sample desk on the welcome step: a name and Continue, or a backup restore', () => {
+    const markup = renderToStaticMarkup(render());
+    expect(markup).toMatch(/<h1[^>]*>Make the desk yours<\/h1>/);
+    expect(markup).not.toMatch(/sample desk/i);
+    expect(nodes(render()).filter(node => node.type === 'button').map(node => text(node.props.children).trim())).toEqual(['Continue', 'Restore a private backup']);
+  });
+
+  it('names the sample contact only when a resumed connect step has no saved name', async () => {
     const office: Record<string, unknown> = {};
     fixture.api.mockImplementation(async (path, init) => {
       const body = init?.body ? JSON.parse(init.body) : undefined;
-      if (path === '/api/config') return { profile: body.profile };
-      if (path === '/api/onboarding') return { ...initial, stage: body.stage, revision: body.expectedRevision + 1 };
+      if (path === '/api/onboarding') return { ...saved, stage: body.stage, revision: body.expectedRevision + 1 };
       if (path === '/api/desk') return desk(String(office.pmUser ?? ''));
       if (path === '/api/desk/agency') { expect(body).toMatchObject({ expectedWorkspaceId: WORKSPACE, expectedRevision: 4 }); Object.assign(office, body.office); return desk(String(office.pmUser)); }
       throw new Error('Unexpected fixture request');
     });
-    button(render(), 'Explore the sample desk').props.onClick!();
-    await vi.waitFor(() => expect(text(render())).toContain('Step 1 of 5'));
-    expect(fixture.api.mock.calls[0][0]).toBe('/api/config');
-    expect(JSON.parse(fixture.api.mock.calls[0][1].body)).toEqual({ profile: { name: '', email: '' } });
     expect(defaultComputerName(fixture.personName)).toBe('Office computer');
-    const finishSample = button(render(), 'Open the sample desk first');
-    expect(finishSample.props.disabled).toBe(false);
-    finishSample.props.onClick!();
-    await vi.waitFor(() => expect(fixture.onDone).toHaveBeenCalledTimes(1));
-    // Only the sample book carries the sample contact, which first run never counts as a person.
+    button(render(saved), 'Continue to Bud setup').props.onClick!();
+    await vi.waitFor(() => expect(fixture.onDone).toHaveBeenCalledWith('bud'));
+    // First run never counts the sample contact as a person (first-run.ts).
     expect(office).toEqual({ pmUser: 'Sample PM' });
-    expect(fixture.api.mock.calls.filter(([path]) => path === '/api/config')).toHaveLength(1);
+    expect(fixture.api.mock.calls.filter(([path]) => path === '/api/config')).toHaveLength(0);
   });
 
   it('numbers connecting as Get started step 1 of 5, with the name page before it', () => {

@@ -21,6 +21,7 @@ describe("Ask mutation session boundary", () => {
     ["POST", "/api/hermes/update"],
     ["POST", "/api/connected-apps/managed/setup"],
     ["GET", "/api/workspace-tabs"],
+    ["GET", "/api/needs-you"],
     ['GET', '/api/agency-setup'],
     ['PUT', '/api/agency-setup'],
     ['GET', '/api/mail-workspace'],

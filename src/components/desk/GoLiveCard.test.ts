@@ -139,6 +139,19 @@ describe('Get started card', () => {
     expect(after).not.toContain('You’re set up.');
   });
 
+  it('never offers to skip the office link, and ignores a link skip saved before it became required', () => {
+    const saved = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => void saved.set(key, value), removeItem: (key: string) => void saved.delete(key) });
+    const fresh = render({ agencyName: '', websiteLink: 'not-linked' });
+    expect(fresh.match(/aria-label="Enter link code"/g)).toHaveLength(1);
+    expect(fresh).not.toContain('Skip for now');
+    saveGetStartedLocal({ ...readGetStartedLocal(), skipped: ['link'] });
+    const after = render({ agencyName: '', websiteLink: 'not-linked' });
+    expect(after).toContain('1. Paste the link code your office sent you<span class="text-[12px] text-ink-muted"> · Now</span>');
+    expect(after).not.toContain('skipped');
+    expect(after).not.toContain('Back to this step');
+  });
+
   it('hands Desk\'s one filled action to another card when quiet', () => {
     const loud = render({ agencyName: '' });
     expect(loud).toMatch(/border-agency bg-agency text-white[^"]*"[^>]*>Enter link code/);

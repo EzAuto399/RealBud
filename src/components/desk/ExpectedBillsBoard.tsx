@@ -6,7 +6,8 @@ import { api } from "@/state/store";
 import { OpenBillsView } from "../OpenBillsView";
 import type { ExpectedBillsPage } from '@shared/source-bills-api';
 import { billPageUrl, expectedBillsPage, mergeBillRows } from '@/lib/source-bill-pages';
-import { SourceBillsPanel } from "./SourceBillsPanel";
+import { SourceBillsPanel, type BillsLayout } from "./SourceBillsPanel";
+import { AreaStatusLine } from "./AreaStatusLine";
 import { MaintenanceFindingsPanel } from "./MaintenanceFindingsPanel";
 import { InspectionsPanel } from "../inspections/InspectionsPanel";
 
@@ -33,8 +34,9 @@ const GROUP_LABEL: Record<keyof Groups, string> = {
   settled: "Closed",
 };
 
-/** `bare` drops the card chrome when the page already names the view (saved Bills view). */
-export function ExpectedBillsBoard({ className, compact = false, bare = false }: { className?: string; compact?: boolean; bare?: boolean }) {
+/** `bare` drops the card chrome when the page already names the view (saved Bills view).
+ * `layout` chooses the calendar first, or the bill list first with the calendar collapsed beneath. */
+export function ExpectedBillsBoard({ className, compact = false, bare = false, layout = "calendar" }: { className?: string; compact?: boolean; bare?: boolean; layout?: BillsLayout }) {
   const [page, setPage] = useState<ExpectedBillsPage<BillRow> | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -77,14 +79,11 @@ export function ExpectedBillsBoard({ className, compact = false, bare = false }:
     >
       {!bare && <div className="flex items-start gap-2.5">
         <CalendarClock size={18} className="mt-0.5 shrink-0 text-agency" aria-hidden />
-        <div>
-          <h2 className="text-[14px] font-medium text-ink">Bills board</h2>
-          <p className="mt-0.5 text-[12.5px] text-ink-secondary">
-            Saved bills by property, with source review and a calendar for confirmed due dates and expected arrivals.
-          </p>
-        </div>
+        <h2 className="text-[14px] font-medium text-ink">Bills board</h2>
       </div>}
       {compact ? <div className="mt-3 space-y-2"><p className="text-sm text-ink-secondary">{loading ? 'Checking saved bills…' : error ? 'Saved bill count could not be refreshed. Open the full view to try again.' : groups ? `${total} saved bill records. Open the full view to review source messages, due dates and expected arrivals.` : 'Saved bills are unavailable. Open the full view to review recovery details.'}</p><OpenBillsView /></div> : <>
+      <div className={cn(!bare && "mt-3")}><AreaStatusLine area="bills" /></div>
+      <div className="mt-4"><SourceBillsPanel layout={layout} onSaved={() => void load()} /></div>
       {error ? <div role="alert" className="mt-2 text-[12.5px] text-danger">
         <p>{error}</p>
         <button type="button" onClick={() => void load()} disabled={loading} className="pm-control mt-2 rounded border border-line bg-sheet px-3 text-[13px] text-ink hover:bg-selected disabled:opacity-40">
@@ -93,11 +92,9 @@ export function ExpectedBillsBoard({ className, compact = false, bare = false }:
       </div> : null}
       {loading ? (
         <p role="status" className="mt-3 flex items-center gap-2 text-[13px] text-ink-muted">
-          <Loader2 size={14} className="animate-spin" aria-hidden /> Loading…
+          <Loader2 size={14} className="animate-spin motion-reduce:animate-none" aria-hidden /> Checking the earlier bill register…
         </p>
-      ) : error || groups == null ? null : total === 0 ? (
-        bare ? null : <p className="mt-3 text-[13px] text-ink-secondary">No earlier bill-register records. Source-reviewed bills and calendar appear below.</p>
-      ) : (
+      ) : error || groups == null || total === 0 ? null : (
         <div className="mt-3 space-y-3"><p className="text-sm text-ink-secondary">Earlier bill register · {page?.bills.length} of {total} records loaded.</p><div className="grid gap-3 sm:grid-cols-2">
           {(Object.keys(GROUP_LABEL) as (keyof Groups)[]).map((key) => {
             const rows = groups[key];
@@ -122,7 +119,6 @@ export function ExpectedBillsBoard({ className, compact = false, bare = false }:
           })}
         </div>{page?.nextCursor && <button className="min-h-11 rounded border border-line px-3 text-sm" disabled={loading} onClick={() => void more()}>Load more earlier bills</button>}</div>
       )}
-      <div className={cn("mt-4", !bare && "border-t border-line pt-4")}><SourceBillsPanel onSaved={() => void load()} /></div>
       <div className="mt-4 border-t border-line pt-4"><MaintenanceFindingsPanel /></div>
       <div className="mt-4 border-t border-line pt-4"><InspectionsPanel /></div>
       </>}

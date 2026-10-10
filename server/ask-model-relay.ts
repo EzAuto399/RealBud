@@ -126,6 +126,23 @@ const FALLBACK_MAX_OUTPUT_TOKENS = 32_000;
 const MAX_RETRY_AFTER_SECONDS = 60;
 /** A non-streamed JSON answer larger than this is relayed but not read for usage. */
 const MAX_USAGE_BODY_BYTES = 2 * 1024 * 1024;
+/** Modelvia refuses a request offering more than 64 tools (400 `invalid_tools`).
+ * With Hermes tool search off every mounted tool is sent, and a connected app's
+ * whole toolkit or a long office connector list can pass that alone. Hermes'
+ * own tools and RealBud's brokers always stay; app and connector tools fill the
+ * remaining places in the order they were offered. */
+export const MODEL_TOOL_LIMIT = 64;
+const APP_TOOL = /^mcp__?(?:connected_apps|office_mail|office_connectors)__?/;
+export function fitToolLimit(body: Record<string, unknown>): number {
+  const tools = body.tools;
+  if (!Array.isArray(tools) || tools.length <= MODEL_TOOL_LIMIT) return 0;
+  const isApp = (tool: unknown) => APP_TOOL.test(String((tool as { function?: { name?: unknown } })?.function?.name ?? ""));
+  let room = MODEL_TOOL_LIMIT - tools.filter(tool => !isApp(tool)).length;
+  const kept = tools.filter(tool => !isApp(tool) || room-- > 0);
+  body.tools = kept;
+  return tools.length - kept.length;
+}
+
 /** Abort reason for an exchange whose grant or key was withdrawn mid-flight. */
 const GRANT_ENDED = Symbol("grant ended");
 /** Read-only after writing; any other mode is a change made outside RealBud. */
@@ -486,6 +503,7 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
         body.n = 1;
       }
       clampOutput(body, maxOutput.get(route.model) ?? FALLBACK_MAX_OUTPUT_TOKENS);
+      fitToolLimit(body);
 
       const digest = createHash("sha256").update(raw).digest("hex");
       const issued = capability.issued;
@@ -509,6 +527,10 @@ export async function startAskModelRelay(options: AskModelRelayOptions = {}): Pr
       });
       exchange.headersMs = Date.now() - exchange.start;
       exchange.status = upstream.status;
+      // Modelvia answers a reused key with the first attempt's receipt (409),
+      // never a completion. An error answer served nothing, so the SDK's
+      // retry of it is a new request; a 409 keeps its key.
+      if (upstream.status >= 400 && upstream.status !== 409) issued.delete(digest);
       noteModelviaRequest(capability.scope.usage, upstream.headers.get("x-request-id"));
       // A refused image call says nothing about the office key: the plan may
       // just not include the image model. Bud gets one plain sentence for that.

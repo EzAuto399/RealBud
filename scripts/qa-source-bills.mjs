@@ -96,19 +96,19 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   page = await context.newPage(); page.on('request', request => { if (request.method() === 'GET') readPaths.push(new URL(request.url()).pathname); }); page.on('pageerror', error => errors.push(error.message));
   await page.goto(base + '/#/desk');
   // New private workspaces use Simple desk. Show this workflow through the
-  // normal layout controls before expecting its Other work entry to be present.
+  // normal layout controls before expecting its Desk tab to be present.
   await page.locator('.desk-more > summary').filter({ hasText: /^More$/ }).click();
-  await page.locator('.desk-options > summary').click();
-  await page.locator('.desk-options-body').getByRole('button', { name: 'Arrange Desk', exact: true }).click();
+  await page.getByRole('group', { name: 'More Desk tools', exact: true }).getByRole('button', { name: 'Arrange Desk', exact: true }).click();
   const arrange = page.getByRole('dialog', { name: 'Arrange Desk', exact: true });
   const showBills = arrange.getByLabel('Show Bills and calendar on my Desk', { exact: true });
   if (!await showBills.isChecked()) { await showBills.check(); await arrange.getByRole('button', { name: 'Save', exact: true }).click(); await arrange.getByText('Desk arrangement saved.', { exact: true }).waitFor(); }
   await arrange.getByRole('button', { name: 'Close Arrange Desk', exact: true }).click();
-  await page.locator('.desk-other-work > summary').click();
-  await page.getByRole('group', { name: 'Other work', exact: true }).getByRole('button', { name: 'Bills and calendar', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: 'Bills and calendar', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Source-linked bills and calendar' }); await panel.waitFor();
+  // Refresh, Check inbox and the collection receipt sit in the area's collapsed Setup, closed again on every reload.
+  const setupButton = async name => { const area = panel.locator('details.area-setup'); if (!await area.evaluate(element => element.open)) await area.locator(':scope > summary').click(); return area.getByRole('button', { name, exact: true }); };
   const preManualScanCalls = scanCalls;
-  await panel.getByRole('button', { name: 'Check inbox for bills', exact: true }).click();
+  await (await setupButton('Check inbox for bills')).click();
   // The fixture invoice arrives as a PDF attachment that collection does not
   // read, so the honest receipt is partial with exactly that one source gap.
   const collection = panel.getByRole('complementary', { name: 'Latest bill mail collection', exact: true });
@@ -117,7 +117,7 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   await collection.getByText('Collection account and source gaps (1)', { exact: true }).waitFor();
   assert.equal(scanCalls, preManualScanCalls + 1); const mail = await request('/api/mail-workspace');
   assert.equal(mail.latestScan.status, 'partial'); assert.deepEqual(mail.latestScan.gaps, ['Attachment contents were not read. Any decision needing an attachment must stay held.']); assert.equal(mail.counts.total, 1); assert.equal(Object.hasOwn(mail, 'items'), false); const itemId = (await request('/api/mail-workspace/items?group=all&limit=20')).items[0].id;
-  pass('Other work opens the full bills view and collects only the real HTTP host-reviewed fictional Gmail scope without enabling a schedule; the unread invoice attachment keeps the receipt partial with that one gap');
+  pass('The Bills and calendar Desk tab opens the full bills view and collects only the real HTTP host-reviewed fictional Gmail scope without enabling a schedule; the unread invoice attachment keeps the receipt partial with that one gap');
   await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: /^Tasks\s*\d*$/ }).click();
   // Saved views are managed by Bud. Seed the route through the revisioned API
   // so reload, two-window and unmount/hydration checks still use a durable view.
@@ -218,7 +218,7 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   assert.ok(await editor.getByRole('button', { name: 'Save for later', exact: true }).isEnabled());
   await editor.getByLabel('Find a saved conversation', { exact: true }).fill('No fictional conversation matches');
   await editor.getByText('Showing 0 of 0 conversations', { exact: false }).waitFor();
-  await panel.getByRole('button', { name: 'Refresh bills and sources', exact: true }).click();
+  await (await setupButton('Refresh bills and sources')).click();
   await panel.getByText('Saved bills and available sources refreshed.', { exact: true }).waitFor();
   assert.equal(await editor.getByLabel('Saved conversation', { exact: true }).inputValue(), itemId);
   assert.equal(await editor.getByLabel('Bill note', { exact: true }).inputValue(), 'Keep this bill draft during an uncertain proposal result');
@@ -420,7 +420,7 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   await billDiscard.getByRole('button', { name: 'Keep editing this bill', exact: true }).click();
   assert.equal(await editor.getByLabel('Bill note', { exact: true }).inputValue(), 'Keep this unsaved fictional draft during refresh');
   pass('Bill source search retains its off-page selection; explicitly injected failed source read and cancelled discard preserve evidence and unsaved fields');
-  await panel.getByRole('button', { name: 'Refresh bills and sources', exact: true }).click();
+  await (await setupButton('Refresh bills and sources')).click();
   await panel.getByText('Saved bills and available sources refreshed.', { exact: true }).waitFor();
   assert.equal(await editor.getByLabel('Bill note', { exact: true }).inputValue(), 'Keep this unsaved fictional draft during refresh');
   assert.equal(await editor.getByText('This bill changed elsewhere.', { exact: false }).count(), 0);
@@ -440,7 +440,7 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   await editor.getByRole('button', { name: 'Cancel bill review', exact: true }).click(); if (await panel.getByRole('alertdialog', { name: 'Discard unsaved bill review', exact: true }).count()) await panel.getByRole('button', { name: 'Discard unsaved bill review', exact: true }).click();
   const predictionDay = await selectCalendarDay(originalPrediction.date);
   // Refresh even when both fixture dates share a month, resetting all cursors.
-  await panel.getByRole('button', { name: 'Refresh bills and sources', exact: true }).click();
+  await (await setupButton('Refresh bills and sources')).click();
   await panel.getByText('Saved bills and available sources refreshed.', { exact: true }).waitFor();
   await waitForBills();
   await moreCalendar.waitFor();
@@ -456,7 +456,7 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   await waitForBills();
   assert.equal(await calendar.innerText(), calendarBeforeConflict);
   await page.unroute(calendarPageRoute);
-  await panel.getByRole('button', { name: 'Refresh bills and sources', exact: true }).click();
+  await (await setupButton('Refresh bills and sources')).click();
   await panel.getByText('Saved bills and available sources refreshed.', { exact: true }).waitFor();
   await waitForBills();
   assert.equal(await panel.getByRole('alert').filter({ hasText: 'The calendar page changed. Refresh before loading more.' }).count(), 0);

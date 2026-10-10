@@ -345,17 +345,15 @@ try {
     await until(async () => JSON.stringify((await api('/api/desk')).body.properties[0]).includes('"graceDays":5'), 'grace days saved');
     check(c, 'Edit: Grace days changed to 5 and saved');
     await widths('desk-property');
-    // Arrange Desk: Show/Hide, Move up/down, Reset to recommended.
+    // Arrange Desk: Show/Hide, Move a work area up, Reset to office default.
     await page.getByRole('navigation', { name: 'Desk workspace', exact: true }).getByRole('button', { name: /^Tasks\s*\d*$/ }).click();
     await openMore();
-    const options = more.locator('details.desk-options');
-    if (!await options.evaluate(el => el.open)) await options.locator(':scope > summary').click();
-    await options.getByRole('button', { name: 'Arrange Desk', exact: true }).click();
+    await more.getByRole('group', { name: 'More Desk tools', exact: true }).getByRole('button', { name: 'Arrange Desk', exact: true }).click();
     const panel = page.getByRole('dialog', { name: 'Arrange Desk', exact: true });
     await panel.waitFor();
     assert.equal(await panel.getByRole('checkbox', { name: 'Needs you always shows', exact: true }).isDisabled(), true, 'the safety section cannot be hidden');
     check(c, 'Needs you (safety/approval section) cannot be hidden');
-    const up = panel.getByRole('button', { name: 'Move Activity up', exact: true });
+    const up = panel.getByRole('button', { name: 'Move Bills and calendar up', exact: true });
     await up.focus(); await page.keyboard.press('Enter');
     await panel.getByRole('checkbox', { name: 'Show Mail priorities on my Desk', exact: true }).uncheck();
     await shot('customize-draft');
@@ -364,11 +362,11 @@ try {
     let layout = (await api('/api/workspace-tabs')).body.state.desk.sections;
     assert.equal(layout.find(s => s.id === 'mail').visible, false, 'Mail priorities hidden');
     check(c, 'Arrange (keyboard Move up) and Hide Mail priorities saved');
-    await panel.getByRole('button', { name: 'Reset to recommended', exact: true }).click();
+    await panel.getByRole('button', { name: 'Reset to office default', exact: true }).click();
     await panel.getByRole('button', { name: 'Save', exact: true }).click();
     await until(async () => (await api('/api/workspace-tabs')).body.state.desk.sections.every(s => s.visible), 'reset saved');
     layout = (await api('/api/workspace-tabs')).body.state.desk.sections;
-    check(c, `Reset to recommended restores every section (${layout.map(s => s.id).join(', ')})`);
+    check(c, `Reset to office default restores every section (${layout.map(s => s.id).join(', ')})`);
     await widths('customize-panel');
     await panel.getByRole('button', { name: 'Close Arrange Desk', exact: true }).click();
   });
@@ -395,11 +393,24 @@ try {
     await shot('schedule-needs-you-empty');
     check(c, 'Empty state: Needs you filter with no jobs');
     await page.getByRole('button', { name: /^All jobs/ }).click();
-    // Error state: a workflow that needs agency setup refuses to resume and says why.
+    // Error state: a workflow that needs agency setup is held and says why.
     // Never switched on: "Switch on" (a job the clock has run reads "Resume").
+    // Since the setup-stages gates (3628545e) a held row action opens the job, where the
+    // switch is disabled and the reason and its fix are shown in place.
     await page.getByRole('button', { name: /^(Resume|Switch on): Morning priorities$/ }).click();
-    await page.getByRole('alert').filter({ hasText: 'needs current source checks and reviewed settings' }).waitFor();
-    check(c, 'Error state: Morning priorities cannot resume before agency workflow setup; the reason is shown');
+    const heldJob = page.getByRole('dialog', { name: 'Morning priorities' });
+    const heldSwitch = heldJob.getByRole('button', { name: /^(Resume|Switch on)$/ });
+    await heldJob.getByText('Before Morning priorities can switch on, finish Agency workflow setup and approve it there.', { exact: true }).waitFor();
+    assert.equal(await heldSwitch.isDisabled(), true, 'Switch on is held before agency workflow setup');
+    await heldJob.getByRole('button', { name: 'Open Agency workflow setup', exact: true }).waitFor();
+    // The host stays the authority: the same switch sent past the UI is refused with its reason.
+    const refused = await api('/api/mail-workspace/schedule', 'PATCH', { enabled: true });
+    assert.equal(refused.status, 409, JSON.stringify(refused.body));
+    assert.match(refused.body?.error ?? '', /needs current source checks and reviewed settings/);
+    assert.equal((await api('/api/loops')).body.loops.find(l => l.id === 'inbound-triage').enabled, false);
+    check(c, 'Error state: Morning priorities is held before agency workflow setup; the job shows the reason and "Open Agency workflow setup", and the service refuses the switch (409)');
+    await page.keyboard.press('Escape');
+    await heldJob.waitFor({ state: 'hidden' });
     await widths('schedule');
     await page.getByRole('button', { name: 'Open job: Morning money check', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Morning money check' });

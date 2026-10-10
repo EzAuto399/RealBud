@@ -35,10 +35,11 @@
   --color-paper: #f3efe5;
   --color-sheet: #fffbf2;
   --color-ink: #25231f;
-  --color-ink-muted: #6f695e;
-  /* Muted text tuned for the --color-selected surface, where --color-ink-muted
-     falls to 4.33:1 (under the 4.5:1 AA floor for normal text). 6.15:1 on
-     selected, 7.77:1 on sheet. Used only on the active sidebar row. */
+  /* Darkened from #6f695e, which fell under the 4.5:1 AA floor on inset (4.45),
+     selected (4.17), raised (4.21) and raised-hover (3.76). #625c52 measures
+     4.57:1 on raised-hover, 5.08 on selected and 6.41 on sheet. */
+  --color-ink-muted: #625c52;
+  /* Stronger muted text for the active sidebar row: 6.15:1 on selected, 7.77:1 on sheet. */
   --color-ink-secondary-strong: #4a5346;
   --color-line: #d4ccbb;
   --color-agency: #3f5f45;
@@ -58,7 +59,7 @@
   --color-card: #fffbf2;
   --color-inset: #ede8dc;
   --color-hairline: #d4ccbb;
-  --color-ink-secondary: #6f695e;
+  --color-ink-secondary: #625c52;
   --color-accent: #3f5f45;
   --color-accent-border: #314b36;
   --color-bubble-user: #e8e2d4;

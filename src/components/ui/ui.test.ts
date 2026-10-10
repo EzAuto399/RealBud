@@ -74,6 +74,11 @@ describe("ToastStack", () => {
     expect(html).not.toContain("Saved 1");
     expect(html).toContain("motion-reduce:transition-none");
   });
+
+  it("shows a toast's action as its own named button beside dismiss", () => {
+    const html = renderToStaticMarkup(createElement(ToastStack, { toasts: [{ id: "bud", message: "Bud arranged Desk: hid Activity.", action: { label: "Undo", run: noop } }], onDismiss: noop }));
+    expect(html).toMatch(/Bud arranged Desk: hid Activity\.<\/span><button type="button" class="pm-control[^"]*">Undo<\/button><button[^>]*aria-label="Dismiss: Bud arranged Desk: hid Activity\."/);
+  });
 });
 
 describe("MetricCard", () => {

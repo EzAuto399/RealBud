@@ -7,7 +7,7 @@ import { allowWorkspaceNavigation } from "@/lib/navigation-guard";
 export { ensureSession } from "@/lib/local-session";
 import type { ServiceAdminStatus } from "../../shared/service-admin";
 import { officeSources, watchOfficeSources } from "@/lib/connected-apps-refresh";
-import { createWorkspaceViewsRefresh } from "@/lib/workspace-views-refresh";
+import { WORKSPACE_TABS_CHANGED } from "@/lib/workspace-tabs";
 // Server-backed store. The React app holds no transports of its own:
 // it dispatches typed commands over HTTP and folds the one SSE event
 // stream from the harness server into local state. The reducer stays
@@ -34,6 +34,7 @@ import { speaker } from "@/lib/tts";
 import { SERVICE_UNAVAILABLE_EVENT, isLocalServiceProxyFailure, localServiceError } from "@/lib/api-error";
 import { notifyDeskNeedsYou } from "@/lib/notify-desktop";
 import { notifyRoutineRun } from '@/lib/notify-routine';
+import { NEEDS_YOU_STALE } from "@/lib/needs-you";
 import { STREAM_COMMIT_INTERVAL_MS } from "@/lib/chat-scroll";
 import { askStepLabel } from "@/lib/ask-step-label";
 import { parseLiveStreamSnapshot, restoredLiveStreams } from "@shared/live-stream";
@@ -1403,7 +1404,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     let deskLoad = 0, deskEvents = 0, botLoad = 0, botEvents = 0;
     let botHydrationDeferred = false;
     const streamTurns = new Map<string, string>();
-    const viewsRefresh = createWorkspaceViewsRefresh();
     const loadBots = () => {
       const load = ++botLoad;
       botHydrationDeferred = false;
@@ -1449,6 +1449,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       if (["message", "message.patch", "thread", "bot", "bot.deleted", "group"].includes(frame.kind)) botEvents++;
       if (botHydrationDeferred && frame.kind === "bot" && frame.bot?.busy === false) loadBots();
+      // Frames that can change what Needs you shows; its client coalesces the rereads.
+      if (["loop", "loop.run", "loops.recovery", "job.run", "desk"].includes(frame.kind)) window.dispatchEvent(new CustomEvent(NEEDS_YOU_STALE));
       switch (frame.kind) {
         case "hello": {
           // This snapshot and subsequent deltas share one ordered SSE stream.
@@ -1460,8 +1462,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           setStream({ ...restoredLiveStreams(snapshot), step: {} });
           streamTurns.clear();
           for (const row of snapshot) streamTurns.set(row.threadId, row.turnId);
+          // Layout changes announced while disconnected were missed: reread once.
+          window.dispatchEvent(new CustomEvent(WORKSPACE_TABS_CHANGED));
           break;
         }
+        case "workspace-tabs":
+          // The service announces every saved Desk layout and saved view, whoever made it.
+          window.dispatchEvent(new CustomEvent(WORKSPACE_TABS_CHANGED, { detail: { revision: frame.revision, by: frame.by } }));
+          break;
         case "office-sources":
           try { officeSources.accept(frame.access); } catch { officeSources.invalidate(); }
           break;
@@ -1585,7 +1593,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "runtime": {
           const event = frame.event;
-          viewsRefresh(event);
           if (event.type === "turn.started") {
             streamTurns.set(event.threadId, event.turnId);
             clearStream(event.threadId);

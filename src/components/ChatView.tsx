@@ -1403,16 +1403,32 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
   const readEarlier = useCallback(() => setFollow(false), [setFollow]);
   const touchY = useRef(0);
 
+  // Read through a ref so re-arming follow never scrolls by itself: an upward
+  // wheel near the end re-armed it and the effect snapped the view back down.
+  const followRef = useRef(follow);
+  followRef.current = follow;
+  const welcome = productAsk && askEmptyThread && !bot.busy;
   const followLatest = useCallback(() => {
-    if (!follow || !scrollRef.current) return;
+    if (!followRef.current || !scrollRef.current) return;
     // Welcome content is read from the top. Conversation follow behaviour
     // starts only when there is work to follow.
-    if (productAsk && askEmptyThread && !bot.busy) scrollRef.current.scrollTop = 0;
+    if (welcome) scrollRef.current.scrollTop = 0;
     else scrollChatToEnd(scrollRef.current);
-  }, [follow, productAsk, askEmptyThread, bot.busy]);
+  }, [welcome]);
   useEffect(() => {
     followLatest();
   }, [bot.id, bot.busy, followLatest, messages.length]);
+  // Task cards, the jobs strip and the composer change height without a new
+  // message; keep the latest in view while following.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || welcome || typeof ResizeObserver === "undefined") return;
+    const resize = new ResizeObserver(() => followLatest());
+    resize.observe(el);
+    for (const child of el.children) resize.observe(child);
+    return () => resize.disconnect();
+  }, [followLatest, welcome]);
+  const lastTop = useRef(0);
 
   // keyboard is a scroll gesture too (upstream lesson): PageUp/Home break
   // follow like an upward wheel; the at-end onScroll check re-arms it
@@ -1543,8 +1559,13 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
           if (y > touchY.current + 4) setFollow(false);
           else if (atEnd()) setFollow(true);
         }}
-        onScroll={() => {
-          if (!follow && atEnd()) setFollow(true);
+        onScroll={(e) => {
+          // Only a downward scroll that reaches the end re-arms follow; the
+          // first frames of an upward wheel are still within the end margin.
+          const top = e.currentTarget.scrollTop;
+          const down = top > lastTop.current;
+          lastTop.current = top;
+          if (!follow && down && atEnd()) setFollow(true);
         }}
       >
         {productAsk && <MailPriorityCard className="mx-auto mt-4 max-w-[900px]" />}

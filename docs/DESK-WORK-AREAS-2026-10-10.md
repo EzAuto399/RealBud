@@ -1,8 +1,8 @@
 # Desk work areas: one Desk that fits each office's workflows
 
-**This does not establish:** a built feature, user-tested benefit, packaged or installed behaviour, or customer acceptance.
+**This does not establish:** user-tested benefit, packaged or installed behaviour, or customer acceptance.
 
-Date: 10 October 2026. Status: **proposed design**, not built. Evidence tier: source survey plus local renders of today's Desk (fictional sample book, isolated temp home, no worker). Mockup and screenshots: [outputs/desk-work-areas-2026-10-10/](../outputs/desk-work-areas-2026-10-10/).
+Date: 10 October 2026. Status: **built** on `claude/desk-work-areas` (slices 1–4, §11), not released. Design evidence tier: source survey plus local renders of today's Desk (fictional sample book, isolated temp home, no worker). Mockup and screenshots: [outputs/desk-work-areas-2026-10-10/](../outputs/desk-work-areas-2026-10-10/).
 
 This is the concrete Desk layer of [the reusable-shell brief](PRODUCT-DESIGN-BRIEF-2026-10-10.md) (shell owns authority and recovery, packs supply view presets from a registry of approved layouts). It does not change that contract.
 
@@ -54,7 +54,7 @@ Every area uses the same four parts, so all workflows read alike:
 - choose its notice level;
 - choose list or calendar where both exist.
 
-Needs you is locked first. Below the rows are three actions: Save, Reset to office default, and Undo last change. The sheet says what it changes: "Changes only your view. Your office's workflows and permissions stay the same." **Bud arranges Desk through the same path.** One Bud tool changes the same layout through the same server route as the sheet (revision check, history). Because it changes only the person's own view, it applies at once and Ask shows a receipt with Undo; deleting a saved view keeps its approval card. The server announces every saved layout, so Desk re-reads at once whoever made the change. Bigger changes, such as a new area, come from the pack.
+Needs you is locked first. Below the rows are three actions: Save, Reset to office default, and Undo last tab or card change. The sheet says what it changes: "Changes this computer's Desk. Your office's workflows and permissions stay the same." (The layout is saved per computer, not per person.) **Bud arranges Desk through the same path.** One Bud tool changes the same layout through the same server route as the sheet (revision check, history). Because it changes only the person's own view, it applies at once and Ask shows a receipt with Undo; deleting a saved view keeps its approval card. The server announces every saved layout, so Desk re-reads at once whoever made the change. Bigger changes, such as a new area, come from the pack.
 
 ## 4. What a pack declares (preset only)
 
@@ -71,7 +71,7 @@ Rules:
 - A preset grants no access and starts no work.
 - A person's hides, order and notice choices survive pack upgrades.
 - A new area from an upgrade appears at the end of the list.
-- Unknown fields are ignored by older cores.
+- Older cores refuse a pack with a `desk` key (`server/customer-packs.ts` allowlists every field), so a pack that presets Desk needs core 0.1.50 or later.
 - v1 packs, which have no `desk` key, keep today's Desk.
 
 ## 5. State matrix (every area)
@@ -118,4 +118,99 @@ Edge paths:
 
 ## 9. Limits
 
-This document is a design. Nothing in it is built. The mockup is static HTML with fictional data, and the "now" screenshots are local fictional renders. Neither is customer evidence. No user testing has been done yet.
+The mockup is static HTML with fictional data, and the "now" screenshots are local fictional renders. Neither is customer evidence. No user testing has been done yet. What was built and verified, and its limits, is in §11.
+
+## 10. Build decisions for slices 2–4 (10 Oct 2026)
+
+Facts from the source survey that change the plan:
+- Mail, bills and bank data load only when their panel opens; no server event carries them.
+- Notices come from the static `notify` flag in `shared/workflow-catalog.ts`. Bank references is off, and maintenance and inspections are on.
+- Bill findings also include `review-hold`.
+- A notice click always lands on Tasks.
+
+Contracts, written first so packets can build in parallel:
+- `shared/desk-areas.ts`:
+  - areas `mail`, `bills`, `bank`, `shared-work`;
+  - the layout registry and the layouts each area can render;
+  - notice levels Each new item / One summary per run / Problems only;
+  - area to pack workflow, and area to scheduled jobs;
+  - `OfficeDesk`, the office preset: from the active pack, else `coreOfficeDesk()`.
+- `shared/needs-you.ts`:
+  - `GET /api/needs-you` is projected on the server from each store, so Desk makes one read instead of opening every panel;
+  - problems come first;
+  - stable `<source>:<id>` keys;
+  - a source that can't be read is listed as unavailable, never shown as empty.
+- Layout file v3:
+  - adds the `bank` section (appended at the end);
+  - each area section may carry the person's own `notify` and `layout`; absent means the office preset;
+  - a missing known section is filled at the end instead of sending the file to recovery;
+  - an unknown section is still refused.
+
+Packets (each with its own worktree and file list):
+1. Layout v3, the office preset in the response, and Bud's `desk_arrange` choosing notice and layout.
+2. The Needs you server projection.
+3. Pack `desk.areas`: validation, preview, and the office preset from the active pack, proved with two fictional packs. Austin's pack is unchanged in this release.
+4. Area cleanup:
+   - setup and schedule controls folded into a collapsed "Setup" disclosure;
+   - one primary action per area;
+   - no zero-count filters;
+   - a common status line (last check, next check, Check now).
+5. Desk integration:
+   - Needs you on the Tasks tab;
+   - tab counts with a text problem marker;
+   - the Bank references area;
+   - Arrange Desk split into "Work areas" and "Cards on Tasks", with notice and layout choices, Reset to office default and Undo last tab or card change.
+6. Notices:
+   - levels per area;
+   - problems always notify;
+   - a click opens the area that sent the notice.
+
+## 11. What was built (10 Oct 2026)
+
+Branch `claude/desk-work-areas`, not released or merged. Evidence tier: source, local tests and local renderer QA with fictional data in isolated temporary homes. There is no packaged build, installed device, live integration or customer acceptance yet.
+
+Built (§10 packets 1–6, plus the review fixes):
+1. Layout v3. It adds the Bank references section, a per-area notice level and layout, and the office preset in every answer. Bud's `desk_arrange` uses the same route.
+2. `GET /api/needs-you`.
+   - Mail and bills are read only when the office shows those areas.
+   - Job items come only from jobs Schedule can open, within the last 100 runs.
+3. Pack `desk.areas` presets, proved with two fictional packs. Austin's pack is unchanged.
+4. Each area has one status line, with Setup collapsed.
+   - Tasks shows Needs you.
+   - Area tabs show counts, and the accessible description names them ("2 items, 1 problem").
+   - Arrange Desk is split into "Work areas" and "Cards on Tasks". It has Reset to office default and "Undo last tab or card change", which is disabled while a draft is unsaved.
+5. Notices per area. Problems always notify, and a click opens the area that sent the notice.
+6. The simple desk keeps every work area as a tab. A startup step gives the tabs back to layouts that were applied automatically and never touched (`showAreaTabsOnAutomaticSimpleDesk`).
+
+Also in this bundle:
+- Bank references are reviewed in one place. Schedule's bank job opens the Desk area when the office offers it, or offers to show it when it is hidden. It reviews in the drawer only when the office has no such area (`BankReviewPlace`, `src/components/schedule/JobDrawer.tsx`).
+- Accessibility, from the [system map review](SYSTEM-MAP-REVIEW-2026-10-10.md):
+  - Muted text (`--color-ink-muted`, `--color-ink-secondary`) is darkened to `#625c52`. It now passes 4.5:1 on every surface; it had measured 3.76–4.45:1 on inset, selected, raised and raised-hover.
+  - The Tasks drawer keeps Tab inside it; before, 16 of 30 Tab presses left it in Chrome. Arrange Desk uses the same shared trap. Closed from the More menu, it now returns focus to More instead of dropping it to the page.
+- The pre-rename data folder moves only into the default `~/.realbud`.
+- The office link comes first. An unlinked or revoked computer opens on "Connect this computer to your office" before Bud's setup screen.
+  - Recovery never waits behind that screen.
+  - The link step can no longer be skipped.
+  - There is no way past it except recovery (owner decision, 10 Oct). See [Office link gate](OFFICE-LINK-GATE-2026-10-10.md).
+
+Evidence:
+- Final, at `25f77e8d` with a real install: typecheck clean, `check:electron` 34/34, full suite 11,113 passed and 0 failed, and renderer QA 29 of 29 scripts in one run (fictional data). An independent review's high finding (a saved first-run recovery choice skipped the gate on every launch) is fixed; see the [Office link gate](OFFICE-LINK-GATE-2026-10-10.md) exits. Details: [Release 0.1.50](RELEASE-0.1.50-2026-10-10.md#evidence).
+- Full suite at `b1148c26`: 11,068 passed. Five failed for an environment reason: the PDF worker under `node --permission` through a symlinked `node_modules`. They pass with a real install. `pnpm check:electron`: 34/34.
+- After the link-gate merge: typecheck is clean. Vitest over `src`, `shared` and the Needs you and workspace-tab server tests: 232 files, 2,931 passed.
+- Renderer QA: 12 of 13 pass on the merged branch (built UI, real install): link-gate 17/17 (rerun after the copy fix), setup-stages 29/29, onboarding-setup 15/15, screen-loading 7/7, kevin-sherry-day 26/26, weekly-bills 6/6, w2-calendar 5/5, desk-work-areas 8/8, customizable-desk 9/9, desktop-shell 11/11, workspace-tabs, source-bills 30/30. clean-walkthrough is 12/13: step 6 fails the same way on `main`. Receipts: [outputs/office-link-gate-2026-10-10/](../outputs/office-link-gate-2026-10-10/).
+
+Limits:
+- Failures that also occurred on `main` were QA drift, not product bugs, and the scripts now follow the product. Examples: `qa-inspections` moved a visit onto a day already at the inspector's daily limit, and `qa-sidebar-refinement` looked for saved views in the rail.
+- Not run:
+  - `qa-shell-purpose`, which needs `QA_BASELINE`;
+  - `qa-native-private-restore`, which needs a packaged build;
+  - `qa-browser-link-e2e`, which needs Postgres and a website build.
+- Low findings left open:
+  - A revoked computer is detected only by the server's 5-minute report.
+  - A pack that declares `desk` needs core 0.1.50, and packs have no minimum-core field yet.
+  - A client's own pack can't be chosen as the office pack: `AGENCY_WORKFLOW_PACK_IDS` (`shared/agency-workflow-packs.ts:4`) allows three host-coded ids, and none of those packs ships `desk`. So the pack preset is proved only with fictional packs injected in tests. This is step 1 of the [map review](SYSTEM-MAP-REVIEW-2026-10-10.md).
+  - Layout `table` passes `validatePackDesk`, but no area renders it, so importing a pack that uses it is refused.
+  - An older core that opens a v3 layout sends it to recovery.
+- The link screen:
+  - While the link or the book is still being read, the gate shows a checking frame instead of Desk. After 20 s it offers Try again and Open recovery.
+  - There is no team-seat exemption, because the renderer has no reliable seat signal.
