@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { CompanyStatus } from '@shared/company-api';
 import type { SharedWorkItem, SharedWorkPerson, SharedWorkPurpose, ShareWorkInput } from '@shared/company-work';
 import { companyApi } from '@/lib/company-api';
+import { useUnsavedGuard } from '@/lib/unsaved-work';
 import { SharedWorkDetails } from './SharedWorkDetails';
 import type { SharedWorkEvidence } from '@shared/company-work';
 
@@ -64,6 +65,9 @@ export function SharedWorkPanel({ initialDraft, initialExpanded = false, initial
   const reviewHeading = useRef<HTMLHeadingElement>(null);
   const titleField = useRef<HTMLInputElement>(null);
   const previousPreview = useRef(false);
+  // Typed share text holds beforeunload and the update restart until it is shared. A locked
+  // share is already kept in this computer's outbox and comes back after a restart.
+  useUnsavedGuard(!shareLocked && Boolean(title.trim() || summary.trim() || (includeEvidence && Object.values(evidence).some(value => value.trim()))));
 
   const clearVisible = (sessionLost = false) => {
     setMembers([]);

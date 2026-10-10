@@ -5,6 +5,7 @@ import { companyExecutionUuid, isConfirmCompanyExecution, isRevokeCompanyExecuti
 import { remoteExact } from '@shared/website-remote-approvers';
 import { canonicalWebsiteCommand } from '@shared/website-commands';
 import { companyApi, departmentMutationUncertain } from '@/lib/company-api';
+import { useUnsavedGuard } from '@/lib/unsaved-work';
 
 const button = 'min-h-11 rounded-lg border border-line px-3 py-2 text-[14px] text-ink disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-agency';
 const field = 'min-h-11 w-full min-w-0 rounded-lg border border-line bg-sheet p-3 text-ink focus-visible:outline-2 focus-visible:outline-agency';
@@ -60,6 +61,8 @@ export function CompanyDepartmentPreparation({ departmentId, cases, operationBlo
   const [consent,setConsent]=useState(false),[approval,setApproval]=useState<CompanyExecutionGrant|null>(null),[approved,setApproved]=useState(false),[revoking,setRevoking]=useState<CompanyExecutionGrant|null>(null),[note,setNote]=useState('');
   const [now,setNow]=useState(Date.now());
   const active=useRef(true),pending=useRef(false),generation=useRef(0),editing=useRef(false),storageKey=useRef('');
+  // A typed withdrawal reason holds beforeunload and the update restart until it is recorded or kept.
+  useUnsavedGuard(Boolean(revoking)&&Boolean(note.trim()));
   const clearReview=()=>{setApproval(null);setApproved(false);setRevoking(null);setConsent(false);editing.current=false;};
   const load=useCallback(async()=>{
     const epoch=companyApi.sessionVersion(),current=++generation.current;

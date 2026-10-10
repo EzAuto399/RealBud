@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { askNextActions } from "@/lib/ask-next";
 import { flushedStream, toolStartedStream, type StreamState } from "@/state/store";
 import { AskNextActionPanel, ChatStreamTail, MessagesList } from "./ChatView";
@@ -15,6 +15,20 @@ vi.mock("@/state/store", async importOriginal => ({ ...await importOriginal<obje
 // The task card's own rendering has its tests; here only what ChatView hands it.
 const cards = vi.hoisted(() => [] as Array<Record<string, any>>);
 vi.mock("./BrowserTaskCard", () => ({ BrowserTaskCard: (props: Record<string, any>) => { cards.push(props); return null; }, useBrowserTasks: vi.fn() }));
+// A static render can't type. While `typing.on`, state keeps its value across renders in call
+// order, so a test can change a field as its onChange would, render again and read the guard.
+const typing = vi.hoisted(() => ({ on: false, at: 0, values: [] as unknown[], guards: [] as boolean[] }));
+vi.mock("react", async original => {
+  const react = await original<typeof import("react")>();
+  return { ...react, useState: (initial: unknown) => {
+    if (!typing.on) return react.useState(initial);
+    const at = typing.at++;
+    if (!(at in typing.values)) typing.values[at] = typeof initial === "function" ? (initial as () => unknown)() : initial;
+    return [typing.values[at], (next: unknown) => { typing.values[at] = typeof next === "function" ? (next as (old: unknown) => unknown)(typing.values[at]) : next; }];
+  } };
+});
+vi.mock("@/lib/unsaved-work", async original => ({ ...await original<object>(), useUnsavedGuard: (dirty: boolean) => { typing.guards.push(dirty); } }));
+afterEach(() => { typing.on = false; typing.values.length = 0; });
 
 const actions = () => ({ onAsk: vi.fn(), onRecheck: vi.fn(), onDesk: vi.fn(), onYou: vi.fn() });
 const suggestions = (lastBotText: string, threadIdle = true) => askNextActions({
@@ -153,5 +167,25 @@ describe("Ask working line names the current step", () => {
     expect(html).not.toContain("Checking Gmail…");
     expect(html).toContain('<span class="sr-only">Working</span>');
     expect(tail(false)).toBe("");
+  });
+});
+
+describe("Editing a sent request", () => {
+  it("holds beforeunload and the update restart only while the edit differs from what was sent", () => {
+    const sent = { id: "m-sent", role: "user", kind: "text", text: "Check the fictional rent ledger", at: Date.now() } as any;
+    const editor = createElement(MessagesList, {
+      bot: { id: "bud", threadId: "t-desk", name: "Bud", busy: false, messages: [sent] } as any, messages: [sent],
+      editingId: "m-sent", lastBotTextId: undefined, canRetryLast: false, engine: undefined, onStartEdit: vi.fn(), onCancelEdit: vi.fn(),
+      onSubmitEdit: vi.fn(), onRegenerate: vi.fn(), productAsk: true, scrollRef: { current: null }, readingEarlier: false, onReadEarlier: vi.fn(),
+    });
+    const answer = () => { typing.at = 0; typing.guards.length = 0; renderToStaticMarkup(editor); return [...typing.guards]; };
+    typing.on = true;
+    expect(answer()).toEqual([false]);
+    const draft = typing.values.indexOf(sent.text);
+    expect(draft).toBeGreaterThanOrEqual(0);
+    typing.values[draft] = "Check the fictional rent ledger for March";
+    expect(answer()).toEqual([true]);
+    typing.values[draft] = `${sent.text}  `;
+    expect(answer()).toEqual([false]);
   });
 });

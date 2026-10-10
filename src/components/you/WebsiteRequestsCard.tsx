@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useUnsavedGuard } from '@/lib/unsaved-work';
 import { api } from '@/state/store';
 import { SettingsCard } from './SettingsCard';
 import type { OfficeLinkStatus } from '../../../server/office-link';
@@ -19,6 +20,7 @@ const phaseLabels: Record<WebsiteCommandPhase, string> = {
 const date = (value: string) => new Date(value).toLocaleString();
 const safeError = (cause: unknown, fallback: string) => cause instanceof Error ? cause.message : fallback;
 const rowId = (row: RequestRow) => row.value.envelope.id;
+const defaultLabel = 'My workspace';
 
 function ExactRequestReview({ review, row, enabled, busy, close, decide }: {
   review: Review; row: RequestRow; enabled: boolean; busy: boolean; close: () => void; decide: (choice: 'approve' | 'reject') => void;
@@ -52,7 +54,7 @@ export function WebsiteRequestsCard() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [label, setLabel] = useState('My workspace');
+  const [label, setLabel] = useState(defaultLabel);
   const [selected, setSelected] = useState<string[]>([]);
   const [publishConfirmed, setPublishConfirmed] = useState(false);
   const [disableConfirmed, setDisableConfirmed] = useState(false);
@@ -157,6 +159,8 @@ export function WebsiteRequestsCard() {
   const status = snapshot?.status;
   const pendingDescriptors = status?.publishedDescriptors ?? status?.grant?.descriptors ?? [];
   const enrolled = !!status?.enabled && !status.pending && !!status.grant;
+  // Setup choices not yet published (a typed name or chosen plans) hold beforeunload and the update restart.
+  useUnsavedGuard(!enrolled && !status?.pending && (selected.length > 0 || (label.trim() !== '' && label.trim() !== defaultLabel)));
   const enabled = enrolled && status?.linked && link?.state === 'linked';
   const working = !!busy || !!status?.busy;
   const published = status?.pending ? pendingDescriptors : status?.catalog.filter(descriptor => selected.includes(descriptor.id)) ?? [];

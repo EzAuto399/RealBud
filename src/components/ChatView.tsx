@@ -69,6 +69,7 @@ import { PmTaskStarters } from "./PmTaskStarters";
 import { AskMessage } from "./AskMessage";
 import { MailPriorityCard } from "./work/MailPriorityCard";
 import { channelMessage } from "@/lib/channel-message";
+import { useUnsavedGuard } from "@/lib/unsaved-work";
 import { AskReadiness } from "./AskReadiness";
 import { useOfficeLinkRead } from "@/lib/use-office-link";
 import { useSetupState } from "@/lib/use-setup-state";
@@ -251,6 +252,8 @@ function BubbleEditor({
   productAsk?: boolean;
 }) {
   const [draft, setDraft] = useState(initial);
+  // An edit that Send would change holds beforeunload and the update restart; Send and Cancel close the editor.
+  useUnsavedGuard(Boolean(draft.trim()) && draft.trim() !== initial.trim());
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     const el = ref.current;

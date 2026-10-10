@@ -1,7 +1,22 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@/state/store', () => ({ api: vi.fn() }));
+// A static render can't type. While `typing.on`, state keeps its value across renders in call
+// order, so a test can change a field as its onChange would, render again and read the guard.
+const typing = vi.hoisted(() => ({ on: false, at: 0, values: [] as unknown[], guards: [] as boolean[] }));
+vi.mock('react', async original => {
+  const react = await original<typeof import('react')>();
+  return { ...react, useState: (initial: unknown) => {
+    if (!typing.on) return react.useState(initial);
+    const at = typing.at++;
+    if (!(at in typing.values)) typing.values[at] = typeof initial === 'function' ? (initial as () => unknown)() : initial;
+    return [typing.values[at], (next: unknown) => { typing.values[at] = typeof next === 'function' ? (next as (old: unknown) => unknown)(typing.values[at]) : next; }];
+  } };
+});
+vi.mock('@/lib/unsaved-work', async original => ({ ...await original<object>(), useUnsavedGuard: (dirty: boolean) => { typing.guards.push(dirty); } }));
+afterEach(() => { typing.on = false; typing.values.length = 0; });
+const answer = (element: ReturnType<typeof createElement>) => { typing.at = 0; typing.guards.length = 0; renderToStaticMarkup(element); return [...typing.guards]; };
 import type { ConnectorEntryView, ConnectorRegistryView } from '@shared/mcp-connector';
 import type { ConnectorRegistryControls } from '@/lib/mcp-connector-api';
 import { ConnectorReview, OfficeConnectors } from './ConnectorReview';
@@ -63,5 +78,29 @@ describe('added services in Connected apps', () => {
     expect(buttons(member)).toEqual(['Check for Fictional Books']);
     const owner = renderToStaticMarkup(createElement(OfficeConnectors, { controls: controls({ version: 1, canManage: true, connectors: [entry({ auth: 'header', connection: connection('not_connected') })] }) }));
     expect(owner).toMatch(/type="password" autoComplete="off" aria-label="Access token for Fictional Books"[^>]*value=""/);
+  });
+});
+
+describe('unsaved connector choices and text', () => {
+  it('holds beforeunload and the update restart while review choices differ from the saved ones', () => {
+    const review = createElement(ConnectorReview, { entry: entry(), busy: false, onApprove: vi.fn(), onCancel: vi.fn() });
+    typing.on = true;
+    expect(answer(review)).toEqual([false]);
+    typing.values[0] = new Set(['create_book']); // Allow create_book ticked
+    expect(answer(review)).toEqual([true]);
+    typing.values[0] = new Set();
+    expect(answer(review)).toEqual([false]);
+  });
+
+  it('holds them while a server address, name or access token is typed', () => {
+    const office = createElement(OfficeConnectors, { controls: controls({ version: 1, canManage: true, connectors: [entry({ auth: 'header', connection: connection('not_connected') })] }) });
+    typing.on = true;
+    expect(answer(office)).toEqual([false, false]); // the add form, then the token field
+    const [address, token] = [0, typing.values.lastIndexOf('')]; // the first state is the server address; the row's last is its token
+    typing.values[address] = 'https://mcp.fictional-books.example/mcp';
+    expect(answer(office)).toEqual([true, false]);
+    typing.values[address] = '';
+    typing.values[token] = 'fictional-token-value';
+    expect(answer(office)).toEqual([false, true]);
   });
 });

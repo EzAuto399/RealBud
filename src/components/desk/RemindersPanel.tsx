@@ -11,6 +11,7 @@ import {
   type SnoozePresetId,
 } from "@shared/reminders";
 import { reminderAskContext, useReminders, type RemindersViewState } from "@/lib/reminders-api";
+import { useUnsavedGuard } from "@/lib/unsaved-work";
 import { useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
 
@@ -143,6 +144,8 @@ export function RemindersPanel({ headerAction }: { headerAction?: ReactNode }) {
   const { dispatch } = useStore();
   const reminders = useReminders();
   const [draft, setDraft] = useState<ReminderDraft>({ title: "", when: "" });
+  // A typed reminder holds beforeunload and the update restart until it is added.
+  useUnsavedGuard(draft.title.trim().length > 0);
   const timeZone = reminders.view.data?.timeZone ?? null;
   const now = Date.now();
   return (

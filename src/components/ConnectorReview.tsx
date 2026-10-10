@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Plug } from "lucide-react";
 import { CONSEQUENTIAL_WARNING, MAX_TOOL_DESCRIPTION, type ConnectorEntryView, type ConnectorToolClass } from "@shared/mcp-connector";
 import type { ConnectorRegistryControls, ConnectorReviewSelection } from "@/lib/mcp-connector-api";
+import { useUnsavedGuard } from "@/lib/unsaved-work";
 
 const control = "pm-control inline-flex items-center justify-center gap-1.5 rounded-lg border border-line bg-sheet px-3 py-1.5 text-[12.5px] text-ink hover:bg-raised disabled:cursor-not-allowed disabled:opacity-50";
 const primary = `${control} !border-agency/30 !bg-agency !text-white hover:!bg-agency-hover`;
@@ -27,6 +28,10 @@ export function ConnectorReview({ entry, busy, onApprove, onCancel }: {
   const [trusted, setTrusted] = useState(() => initial(tool => tool.trusted));
   const [consequential, setConsequential] = useState(() => initial(tool => tool.enabled && tool.toolClass === "consequential"));
   const [warned, setWarned] = useState(false);
+  // Choices that differ from the saved review hold beforeunload and the update restart until approved or closed.
+  const same = (now: Set<string>, saved: Set<string>) => now.size === saved.size && [...now].every(name => saved.has(name));
+  useUnsavedGuard(!same(enabled, initial(tool => tool.enabled && tool.toolClass !== "consequential")) || !same(trusted, initial(tool => tool.trusted))
+    || !same(consequential, initial(tool => tool.enabled && tool.toolClass === "consequential")));
   const flip = (set: (update: (current: Set<string>) => Set<string>) => void, name: string) =>
     set(current => { const next = new Set(current); if (next.has(name)) next.delete(name); else next.add(name); return next; });
   const toggle = (name: string, toolClass: ConnectorToolClass) => {
@@ -96,6 +101,9 @@ function ConnectorRow({ entry, controls, canManage }: { entry: ConnectorEntryVie
   const busy = controls.state.busy !== null;
   const sr = <span className="sr-only"> for {entry.label}</span>;
   const connected = entry.connection.status === "connected";
+  const tokenForm = canManage && !connected && entry.auth === "header";
+  // A typed access token holds beforeunload and the update restart until it is saved.
+  useUnsavedGuard(tokenForm && Boolean(token.trim()));
   const state = stateLine(entry);
   return (
     <li className="rounded-xl border border-line bg-sheet p-3" data-connector-id={entry.id}>
@@ -110,7 +118,7 @@ function ConnectorRow({ entry, controls, canManage }: { entry: ConnectorEntryVie
       <p className="mt-1 text-[12px] text-ink-secondary">{healthLine(entry)}</p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {canManage && !connected && entry.auth === "oauth" ? <button type="button" className={primary} disabled={busy} onClick={() => void controls.connect(entry.id)}>Connect{sr}</button> : null}
-        {canManage && !connected && entry.auth === "header" ? (
+        {tokenForm ? (
           <form className="flex min-w-0 flex-1 flex-wrap gap-2" onSubmit={event => { event.preventDefault(); const value = token; setToken(""); void controls.setToken(entry.id, value); }}>
             <input type="password" autoComplete="off" aria-label={`Access token for ${entry.label}`} placeholder="Access token" className={field} value={token} maxLength={4096} onChange={event => setToken(event.target.value)} />
             <button type="submit" className={primary} disabled={busy || !token.trim()}>Save token{sr}</button>
@@ -141,6 +149,8 @@ export function OfficeConnectors({ controls }: { controls: ConnectorRegistryCont
   const [label, setLabel] = useState("");
   const [tokenAuth, setTokenAuth] = useState(false);
   const canManage = view?.canManage === true;
+  // A typed server address or name holds beforeunload and the update restart until the connector is added.
+  useUnsavedGuard(canManage && Boolean(serverUrl.trim() || label.trim()));
   const added = view?.connectors.filter(entry => !entry.builtIn) ?? [];
   return (
     <section aria-label="Added services" className="mt-4 border-t border-line pt-3">

@@ -6,13 +6,27 @@ vi.mock('@/lib/bill-review-drafts', () => ({ hasUnpersistedBillDrafts: () => dra
 vi.mock('@/lib/mail-review-drafts', () => ({ hasUnsavedMailReviews: () => drafts.mail }));
 vi.mock('@/lib/office-draft-journal', () => ({ hasUnsavedOfficeDrafts: () => drafts.office }));
 vi.mock('@/lib/department-configuration-draft-journal', () => ({ hasUnsavedDepartmentConfigurationDrafts: () => drafts.department }));
-import { guardUnsavedWork, hasUnsavedWork, holdUnloadWhile, registerUnsavedCheck } from './unsaved-work';
+// Node renders run no effects: keep one component's refs across renders and record its effects.
+const component = vi.hoisted(() => ({ refs: [] as { current: unknown }[], ref: 0, effects: [] as Array<{ effect: () => unknown; deps?: unknown[] }> }));
+vi.mock('react', async original => ({ ...await original<typeof import('react')>(),
+  useRef: (initial: unknown) => component.refs[component.ref++] ??= { current: initial },
+  useEffect: (effect: () => unknown, deps?: unknown[]) => { component.effects.push({ effect, deps }); } }));
+import { guardUnsavedWork, hasUnsavedWork, holdUnloadWhile, registerUnsavedCheck, useUnsavedGuard } from './unsaved-work';
 
 /** Whether a beforeunload listener holds the window. */
 const holds = (listener: (event: BeforeUnloadEvent) => void) => {
   const event = { preventDefault: vi.fn(), returnValue: undefined as unknown };
   listener(event as unknown as BeforeUnloadEvent);
   return event.preventDefault.mock.calls.length === 1 && event.returnValue === '';
+};
+/** The window's beforeunload listeners, as a component's guard adds and removes them. */
+const stubUnloadListeners = () => {
+  const listeners = new Set<(event: BeforeUnloadEvent) => void>();
+  vi.stubGlobal('window', {
+    addEventListener: (type: string, listener: (event: BeforeUnloadEvent) => void) => { if (type === 'beforeunload') listeners.add(listener); },
+    removeEventListener: (type: string, listener: (event: BeforeUnloadEvent) => void) => { if (type === 'beforeunload') listeners.delete(listener); },
+  });
+  return listeners;
 };
 /** App's guard: beforeunload over the whole answer. */
 const appUnloadHeld = () => holds(holdUnloadWhile(hasUnsavedWork));
@@ -56,11 +70,7 @@ describe('unsaved work', () => {
   });
 
   it('guards a component: its beforeunload holds exactly when its check answers main, and both end on cleanup', () => {
-    const listeners = new Set<(event: BeforeUnloadEvent) => void>();
-    vi.stubGlobal('window', {
-      addEventListener: (type: string, listener: (event: BeforeUnloadEvent) => void) => { if (type === 'beforeunload') listeners.add(listener); },
-      removeEventListener: (type: string, listener: (event: BeforeUnloadEvent) => void) => { if (type === 'beforeunload') listeners.delete(listener); },
-    });
+    const listeners = stubUnloadListeners();
     const draft = { open: false };
     const stop = guardUnsavedWork(() => draft.open);
     expect(listeners.size).toBe(1);
@@ -72,6 +82,28 @@ describe('unsaved work', () => {
     }
     draft.open = true;
     stop();
+    expect(listeners.size).toBe(0);
+    expect(hasUnsavedWork()).toBe(false);
+  });
+
+  it('joins a component once per mount with its latest answer, and leaves when it unmounts', () => {
+    const listeners = stubUnloadListeners();
+    component.refs.length = 0; component.effects.length = 0;
+    const render = (dirty: boolean) => { component.ref = 0; useUnsavedGuard(dirty); };
+    render(false);
+    expect(component.effects.map(entry => entry.deps)).toEqual([[]]);
+    // React runs an effect with no deps once, after the first render.
+    const unmount = component.effects[0]!.effect() as () => void;
+    expect(listeners.size).toBe(1);
+    const [own] = listeners;
+    expect(hasUnsavedWork()).toBe(false);
+    // Typing, then saving: each render's answer is what main and beforeunload see.
+    for (const dirty of [true, false, true]) {
+      render(dirty);
+      expect(hasUnsavedWork()).toBe(dirty);
+      expect(holds(own)).toBe(dirty);
+    }
+    unmount();
     expect(listeners.size).toBe(0);
     expect(hasUnsavedWork()).toBe(false);
   });

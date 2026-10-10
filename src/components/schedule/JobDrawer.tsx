@@ -7,7 +7,7 @@ import { CheckCircle2, CircleAlert, Hourglass, Loader2, Pause, Play, X } from "l
 import { cn } from "@/lib/cn";
 import { api, useStore } from "@/state/store";
 import { openDeskArea } from "@/lib/desk-view-state";
-import { guardUnsavedWork } from "@/lib/unsaved-work";
+import { useUnsavedGuard } from "@/lib/unsaved-work";
 import { useWorkspaceTabs } from "@/lib/workspace-tabs";
 import { effectiveDeskAreas } from "@shared/workspace-tabs";
 import { useDeskArrangement } from "../shell/DeskArrangement";
@@ -217,8 +217,7 @@ export function LoopTiming({
   const cadenceEditable = evaluatorForLoop(loop.id)?.cadenceEditable === true;
   const dirty = time !== loop.schedule.time || days.join(",") !== savedDays || interval !== (loop.schedule.intervalDays ?? 0) || anchor !== (loop.schedule.anchorDate ?? '');
   // Unsaved timing holds the window's beforeunload and main's update restart while it is open.
-  const unsaved = useRef(dirty); unsaved.current = dirty;
-  useEffect(() => guardUnsavedWork(() => unsaved.current), []);
+  useUnsavedGuard(dirty);
   const toggleDay = (day: number) =>
     setDays((prev) => (prev.includes(day) ? (prev.length > 1 ? prev.filter((d) => d !== day) : prev) : [...prev, day].sort((a, b) => a - b)));
   return (
