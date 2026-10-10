@@ -183,6 +183,7 @@ Built (§10 packets 1–6, plus the review fixes):
 6. The simple desk keeps every work area as a tab. A startup step gives the tabs back to layouts that were applied automatically and never touched (`showAreaTabsOnAutomaticSimpleDesk`).
 
 Also in this bundle:
+- Bank references are reviewed in one place. Schedule's bank job opens the Desk area when the office offers it, or offers to show it when it is hidden. It reviews in the drawer only when the office has no such area (`BankReviewPlace`, `src/components/schedule/JobDrawer.tsx`).
 - Accessibility, from the [system map review](SYSTEM-MAP-REVIEW-2026-10-10.md):
   - Muted text (`--color-ink-muted`, `--color-ink-secondary`) is darkened to `#625c52`. It now passes 4.5:1 on every surface; it had measured 3.76–4.45:1 on inset, selected, raised and raised-hover.
   - The Tasks drawer keeps Tab inside it; before, 16 of 30 Tab presses left it in Chrome. Arrange Desk uses the same shared trap. Closed from the More menu, it now returns focus to More instead of dropping it to the page.
@@ -193,18 +194,18 @@ Also in this bundle:
   - There is no way past it except recovery (owner decision, 10 Oct). See [Office link gate](OFFICE-LINK-GATE-2026-10-10.md).
 
 Evidence:
+- Final, at `d2ac6297` with a real install: typecheck clean, `check:electron` 34/34, full suite 11,107 passed and 0 failed, and renderer QA 29 of 29 scripts on one build (fictional data). Details: [Release 0.1.50](RELEASE-0.1.50-2026-10-10.md#evidence).
 - Full suite at `b1148c26`: 11,068 passed. Five failed for an environment reason: the PDF worker under `node --permission` through a symlinked `node_modules`. They pass with a real install. `pnpm check:electron`: 34/34.
 - After the link-gate merge: typecheck is clean. Vitest over `src`, `shared` and the Needs you and workspace-tab server tests: 232 files, 2,931 passed.
 - Renderer QA: 12 of 13 pass on the merged branch (built UI, real install): link-gate 17/17 (rerun after the copy fix), setup-stages 29/29, onboarding-setup 15/15, screen-loading 7/7, kevin-sherry-day 26/26, weekly-bills 6/6, w2-calendar 5/5, desk-work-areas 8/8, customizable-desk 9/9, desktop-shell 11/11, workspace-tabs, source-bills 30/30. clean-walkthrough is 12/13: step 6 fails the same way on `main`. Receipts: [outputs/office-link-gate-2026-10-10/](../outputs/office-link-gate-2026-10-10/).
 
 Limits:
-- These fail on `main` too: `qa-inspections` ("Visit moved." / 409 capacity) and `qa-clean-walkthrough` step 6.
+- Failures that also occurred on `main` were QA drift, not product bugs, and the scripts now follow the product. Examples: `qa-inspections` moved a visit onto a day already at the inspector's daily limit, and `qa-sidebar-refinement` looked for saved views in the rail.
 - Not run:
   - `qa-shell-purpose`, which needs `QA_BASELINE`;
   - `qa-native-private-restore`, which needs a packaged build;
   - `qa-browser-link-e2e`, which needs Postgres and a website build.
 - Low findings left open:
-  - The Bank reference review is drafted in two places (`src/components/JobDrawer.tsx:496`).
   - A revoked computer is detected only by the server's 5-minute report.
   - A pack that declares `desk` needs core 0.1.50, and packs have no minimum-core field yet.
   - A client's own pack can't be chosen as the office pack: `AGENCY_WORKFLOW_PACK_IDS` (`shared/agency-workflow-packs.ts:4`) allows three host-coded ids, and none of those packs ships `desk`. So the pack preset is proved only with fictional packs injected in tests. This is step 1 of the [map review](SYSTEM-MAP-REVIEW-2026-10-10.md).
