@@ -6,13 +6,15 @@ Date: 10 October 2026. Status: **proposed design**, not built. Evidence tier: so
 
 This is the concrete Desk layer of [the reusable-shell brief](PRODUCT-DESIGN-BRIEF-2026-10-10.md) (shell owns authority and recovery, packs supply view presets from a registry of approved layouts). It does not change that contract.
 
-## 1. Problem, from today's renders
+## 1. Problem, from renders of current `main`
 
-1. **Workflow results are hidden.** Mail priorities and the bills calendar sit behind the "Other work" dropdown. Bank reference review sits only in the Schedule job drawer (`schedule/JobDrawer.tsx:401`). The main Desk view (Tasks) shows only the rent queue, so Kevin's three workflows never show "something needs you" there.
-2. **Each workflow panel opens as a setup page.** Mail priorities shows three equal-weight buttons, schedule controls and five "(0)" filters before any work (`now-mail-priorities-1280.png`). The bills calendar starts below the fold, after three paragraphs of caveats (`now-bills-board-1280.png`).
-3. **Customize desk does less than it says.** Three of its seven checkboxes (mail, bills, shared work) change only the dropdown menu, not the page (`DeskPage.tsx:805-815`).
-4. **Notices are uneven.** Only weekly bills and morning priorities send a desktop notice (`src/lib/notify-routine.ts`). Bank review gets none, and there is no in-app record of what is new.
-5. **Small faults found.** With a work panel open, two "Back to tasks" controls show at once. At 390 px the header wraps to two rows, and "Check sample tasks" appears twice.
+Rendered from `origin/main` (e54b401c) plus the 0.1.49 branch. An earlier draft of this section described the shared checkout, which was 586 commits behind; that draft is withdrawn.
+
+1. **Three overlapping ways to reach the same work.** Area tabs (Tasks, Hermios, Properties, Bills), an "Other work" dropdown that repeats Bills next to Mail and Shared work, and the left context sidebar. At 390 px the tab row breaks: "Properties" and "Bills" stack beside "Other work".
+2. **Each workflow panel opens as a setup page.** Mail priorities shows three equal-weight buttons, schedule controls and five "(0)" filters before any work. The bills calendar starts below the fold, after three paragraphs of caveats. Bank reference review exists only in the Schedule job drawer.
+3. **Arrange Desk exists but promises more than the page does.** Mail, bills and shared work only add or remove "Other work" items, activity only gates a menu item, and card order is ignored in the task area. More → "Desk options" still holds a block marked "Temporary manual fallback until Bud can arrange Desk" (`DeskPage.tsx:801`). The Workspace layout flag `showBud` has no reader.
+4. **Bud cannot arrange Desk natively.** Its only layout path is the `sections` argument of `views_create`, behind a once-only approval card, with no Undo. The renderer's refresh waits for a tool `item.completed` that the server never broadcasts (`server/product-mode.ts`), so an open Desk changes only on focus or remount.
+5. **Notices are uneven.** Only weekly bills and morning priorities send a desktop notice (`src/lib/notify-routine.ts`); bank review gets none, and nothing marks what is new in the app.
 
 ## 2. Product, user, job
 
@@ -46,13 +48,13 @@ Every area uses the same four parts, so all workflows read alike:
 - **Problems always notify and always appear in Needs you:** a check that didn't run, expired access, or a held run. This cannot be turned off.
 - No email or SMS notices. They are not built, and would be a separate decision.
 
-**Light tuning: "Arrange Desk"** replaces Customize desk. It has one row per area:
+**Light tuning: the existing "Arrange Desk" sheet**, extended from cards to work areas. It has one row per area:
 - show or hide the area;
 - move it up or down;
 - choose its notice level;
 - choose list or calendar where both exist.
 
-Needs you is locked first. Below the rows are three actions: Save, Reset to office default, and Undo last change. The sheet says what it changes: "Changes only your view. Your office's workflows and permissions stay the same." Bigger changes, such as a new area or another office's layout, come from the pack or from asking Bud. No "Change with Bud" button until Ask can apply that change.
+Needs you is locked first. Below the rows are three actions: Save, Reset to office default, and Undo last change. The sheet says what it changes: "Changes only your view. Your office's workflows and permissions stay the same." **Bud arranges Desk through the same path.** One Bud tool changes the same layout through the same server route as the sheet (revision check, history). Because it changes only the person's own view, it applies at once and Ask shows a receipt with Undo; deleting a saved view keeps its approval card. The server announces every saved layout, so Desk re-reads at once whoever made the change. Bigger changes, such as a new area, come from the pack.
 
 ## 4. What a pack declares (preset only)
 
@@ -100,7 +102,7 @@ Edge paths:
 
 ## 7. Build slices (each one verifiable alone)
 
-1. **Areas as tabs** (about 5 h). Promote the existing mail, bills and shared-work panels from the dropdown to Desk tabs driven by today's `sections` layout. Remove "Other work" and the duplicate "Back to tasks". Add the shared status line. Rewrite the Customize copy to match what it does. Keep the header on one row at 390 px. No schema change.
+1. **Bud arranges Desk; areas as tabs** (about 1 day). One write path for the sheet and a Bud tool, with receipt and Undo. A server event on every saved layout replaces the client refresh hook. Mail, bills and shared work become tabs. Remove "Other work", the temporary "Desk options" block, `showBud` and `views_create`'s `sections`. Keep the tab row on one line at 390 px.
 2. **Needs you across areas** (about 1 day). Add a display adapter from mail "needs attention", bill findings (`missing-review`, `coverage-hold`), bank pending corrections and routine problems into one list. Add per-area notice levels by extending `notify-routine.ts`. Problems always notify.
 3. **Pack presets and Arrange Desk** (1–2 days). Add the `desk.areas` manifest extension, with validation, preview and rollback. Keep pack defaults and personal overrides separate. Move bank review into a Desk area. Prove it with two fictional packs (brief §4 step 3).
 4. **Area cleanup** (about half a day). Fold setup and schedule controls into "Setup". Give one primary action per area. Drop zero-count filters.
