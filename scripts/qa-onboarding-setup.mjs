@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
-import { readSessionToken, primeBrowserSession } from './local-session.mjs';
+import { readSessionToken, primeBrowserSession, enterSampleDeskForQa, LINK_GATE_LEFT_KEY } from './local-session.mjs';
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -192,11 +192,19 @@ try {
   const cardTextOf = async card => (await card.innerText()).replace(/\s+/g, ' ').trim();
   // A new tab is a new app session: an unlinked computer opens on the office-link screen first.
   const GATE_HEADING = 'Connect this computer to your office';
-  const leaveLinkGate = async page => {
+  /** The owner removed every sample-desk exit (10 Oct 2026). */
+  const OLD_EXITS = /sample desk|without Bud/i;
+  const noSampleExit = async (page, where) => assert.equal(await page.getByRole('button', { name: OLD_EXITS }).count(), 0, `${where} offers a sample-desk exit`);
+  /** Asserts the office-link screen holds the shell with no way around it, then passes it the QA way
+   * (the session flag `primeBrowserSession` sets by default; in the app only recovery sets it). */
+  const passLinkGateForQa = async page => {
     await page.getByRole('heading', { name: GATE_HEADING, exact: true }).waitFor();
     assert.equal(await page.getByRole('contentinfo', { name: 'Status bar' }).count(), 0, 'the shell waits behind the office-link screen');
-    await page.getByRole('button', { name: 'Explore the sample desk', exact: true }).click();
-    await page.getByRole('heading', { name: GATE_HEADING, exact: true }).waitFor({ state: 'detached' });
+    await noSampleExit(page, 'the office-link screen');
+    await page.evaluate(key => sessionStorage.setItem(key, '1'), LINK_GATE_LEFT_KEY);
+    await page.reload();
+    // The status bar hides below 600px; the main navigation shows at every width.
+    await page.getByRole('navigation', { name: 'Main navigation', exact: true }).waitFor();
   };
 
   // ── 1. Desk workspace setup is one ordered path of three steps ──────────────
@@ -210,6 +218,8 @@ try {
   // Completion belongs to the saved workspace, not the legacy origin flag.
   await desk.getByRole('heading', { name: 'Make the desk yours', exact: true }).waitFor();
   assert.equal((await request('/api/onboarding')).stage, 'profile');
+  await noSampleExit(desk, 'the welcome step');
+  assert.equal(await desk.getByRole('button', { name: 'Restore a private backup', exact: true }).count(), 1, 'the welcome step keeps backup restore');
   await desk.getByLabel('Your name', { exact: true }).fill(FRESH_PERSON);
   await desk.getByRole('button', { name: 'Continue', exact: true }).click();
   await desk.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
@@ -217,19 +227,22 @@ try {
   await desk.reload();
   await desk.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
   assert.equal((await request('/api/config')).profile.name, FRESH_PERSON);
+  await noSampleExit(desk, 'the connect step');
+  for (const name of ['Connect with this code', 'Back', 'Restore a private backup']) assert.equal(await desk.getByRole('button', { name, exact: true }).count(), 1, `the connect step offers ${name}`);
+  assert.equal(await desk.getByRole('button', { name: 'Continue to Bud setup', exact: true }).count(), 0, 'nothing continues before the computer is linked');
   await desk.screenshot({ path: join(output, 'onboarding-rules.png') });
-  await desk.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
-  await desk.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor({ state: 'hidden' });
+  checks.push('Welcome and connect steps offer no sample desk: welcome has Continue and Restore a private backup; the unlinked connect step has Connect with this code, Back and Restore a private backup, and no Continue to Bud setup');
+  // QA only: complete first run as the removed "Open the sample desk first" did, then pass the office-link screen.
+  await enterSampleDeskForQa(desk);
   assert.equal((await request('/api/onboarding')).stage, 'complete');
   assert.equal((await request('/api/desk')).book.office.pmUser, FRESH_PERSON);
-  checks.push('Fresh workspace ignores the legacy browser flag; profile submission saves office-rules, reload resumes rules with the saved profile, and explicit sample-desk completion saves complete with the office contact');
+  checks.push('Fresh workspace ignores the legacy browser flag; profile submission saves office-rules, reload resumes rules with the saved profile, and the QA completion (what the removed sample-desk button did) saves complete with the office contact');
   let card = await openSetupCard(desk);
-  // The card's link read has answered unlinked, and choosing the sample desk left the office-link screen for this session.
-  assert.equal(await desk.getByRole('heading', { name: GATE_HEADING, exact: true }).count(), 0, 'Open the sample desk first lands on Desk, not the office-link screen');
+  // The card's link read has answered unlinked; the QA bypass keeps this session past the office-link screen.
+  assert.equal(await desk.getByRole('heading', { name: GATE_HEADING, exact: true }).count(), 0, 'the QA bypass lands on Desk, not the office-link screen');
   await desk.reload();
   card = await openSetupCard(desk);
-  assert.equal(await desk.getByRole('heading', { name: GATE_HEADING, exact: true }).count(), 0, 'a reload keeps the sample desk choice');
-  checks.push('"Open the sample desk first" leaves the office-link screen for this app session: Desk shows after the link read answers unlinked, and after a reload');
+  assert.equal(await desk.getByRole('heading', { name: GATE_HEADING, exact: true }).count(), 0, 'a reload keeps the QA bypass for this session');
   await card.getByText('0 of 5 done', { exact: true }).waitFor();
   let cardText = await cardTextOf(card);
   observations.freshSetupCard = cardText;
@@ -390,8 +403,8 @@ try {
   assert.ok(gateWidths.scrollWidth <= gateWidths.innerWidth + 1, `horizontal overflow on the office-link screen at 390px: ${JSON.stringify(gateWidths)}`);
   assert.equal(await narrow.evaluate(() => document.activeElement?.tagName), 'H1', 'the office-link heading takes focus');
   await narrow.screenshot({ path: join(output, 'link-gate-390.png') });
-  await leaveLinkGate(narrow);
-  checks.push('A new tab on the unlinked computer opens on the office-link screen: heading focused, code entry on the first screen and no horizontal scroll at 390x844; "Explore the sample desk" opens Desk');
+  await passLinkGateForQa(narrow);
+  checks.push('A new tab on the unlinked computer opens on the office-link screen: heading focused, code entry on the first screen, no sample-desk exit and no horizontal scroll at 390x844');
   const narrowCard = await openSetupCard(narrow);
   await narrowCard.getByText(/^\d of 5 done$/).waitFor();
   await narrowCard.evaluate(el => el.scrollIntoView({ block: 'center' }));
@@ -410,7 +423,7 @@ try {
   const you = watch(await context.newPage());
   you.setDefaultTimeout(30_000);
   await you.goto(`${uiBase}/#/you`);
-  await leaveLinkGate(you);
+  await passLinkGateForQa(you);
   const office = you.locator('#you-office');
   await office.waitFor();
   if (!(await office.evaluate(el => el.open))) await office.locator('summary').first().click();

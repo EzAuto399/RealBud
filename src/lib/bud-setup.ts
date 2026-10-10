@@ -199,35 +199,43 @@ export function budFirstSetupCover(status: HermesStatus | null, context: { conne
   return context.connected && !context.statusError && (state === "installing" || state === "verifying") ? "running" : "stopped";
 }
 
-/** sessionStorage key: the person left the office-link screen for this app session. */
+/** sessionStorage key: recovery took this app session past the office-link screen. */
 export const LINK_GATE_LEFT = "realbud.linkGateLeft";
 // Blocked storage still keeps the choice until this window reloads.
 let leftInMemory = false;
 
-/** Whether the person left the office-link screen earlier in this app session. */
+/** Whether recovery took this app session past the office-link screen. */
 export function linkGateLeft(): boolean {
   if (leftInMemory) return true;
   try { return sessionStorage.getItem(LINK_GATE_LEFT) === "1"; } catch { return false; }
 }
 
-/** Leave the office-link screen for this app session: a reload keeps the choice, the next launch asks again. */
+/** Pass the office-link screen for this app session, for recovery only: a
+ * reload keeps it, the next launch asks again. */
 export function leaveLinkGate() {
   leftInMemory = true;
   try { sessionStorage.setItem(LINK_GATE_LEFT, "1"); } catch { /* kept in memory for this window */ }
 }
 
+export type OfficeLinkGate = "checking" | "unavailable" | "not-linked" | "revoked";
+
 /**
- * The office link comes before anything else on this computer: "not-linked" or
- * "revoked" while the local service is connected and its link read answered
- * so. Null while that read is pending or failed, during book recovery, in a
- * design preview, or once the person left the screen this session. Presentation
- * only; the server stays the authority on every action.
+ * Every computer links to its office before anything else opens. Once the
+ * local service is connected: "checking" until both the link and the book have
+ * been read (the book says whether recovery comes first, so nothing flashes
+ * and recovery is never held), "unavailable" when the link read failed, else
+ * "not-linked" or "revoked". Null when linked, while disconnected (the
+ * reconnecting shell stays), during book recovery, in a design preview, or once
+ * recovery took this session past it. Presentation only; the server stays the
+ * authority on every action.
  */
 export function officeLinkGate(
   office: { link: "linked" | "not-linked" | "unavailable" | undefined; revoked: boolean },
-  context: { connected: boolean; recovering: boolean; preview: boolean; left: boolean },
-): "not-linked" | "revoked" | null {
-  if (!context.connected || context.recovering || context.preview || context.left || office.link !== "not-linked") return null;
+  context: { connected: boolean; bookRead: boolean; recovering: boolean; preview: boolean; left: boolean },
+): OfficeLinkGate | null {
+  if (!context.connected || context.recovering || context.preview || context.left || office.link === "linked") return null;
+  if (office.link === undefined || !context.bookRead) return "checking";
+  if (office.link === "unavailable") return "unavailable";
   return office.revoked ? "revoked" : "not-linked";
 }
 

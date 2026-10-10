@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
-  BookOpen,
   ClipboardCheck,
   Loader2,
   Send,
@@ -46,7 +45,8 @@ type BusyState = "profile" | "finish" | "recovery" | "restore" | null;
 
 // First run establishes the person, connects this computer to the office on
 // realbud.app, and leads into the same Bud setup used in settings (step 3).
-// Sample-only exploration remains available at every step.
+// Every computer links before anything else opens: the only ways past are
+// restoring a private backup and, for a protected book, recovery.
 export function Onboarding({ initialState, onDone }: { initialState: OnboardingState; onDone: (setup?: "bud") => void }) {
   const { state, dispatch } = useStore();
   const [saved, setSaved] = useState(initialState);
@@ -66,7 +66,7 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
   const connect = useConnectOffice(name.trim());
   const emailOk = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
   const canContinue = name.trim().length > 0 && emailOk && busy === null;
-  // Sample exploration may leave the name blank; wait for saved settings so a typed name is never missed.
+  // A resumed connect step reads the name from saved settings; wait for them so a typed name is never missed.
   const nameRead = name.trim().length > 0 || Boolean(state.config);
 
   useEffect(() => {
@@ -106,25 +106,16 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
 
   const saveProfile = () => canContinue ? advanceProfile(name.trim(), email.trim().toLowerCase()) : undefined;
 
-  // First run lands on Desk, where Get started lives; "bud" opens the setup sheet over it.
-  const enterWorkspace = (emailStatus: "submitted" | "skipped", destination: "desk" | "bud") => {
+  // First run lands on Desk, where Get started lives, with Bud's setup sheet open over it.
+  const enterWorkspace = (emailStatus: "submitted" | "skipped") => {
     setEmailGateDone(emailStatus);
     // A leftover door hash would move the view on mount and close the sheet.
-    if (destination === "bud") history.replaceState(null, "", location.pathname + location.search);
-    // The sample desk was chosen over connecting: the office-link screen waits until the next launch.
-    else leaveLinkGate();
+    history.replaceState(null, "", location.pathname + location.search);
     dispatch({ type: "showDesk" });
-    onDone(destination === "bud" ? "bud" : undefined);
+    onDone("bud");
   };
 
-  // Only a typed name is saved as the person's: the placeholder would later
-  // name this computer when it links.
-  const exploreSampleDesk = async () => {
-    track("onboarding_sample_desk");
-    await advanceProfile(name.trim(), emailOk ? email.trim().toLowerCase() : '');
-  };
-
-  const finish = async (destination: "desk" | "bud") => {
+  const finish = async () => {
     if (!nameRead || busy !== null || pending.current) return;
     pending.current = true;
     setBusy("finish");
@@ -168,7 +159,7 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
       await currentBook(); checkCurrent(); setSaved(completed);
       track("onboarding_completed", { engines_available: -1, mic: "n/a" });
       enteredDesk = true;
-      enterWorkspace(email.trim() ? "submitted" : "skipped", destination);
+      enterWorkspace(email.trim() ? "submitted" : "skipped");
     } catch (cause) {
       if (isRecoveryWriteError(cause)) {
         setRecoveryBlocked(true);
@@ -322,14 +313,6 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
                     {busy === "profile" ? <Loader2 size={15} className="animate-spin motion-reduce:animate-none" /> : <ArrowRight size={15} />}
                     Continue
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void exploreSampleDesk()}
-                    disabled={busy !== null}
-                    className="pm-control mt-2 w-full rounded text-[13px] text-ink-secondary hover:bg-raised/60 hover:text-ink disabled:opacity-40"
-                  >
-                    Explore the sample desk
-                  </button>
                 </div>
               </form>
             ) : (
@@ -372,7 +355,7 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
                   ) : connect.office ? (
                     <button
                       type="button"
-                      onClick={() => void finish("bud")}
+                      onClick={() => void finish()}
                       disabled={busy !== null || !nameRead}
                       className="pm-decision flex w-full items-center justify-center gap-2 rounded bg-agency px-4 text-[14px] font-medium text-white transition-transform hover:bg-agency-hover active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
                     >
@@ -380,7 +363,6 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
                       Continue to Bud setup
                     </button>
                   ) : null}
-                  {!recoveryBlocked && <button type="button" onClick={() => void finish("desk")} disabled={busy !== null || !nameRead} className="pm-control mt-2 flex w-full items-center justify-center gap-2 rounded text-[13px] text-ink-secondary hover:bg-raised/60 hover:text-ink disabled:opacity-40"><BookOpen size={14} />Open the sample desk first</button>}
                   <button
                     type="button"
                     onClick={() => void back()}

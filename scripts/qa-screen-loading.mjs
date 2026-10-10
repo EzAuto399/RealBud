@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
-import { readSessionToken, primeBrowserSession } from './local-session.mjs';
+import { readSessionToken, primeBrowserSession, enterSampleDeskForQa } from './local-session.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const temp = mkdtempSync(join(realpathSync(tmpdir()), 'RealBud screen QA '));
@@ -40,10 +40,10 @@ try {
   assert.ok(ready, logs);
   const token = await readSessionToken(data);
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
-  const createContext = async () => {
+  const createContext = async (options) => {
     const context = await browser.newContext({ viewport: { width: 1365, height: 1024 }, reducedMotion: 'reduce' });
     await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
-    await primeBrowserSession(context, origin, token);
+    await primeBrowserSession(context, origin, token, options);
     return context;
   };
   // Welcome belongs to the workspace, so exercise it before saving completion.
@@ -53,9 +53,21 @@ try {
   pass('A fresh private workspace loads the actual welcome screen');
   await first.getByLabel('Your name', { exact: true }).fill('Fictional Screen Loading Reviewer');
   await first.getByRole('button', { name: 'Continue', exact: true }).click();
-  await first.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
-  await first.getByRole('heading', { name: 'Desk', exact: true }).waitFor();
+  await first.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
+  await enterSampleDeskForQa(first);
   await firstContext.close();
+  // A linked computer keeps the office-link screen in its session yet never downloads it:
+  // the check runs in the main bundle and Desk follows.
+  const linkedContext = await createContext({ linkGate: true });
+  await linkedContext.route('**/api/office-link', route => route.fulfill({ status: 200, contentType: 'application/json',
+    body: JSON.stringify({ state: 'linked', label: 'Fictional computer', agencyLabel: 'Fictional Harbour Agency', lastReportedAt: new Date().toISOString(), provisioned: true }) }));
+  const linkedPage = await linkedContext.newPage(), linkedLoaded = [];
+  linkedPage.on('request', request => { if (request.resourceType() === 'script') linkedLoaded.push(new URL(request.url()).pathname); });
+  linkedPage.on('pageerror', error => errors.push(error.message));
+  await linkedPage.goto(origin + '/#/desk'); await linkedPage.getByRole('heading', { name: 'Desk', exact: true }).waitFor();
+  assert.equal(linkedLoaded.some(url => url.includes('/LinkOfficeScreen-')), false, 'A linked computer should never load the office-link screen');
+  await linkedContext.close();
+  pass('A linked computer, with the office-link screen kept, opens Desk without downloading the office-link chunk');
   const context = await createContext(); page = await context.newPage();
   const loaded = [];
   page.on('request', request => { if (request.resourceType() === 'script') loaded.push(new URL(request.url()).pathname); });

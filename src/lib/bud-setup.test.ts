@@ -242,19 +242,29 @@ describe("last readiness check copy", () => {
 
 describe("office link before anything else", () => {
   afterEach(() => { vi.unstubAllGlobals(); });
-  const on = { connected: true, recovering: false, preview: false, left: false };
+  const on = { connected: true, bookRead: true, recovering: false, preview: false, left: false };
   const unlinked = { link: "not-linked" as const, revoked: false };
 
-  it("blocks only on a connected service whose link read answered not linked, naming a revoked computer", () => {
+  it("holds a connected computer until it is linked: not linked, revoked, or a link that couldn't be read", () => {
     expect(officeLinkGate(unlinked, on)).toBe("not-linked");
     expect(officeLinkGate({ link: "not-linked", revoked: true }, on)).toBe("revoked");
-    // Linked, not read yet (no flash while reading) and a failed read never block.
-    for (const link of ["linked", undefined, "unavailable"] as const) expect(officeLinkGate({ link, revoked: false }, on)).toBeNull();
+    expect(officeLinkGate({ link: "unavailable", revoked: false }, on)).toBe("unavailable");
+    expect(officeLinkGate({ link: "linked", revoked: false }, on)).toBeNull();
   });
 
-  it("never blocks while disconnected, during book recovery, in a design preview or once left this session", () => {
-    for (const key of ["recovering", "preview", "left"] as const) expect(officeLinkGate(unlinked, { ...on, [key]: true })).toBeNull();
-    expect(officeLinkGate(unlinked, { ...on, connected: false })).toBeNull();
+  it("checks, rather than opening anything, until both the link and the book have been read", () => {
+    expect(officeLinkGate({ link: undefined, revoked: false }, on)).toBe("checking");
+    // The book says whether recovery comes first; until it is read nothing opens.
+    for (const link of ["not-linked", "unavailable", undefined] as const) expect(officeLinkGate({ link, revoked: false }, { ...on, bookRead: false })).toBe("checking");
+    // A linked computer never waits on the book.
+    expect(officeLinkGate({ link: "linked", revoked: false }, { ...on, bookRead: false })).toBeNull();
+  });
+
+  it("never holds while disconnected, during book recovery, in a design preview or once recovery passed it this session", () => {
+    for (const link of ["not-linked", "unavailable", undefined] as const) {
+      for (const key of ["recovering", "preview", "left"] as const) expect(officeLinkGate({ link, revoked: true }, { ...on, [key]: true })).toBeNull();
+      expect(officeLinkGate({ link, revoked: true }, { ...on, connected: false })).toBeNull();
+    }
   });
 
   it("keeps leaving for this app session in session storage, and in memory when storage is blocked", () => {

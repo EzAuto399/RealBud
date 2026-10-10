@@ -23,7 +23,8 @@ function load() {
   const request = ++generation;
   inFlight = true;
   void api("/api/office-link", undefined, { timeoutMs: 15_000 })
-    .then((body: unknown): OfficeLinkView => readOfficeLinkFacts(body), () => FAILED)
+    // A fresh object per failure, so a retry that fails again still re-renders.
+    .then((body: unknown): OfficeLinkView => readOfficeLinkFacts(body), () => ({ ...FAILED }))
     .then(next => {
       if (request !== generation) return;
       inFlight = false;

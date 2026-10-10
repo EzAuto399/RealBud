@@ -13,7 +13,8 @@ import { lazy, useCallback, useEffect, useRef, useState } from "react";
 import { WorkspaceScreen } from "@/components/WorkspaceScreen";
 import { Loader2 } from "lucide-react";
 import { api, StoreProvider, useStore } from "@/state/store";
-import { DesktopShell } from "@/components/shell/DesktopShell";
+import { DesktopShell, WindowsTitlebar } from "@/components/shell/DesktopShell";
+import { MausAvatar } from "@/components/Avatar";
 import { ShellPalette } from "@/components/shell/ShellPalette";
 
 import { UpdateBanner } from "@/components/UpdateBanner";
@@ -132,7 +133,21 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
   // The office link comes first; once linked, Bud's own setup cover takes over.
   const officeLink = useOfficeLinkView(state.connected);
   const [leftLinkGate, setLeftLinkGate] = useState(linkGateLeft);
-  const linkGate = officeLinkGate(officeLink, { connected: state.connected, recovering, preview: Boolean(DESIGN_PREVIEW_REASON), left: leftLinkGate });
+  const linkGate = officeLinkGate(officeLink, { connected: state.connected, bookRead: state.desk !== null, recovering, preview: Boolean(DESIGN_PREVIEW_REASON), left: leftLinkGate });
+  // A check that never answers hands over to the link screen's Try again and recovery.
+  const [linkCheckStuck, setLinkCheckStuck] = useState(false);
+  const linkCheckGaveUp = useCallback(() => setLinkCheckStuck(true), []);
+  useEffect(() => { if (linkGate !== "checking") setLinkCheckStuck(false); }, [linkGate]);
+  const deskRead = useRef(state.desk); deskRead.current = state.desk;
+  // The screen re-reads the link itself; a book read that never answered is asked again here,
+  // and a newer snapshot that arrived meanwhile is never replaced.
+  const retryLinkGate = useCallback(() => {
+    setLinkCheckStuck(false);
+    if (deskRead.current) return;
+    void api("/api/desk", undefined, { timeoutMs: 15_000 }).then(snapshot => { if (!deskRead.current) dispatch({ type: "deskSnapshot", snapshot }); }, () => {});
+  }, [dispatch]);
+  // Recovery is the one way past the office-link screen, for this app session.
+  const openRecoveryPastLinkGate = useCallback(() => { location.hash = "you-recovery"; leaveLinkGate(); setLeftLinkGate(true); }, []);
   const setupCover = budFirstSetupCover(state.hermes, { connected: state.connected, statusError: Boolean(budStatusRead.error), recovering });
   const settingUp = Boolean(setupCover) && !leftSetup;
   const setupSheetDone = budSetupSheetDone(state.hermes, { connected: state.connected, recovering, openedBySetup: setupFromFlow.current });
@@ -263,7 +278,8 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
           <ActionNotice message={state.error} onDismiss={() => dispatch({ type: "error", message: null })} />
         </div>
       )}
-      {linkGate ? <WorkspaceScreen key="office-link" label="office link"><LinkOfficeScreen revoked={linkGate === "revoked"} onLeave={() => { leaveLinkGate(); setLeftLinkGate(true); }} /></WorkspaceScreen>
+      {linkGate === "checking" && !linkCheckStuck ? <OfficeLinkChecking onStuck={linkCheckGaveUp} />
+      : linkGate ? <WorkspaceScreen key="office-link" label="office link"><LinkOfficeScreen gate={linkGate === "checking" ? "unavailable" : linkGate} onRetry={retryLinkGate} onOpenRecovery={openRecoveryPastLinkGate} /></WorkspaceScreen>
       : settingUp ? <WorkspaceScreen key="bud-setup" label="Bud setup"><BudSetupScreen running={setupCover === "running"} onLeave={() => setLeftSetup(true)} /></WorkspaceScreen> : <>
       <DesktopShell inert={Boolean(setup)}>
         {/* Keyed on the view: each place rises in once on arrival. Pages already
@@ -292,6 +308,30 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
       {!setup && <ShellPalette />}
       {setup && <WorkspaceScreen key="setup" label="setup" onClose={() => setSetup(null)}><WorkspaceSetup target={setup} error={state.error} onDismissError={() => dispatch({ type: "error", message: null })} origin={state.activeView === "desk" ? "Desk" : state.activeView === "schedule" ? "Schedule" : state.activeView === "you" ? "Workspace" : "Work"} onTarget={setSetup} onServiceAdministration={openServiceAdministration} onClose={() => setSetup(null)} onAsk={() => { setSetup(null); dispatch({ type: "showAsk" }); }} onSchedule={() => { setSetup(null); dispatch({ type: "showRoutines" }); }} /></WorkspaceScreen>}
       </>}
+    </div>
+  );
+}
+
+/** The office-link screen's frame while the link and the book are read. It
+ * lives in the main bundle so a linked computer's launch never loads the link
+ * screen. Silent for a second; a check that never answers hands over to the
+ * link screen's Try again and recovery. */
+function OfficeLinkChecking({ onStuck }: { onStuck: () => void }) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const show = window.setTimeout(() => setShown(true), 1_000);
+    const stuck = window.setTimeout(onStuck, 20_000);
+    return () => { window.clearTimeout(show); window.clearTimeout(stuck); };
+  }, [onStuck]);
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-paper">
+      <WindowsTitlebar />
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        <main className="mx-auto flex min-h-full w-full max-w-[34rem] flex-col items-center justify-center gap-4 py-8">
+          <MausAvatar color="green" state="idle" size={72} label="Bud" trackPointer={false} />
+          <p role="status" className="min-h-5 text-center text-sm text-ink-secondary">{shown ? "Checking this computer’s office link…" : ""}</p>
+        </main>
+      </div>
     </div>
   );
 }

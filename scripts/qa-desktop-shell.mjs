@@ -1,4 +1,4 @@
-import { readSessionToken, primeBrowserSession } from './local-session.mjs';
+import { readSessionToken, primeBrowserSession, enterSampleDeskForQa } from './local-session.mjs';
 // Desktop shell (decision 2026-10-05): built React UI from REALBUD_UI_DIR against a real,
 // disposable local service. Fictional sample book only; never reads ~/.realbud or dist/.
 // Node 24, PLAYWRIGHT_MODULE, REALBUD_UI_DIR (scratch `vite build --outDir`), optional CHROME_EXECUTABLE.
@@ -53,8 +53,9 @@ try {
   await page.goto(origin);
   await page.getByLabel('Your name', { exact: true }).fill('Fictional Shell Reviewer');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
-  await page.getByRole('heading', { name: 'Desk', exact: true }).waitFor();
+  // First run has no sample-desk exit: the QA helper completes it as that button did and passes the office-link screen.
+  await page.getByRole('heading', { name: 'Connect this computer to your office', exact: true }).waitFor();
+  await enterSampleDeskForQa(page);
 
   // 1. Every region at 1440px.
   const nav = page.getByRole('navigation', { name: 'Main navigation', exact: true });
