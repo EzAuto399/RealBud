@@ -104,7 +104,7 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   await search.fill(otherSearch.subject);await panel.getByText('Showing 1 of 1 conversations',{exact:false}).waitFor();
   assert.equal(await editor.getByLabel('Your note',{exact:true}).inputValue(),'Keep this unsaved staff note across page changes');
   await (await setupButton('Refresh saved mail work')).click();await panel.getByText('Saved work and receipt refreshed.',{exact:true}).waitFor();
-  assert.equal(await editor.getByText('This saved item changed elsewhere.',{exact:false}).count(),0);
+  assert.equal(await editor.getByText('This workspace, setup or saved source changed.',{exact:false}).count(),0);
   assert.equal(await editor.getByLabel('Your note',{exact:true}).inputValue(),'Keep this unsaved staff note across page changes');
   assert.ok(readUrls.some(url=>url===`/api/mail-workspace/items/${oldest.id}`));
   pass('Search reaches an old conversation outside the first page; its open editor and note survive a different search and direct-item refresh');
@@ -123,7 +123,7 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   pass('Fresh revision pages append all43 matching conversations once without pulling full history into the first request');
   const latest=(await request(`/api/mail-workspace/items/${oldest.id}`)).item;
   await request(`/api/mail-workspace/items/${oldest.id}`,'PATCH',{expectedRevision:latest.revision,owner:'Fictional other reviewer'});
-  await (await setupButton('Refresh saved mail work')).click();await editor.getByText('This saved item changed elsewhere.',{exact:false}).waitFor();
+  await (await setupButton('Refresh saved mail work')).click();await editor.getByText('This workspace, setup or saved source changed.',{exact:false}).waitFor();
   assert.equal(await editor.getByLabel('Your note',{exact:true}).inputValue(),'Keep this unsaved staff note across page changes');
   assert.ok(await editor.getByRole('button',{name:'Save reviewed item',exact:true}).isDisabled());
   await editor.getByRole('button',{name:'Reload this item and discard my edits',exact:true}).click();

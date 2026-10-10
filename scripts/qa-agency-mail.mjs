@@ -38,6 +38,8 @@ const options = {
 };
 const agency = createAgencySetupService(options);
 const mail = createMailIngestionService({ directory: temp, workspaceId: options.workspaceId, key: randomBytes(32), workroomDirectory: join(temp, 'workroom'),
+  // As server/index.ts: a staff review saves only against the current workspace, setup revision and Gmail account.
+  withReviewContext: work => agency.withConfiguration(state => work({ workspaceId: state.workspaceId, setupRevision: state.revision, accountId: state.settings.gmailAccountId })),
   authorize: async () => { const result = await agency.assertWorkflowReady('morning-priorities'); return { accountId: result.settings.gmailAccountId, bindingRevision: createHash('sha256').update(result.evidenceDigest).digest('hex'), settings: result.settings, settingsRevision: result.revision }; },
   scan: async (authority, request) => ({ accountId: authority.accountId, windowStartAt: request.windowStartAt, windowEndAt: request.windowEndAt, pages: 1, paginationComplete: true, gaps: [], threads: [{ id: 'abc123', historyComplete: true, messages: [{ id: `abc12${sourceVersion}`, threadId: 'abc123', at: request.windowEndAt - 1000, direction: 'incoming', from: 'fictional-sender@example.invalid', to: 'fictional-office@example.invalid', subject: 'Fictional property inspection follow-up', body: `Fictional source version ${sourceVersion}. <img src="https://example.invalid/track" onerror="alert(1)"> Please review the inspection evidence.`, bodyTruncated: false, attachments: [] }] }] }),
 });
