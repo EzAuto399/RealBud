@@ -25,6 +25,7 @@ const SAMPLE_PROFILE_NAME = "Sample PM";
 // A busy Windows PC can stall the service for half a minute while Bud installs
 // (Windows issues log #6), so each step waits a minute before offering Try again.
 const FINISH_TIMEOUT_MS = 60_000;
+const PROTECTED_BOOK = "A protected book is already on this computer. Open recovery to unlock it or preserve it before starting again.";
 
 function finishRequest(path: string, init?: RequestInit) {
   const controller = new AbortController();
@@ -68,6 +69,8 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
   const canContinue = name.trim().length > 0 && emailOk && busy === null;
   // A resumed connect step reads the name from saved settings; wait for them so a typed name is never missed.
   const nameRead = name.trim().length > 0 || Boolean(state.config);
+  // A book already in recovery offers Open recovery before any link; linking stays beside it.
+  const protectedBook = recoveryBlocked || Boolean(state.desk?.recovery?.active);
 
   useEffect(() => {
     if (edited.current) return;
@@ -163,7 +166,7 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
     } catch (cause) {
       if (isRecoveryWriteError(cause)) {
         setRecoveryBlocked(true);
-        setError("A protected book is already on this computer. Open recovery to unlock it or preserve it before starting again.");
+        setError(PROTECTED_BOOK);
       } else {
         setError(cause instanceof Error ? cause.message : "RealBud could not save your office setup.");
       }
@@ -341,8 +344,10 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
                     <div role="alert" className="mb-3 border border-danger/25 bg-danger/10 px-3 py-2.5 text-[12.5px] text-danger">
                       {error} Your setup is still here. Try again.
                     </div>
+                  ) : protectedBook ? (
+                    <p role="status" className="mb-3 border border-hold/30 bg-hold/10 px-3 py-2.5 text-[12.5px] text-hold">{PROTECTED_BOOK}</p>
                   ) : null}
-                  {recoveryBlocked ? (
+                  {protectedBook ? (
                     <button
                       type="button"
                       onClick={() => void openRecovery()}

@@ -11,6 +11,7 @@ const fixture = vi.hoisted(() => ({
   cells: [] as { value: unknown }[], cursor: 0,
   api: vi.fn(), dispatch: vi.fn(), onDone: vi.fn(), track: vi.fn(), emailGate: vi.fn(),
   config: { profile: { name: '', email: '' } },
+  desk: null as { recovery: { active: boolean } } | null,
   connect: null as unknown as { office: string | null; view: ConnectOfficeViewProps },
   personName: undefined as string | undefined,
   epoch: 0,
@@ -36,7 +37,7 @@ vi.mock('react', async importOriginal => {
     },
   };
 });
-vi.mock('@/state/store', () => ({ api: fixture.api, useStore: () => ({ state: { config: fixture.config }, dispatch: fixture.dispatch }) }));
+vi.mock('@/state/store', () => ({ api: fixture.api, useStore: () => ({ state: { config: fixture.config, desk: fixture.desk }, dispatch: fixture.dispatch }) }));
 vi.mock('@/lib/analytics', () => ({ identifyEmail: vi.fn(), setEmailGateDone: fixture.emailGate, track: fixture.track }));
 vi.mock('@/lib/company-api', () => ({ companyApi: { sessionVersion: () => fixture.epoch } }));
 vi.mock('./Avatar', () => ({ MausAvatar: () => null }));
@@ -89,6 +90,7 @@ function deferred<T>() {
 beforeEach(() => {
   vi.clearAllMocks(); fixture.api.mockReset(); fixture.cells = []; fixture.cursor = 0;
   fixture.config = { profile: { name: '', email: '' } };
+  fixture.desk = null;
   fixture.connect = connection({ state: 'linked', agencyLabel: OFFICE, provisioned: true });
   fixture.epoch = 0;
   fixture.session = new Map();
@@ -349,6 +351,35 @@ describe('connect this computer to your office', () => {
     expect(button(render(saved), 'Back').props.disabled).toBe(false);
     expect(button(render(saved), 'Restore a private backup').props.disabled).toBe(false);
     expect(markup).not.toMatch(/Hermes|MCP|broker|grant|installation/i);
+  });
+
+  it('offers Open recovery beside linking when the book here is already in recovery, before any link', async () => {
+    fixture.config.profile.name = 'Fictional Draft';
+    fixture.connect = connection({ state: 'unlinked' });
+    fixture.desk = { recovery: { active: true } };
+    const markup = html();
+    expect(markup).toContain('A protected book is already on this computer. Open recovery to unlock it or preserve it before starting again.');
+    expect(markup).not.toContain('Try again');
+    // Recovery never waits behind the office link, and linking stays available beside it.
+    expect(markup).toContain('Connect with this code');
+    expect(button(render(saved), 'Restore a private backup').props.disabled).toBe(false);
+    fixture.api.mockResolvedValue({ ...saved, stage: 'recovery', revision: 4 });
+    button(render(saved), 'Open recovery').props.onClick!();
+    await vi.waitFor(() => expect(fixture.onDone).toHaveBeenCalledTimes(1));
+    expect(fixture.api).toHaveBeenCalledExactlyOnceWith('/api/onboarding', { method: 'PUT', body: JSON.stringify({ expectedScope: saved.scope, expectedRevision: saved.revision, stage: 'recovery' }) });
+    expect(location.hash).toBe('#you-recovery');
+    expect(fixture.session.get('realbud.linkGateLeft')).toBe('1');
+    expect(fixture.dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'showYou' });
+  });
+
+  it('replaces Continue to Bud setup with Open recovery on a linked computer whose book is in recovery', () => {
+    fixture.config.profile.name = 'Fictional Draft';
+    fixture.desk = { recovery: { active: true } };
+    const markup = html();
+    expect(markup).not.toContain('Continue to Bud setup');
+    expect(button(render(saved), 'Open recovery').props.disabled).toBe(false);
+    fixture.desk = { recovery: { active: false } };
+    expect(html()).not.toContain('Open recovery');
   });
 
   it('shows the code to match while the browser approval waits', () => {
