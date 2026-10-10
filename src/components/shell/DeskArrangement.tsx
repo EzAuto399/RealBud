@@ -50,12 +50,12 @@ export function useBudDeskReceipt({ push, dismiss }: Pick<ReturnType<typeof useT
   const change = tabs.budChange;
   useEffect(() => {
     if (!change) return;
-    const id = `bud-desk-${change.revision}`;
+    // One slot: Bud's newest Desk change, or what its Undo did, replaces the last, so an older notice never reads as current.
+    const id = "bud-desk";
     push(`Bud arranged Desk: ${change.summary}.`, { label: "Undo", run: () => {
       dismiss(id);
       undoBudDeskChange(change, tabs.revertDesk).then(({ message, openArrange }) => {
-        const notice = `bud-desk-undo-${change.revision}`;
-        push(message, openArrange ? { label: "Open Arrange Desk", run: () => { dismiss(notice); openArrangeDesk(); } } : undefined, notice);
+        push(message, openArrange ? { label: "Open Arrange Desk", run: () => { dismiss(id); openArrangeDesk(); } } : undefined, id);
       },
         cause => dispatch({ type: "error", message: cause instanceof Error ? cause.message : "Undo could not be confirmed. Refresh before retrying." }));
     } }, id);

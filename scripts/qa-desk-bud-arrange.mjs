@@ -133,6 +133,7 @@ try {
   await sheet.waitFor();
   assert.equal(await sheet.getByRole('checkbox', { name: 'Show Shared work on my Desk', exact: true }).isChecked(), false);
   assert.equal(await updates.getByRole('button', { name: 'Open Arrange Desk', exact: true }).count(), 0, 'The notice leaves once used');
+  assert.equal(await updates.getByText('Desk is back as it was before Bud arranged it.', { exact: true }).count(), 0, 'An earlier Undo notice never reads as current');
   await page.screenshot({ path: join(output, '02-undo-refused-arrange.png'), animations: 'disabled' });
   await sheet.getByRole('button', { name: 'Close Arrange Desk', exact: true }).click();
   pass('After a person changes Desk, Undo of Bud\'s earlier change is refused, says Desk was changed after Bud\'s change, and its Open Arrange Desk button opens the sheet on the current layout');
