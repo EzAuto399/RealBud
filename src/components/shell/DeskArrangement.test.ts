@@ -8,6 +8,7 @@ import { coreOfficeDesk, type OfficeDesk } from '@shared/desk-areas';
 vi.hoisted(() => { vi.stubGlobal('window', {}); });
 vi.mock('@/state/store', () => ({ api: vi.fn(), useStore: () => ({ state: {}, dispatch: vi.fn() }) }));
 import { ArrangeDeskView, swapDeskSections, withAreaChoice, type ArrangeDeskViewProps } from './DeskArrangement';
+import { withShellPanel } from './shell-layout';
 
 const noop = () => {};
 const stored = { sections: defaultDeskSections(), shell: defaultShellLayout() };
@@ -101,17 +102,21 @@ describe('Arrange Desk sheet', () => {
     expect(html()).toContain('>Simple desk<');
   });
 
-  it('undoes the last saved change only when there is an earlier layout, and says why not', () => {
+  it('undoes the last saved tab or card change only when there is an earlier layout and no unsaved draft, and says why not', () => {
     const none = html();
-    expect(disabled(none, 'aria-describedby="rb-arrange-undo-none"')).toBe(true);
-    expect(none).toContain('Nothing to undo: no earlier saved layout yet.');
+    expect(none).toMatch(/<button[^>]*disabled=""[^>]*aria-describedby="rb-arrange-undo-reason"[^>]*>Undo last tab or card change<\/button>/);
+    expect(none).toContain('<p id="rb-arrange-undo-reason" class="mt-1 text-[12px] text-ink-muted">Nothing to undo: no earlier tab or card layout saved yet.</p>');
     const simple = { sections: simpleDeskSections(), shell: stored.shell };
-    const markup = html({ stored: simple, current: simple, history: [
-      { revision: 3, savedAt: 1_700_000_000_000, sections: simpleDeskSections() },
-      { revision: 1, savedAt: null, sections: defaultDeskSections() },
-    ] });
-    expect(disabled(markup, '>Undo last change<')).toBe(false);
-    expect(markup).not.toContain('Nothing to undo');
+    const history = [{ revision: 3, savedAt: 1_700_000_000_000, sections: simpleDeskSections() }, { revision: 1, savedAt: null, sections: defaultDeskSections() }];
+    const markup = html({ stored: simple, current: simple, history });
+    expect(disabled(markup, '>Undo last tab or card change<')).toBe(false);
+    expect(markup).not.toContain('rb-arrange-undo-reason');
+    // Undo would restore and then drop the draft: it waits for Save, or for the draft to be dropped.
+    for (const current of [{ sections: defaultDeskSections(), shell: stored.shell }, { sections: simpleDeskSections(), shell: withShellPanel(stored.shell, 'today', false) }]) {
+      const draft = html({ stored: simple, current, history });
+      expect(draft).toMatch(/<button[^>]*disabled=""[^>]*aria-describedby="rb-arrange-undo-reason"[^>]*>Undo last tab or card change<\/button>/);
+      expect(draft).toContain('>Save your changes first, or close Arrange Desk to drop them.</p>');
+    }
   });
 
   it('disables Save until the draft differs, and on a conflict keeps the draft with the reopen message', () => {

@@ -6,7 +6,7 @@ import { refreshNeedsYou, type NeedsYouState } from "@/lib/needs-you";
 import { openDeskArea } from "@/lib/desk-view-state";
 import { useStore } from "@/state/store";
 import { StatusLabel } from "../pm";
-import { areaStatus } from "./AreaStatusLine";
+import { areaStatus, type AreaStatusKind } from "./AreaStatusLine";
 
 const FIRST_ROWS = 5;
 const SEEN_KEY = "realbud.needsYouSeenAt";
@@ -30,7 +30,7 @@ type Row = { key: string; area: NeedsYouArea; level: NeedsYouLevel; title: strin
 /** "From your workflows" on the Tasks tab: what each workflow found for a person, problems first.
  *  Decisions stay in the area that owns the item; each row's button opens it. A source that
  *  couldn't be read is a problem row, never an empty list. */
-export function NeedsYouPanel({ state, active, areas, onShowArea, inert }: {
+export function NeedsYouPanel({ state, active, areas, onShowArea, saving, inert }: {
   state: NeedsYouState;
   /** The Tasks tab is showing: "New" is measured from the last time it was. */
   active: boolean;
@@ -38,6 +38,8 @@ export function NeedsYouPanel({ state, active, areas, onShowArea, inert }: {
   areas: readonly DeskArea[];
   /** Shows a hidden area on this Desk, then opens it. */
   onShowArea: (area: DeskAreaId) => void;
+  /** A Desk layout save is in flight: showing an area waits for it. */
+  saving?: boolean;
   inert?: boolean;
 }) {
   const { state: app, dispatch } = useStore();
@@ -71,7 +73,7 @@ export function NeedsYouPanel({ state, active, areas, onShowArea, inert }: {
     const hidden = item.area !== "schedule" && areas.find(row => row.id === item.area)?.visible === false;
     if (hidden) {
       const area = item.area as DeskAreaId;
-      return { next: item.next, action: <button type="button" className="pm-control needs-you-action" onClick={() => onShowArea(area)}>Show {titleOf(area)} on my Desk</button> };
+      return { next: item.next, action: <button type="button" className="pm-control needs-you-action" disabled={saving} onClick={() => onShowArea(area)}>Show {titleOf(area)} on my Desk</button> };
     }
     // Short verb-first labels repeat across rows; the name says which item (visible label first).
     return { action: <button type="button" className="pm-control needs-you-action" aria-label={`${item.next}: ${item.title}`}
@@ -85,17 +87,25 @@ export function NeedsYouPanel({ state, active, areas, onShowArea, inert }: {
   ].sort((a, b) => (a.level === b.level ? 0 : a.level === "problem" ? -1 : 1)) : [];
   const listed = expanded ? rows : rows.slice(0, FIRST_ROWS);
   const checked = snapshot ? `checked ${clock(snapshot.checkedAt)}` : "";
-  // An empty list only means "nothing to review" for areas whose job has checked. A shown area whose
-  // job isn't set up or never ran is named; a schedule not read yet, or unreadable, is claimed neither way.
+  // An empty list only means "nothing to review" when every shown area's job has checked (or is checking).
+  // Otherwise each area that hasn't is named by why; a schedule not read yet, or unreadable, is claimed neither way.
   // A reload keeps the schedule already on screen, so the line doesn't flicker while it runs.
   const scheduleRead = app.activityLoad.routines === "loading" && app.loops.length ? "ready" : app.activityLoad.routines;
-  const unchecked = snapshot && !rows.length ? areas.flatMap(area => {
+  const statuses = snapshot && !rows.length ? areas.flatMap(area => {
     const loopId = area.visible ? AREA_LOOPS[area.id]?.[0] : undefined;
     if (!loopId) return [];
     const { kind } = areaStatus({ area: area.id, title: area.title, loop: app.loops.find(loop => loop.id === loopId), runs: app.loopRuns,
       read: scheduleRead, timeZone: app.desk?.book?.agency.timezone || undefined, now: Date.now() });
-    return kind === "not-set-up" || kind === "never" ? [{ title: area.title, setup: kind === "not-set-up" }] : [];
+    return [{ title: area.title, kind }];
   }) : [];
+  const named = (label: string, kinds: readonly AreaStatusKind[]) => {
+    const titles = statuses.filter(row => kinds.includes(row.kind)).map(row => row.title);
+    return titles.length ? [`${label}: ${titles.join(", ")}`] : [];
+  };
+  const quietLine = statuses.some(row => row.kind === "unreadable") ? "Nothing listed yet · When your workflows last checked couldn't be read."
+    : statuses.some(row => row.kind === "loading") ? "Nothing listed yet · Checking when your workflows last ran…"
+    : statuses.every(row => row.kind === "checked" || row.kind === "checking") ? `Nothing from your workflows to review · ${checked}`
+    : ["Nothing to review yet", ...named("Not checked yet", ["not-set-up", "never"]), ...named("Didn't run", ["didnt-run"]), ...named("Out of date", ["stale"])].join(" · ");
   const finishSetup = () => { location.hash = "schedule-agency"; dispatch({ type: "showRoutines" }); };
   const failure = error ? (
     <div role="alert" className="needs-you-error">
@@ -144,8 +154,8 @@ export function NeedsYouPanel({ state, active, areas, onShowArea, inert }: {
     </section>
   ) : snapshot && !rows.length ? (
     <section className="needs-you needs-you-quiet" aria-label="From your workflows" inert={inert}>
-      <p>{unchecked.length ? `Nothing to review yet · Not checked yet: ${unchecked.map(row => row.title).join(", ")}` : `Nothing from your workflows to review · ${checked}`}</p>
-      {unchecked.some(row => row.setup) ? <button type="button" className="pm-control needs-you-action mt-2" onClick={finishSetup}>Finish setup</button> : null}
+      <p>{quietLine}</p>
+      {statuses.some(row => row.kind === "not-set-up") ? <button type="button" className="pm-control needs-you-action mt-2" onClick={finishSetup}>Finish setup</button> : null}
       {failure}
     </section>
   ) : (

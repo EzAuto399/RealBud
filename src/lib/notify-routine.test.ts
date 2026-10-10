@@ -160,7 +160,7 @@ describe('per-area notice levels', () => {
 });
 
 describe('Each new item', () => {
-  it('the first read after app start is a baseline; later runs tell each new item, three at most, then how many more', async () => {
+  it('the first read after app start is a baseline; later runs tell each new item, three at most, then how many more, never a mail subject', async () => {
     vi.resetModules();
     const { notifyRoutineRun: notify } = await import('./notify-routine');
     const { notices, opened } = capture();
@@ -174,8 +174,10 @@ describe('Each new item', () => {
     notify(mailRun('fictional-each-1'));
     await settle();
     expect(fake.reads).toBe(1);
-    expect(notices.map(n => [n.title, n.body])).toEqual([
-      ['Mail priorities', 'Lease renewal for 4 Fictional St, invoice …, BSB …'], ['Mail priorities', 'Fictional subject mail:b'], ['Mail priorities', 'Fictional subject mail:c'], ['Mail priorities', 'And 2 more'],
+    // A mail item's subject never reaches the OS notification: each notice says what it is, and opens Mail priorities.
+    expect(notices.map(n => [n.title, n.body, n.tag])).toEqual([
+      ['Mail priorities', 'New conversation to review', 'realbud-mail:a'], ['Mail priorities', 'New conversation to review', 'realbud-mail:b'],
+      ['Mail priorities', 'New conversation to review', 'realbud-mail:c'], ['Mail priorities', 'And 2 more', 'realbud-mail-more'],
     ]);
     expect(new Set(notices.map(n => n.tag)).size).toBe(4);
     notices.forEach(n => n.click());
@@ -184,7 +186,7 @@ describe('Each new item', () => {
     fake.next = snapshot([item('mail:f'), item('mail:a'), item('mail:b')]);
     notify(mailRun('fictional-each-2'));
     await settle();
-    expect(notices.slice(4).map(n => n.body)).toEqual(['Fictional subject mail:f']);
+    expect(notices.slice(4).map(n => [n.body, n.tag])).toEqual([['New conversation to review', 'realbud-mail:f']]);
   });
 
   it('switching an area to Each new item announces only what arrives after the switch', async () => {
@@ -201,23 +203,32 @@ describe('Each new item', () => {
     fake.next = snapshot([item('mail:c'), item('mail:b'), item('mail:a')]);
     notify(mailRun('fictional-after-switch'));
     await settle();
-    expect(notices.slice(1).map(n => n.body)).toEqual(['Fictional subject mail:c']);
+    expect(notices.slice(1).map(n => n.tag)).toEqual(['realbud-mail:c']);
   });
 
-  it('masks amounts and account numbers in item titles but keeps dates', async () => {
+  it('masks every amount and account number in a bill title but keeps house numbers and dates', async () => {
     vi.resetModules();
     const { notifyRoutineRun: notify } = await import('./notify-routine');
     const { notices } = capture();
-    fake.tabs = layout({ mail: 'each' });
+    fake.tabs = layout({ bills: 'each' });
     fake.state = { snapshot: snapshot([]), error: null, checking: false };
     fake.listeners.forEach(listener => listener());
-    fake.next = snapshot([item('mail:d', 'Rent review 2026-10-10 and 9/10/2026, due 10/10/2026, ref 12345678, $480 a week')]);
-    notify(mailRun('fictional-dates'));
+    const bill = (key: string, title: string) => item(key, title, 'bills');
+    const run = (id: string) => ({ id, loopId: 'weekly-bills', loopName: 'Weekly bills review', status: 'awaiting-approval', detail: 'Bills prepared.' }) as LoopRun;
+    fake.next = snapshot([bill('bill:a', 'Arrears 2400 for 12 Oak St'), bill('bill:b', 'Rent 1,250 overdue'), bill('bill:c', 'AUD 980 bond')]);
+    notify(run('fictional-amounts'));
     await settle();
-    expect(notices.map(n => n.body)).toEqual(['Rent review 2026-10-10 and 9/10/2026, due 10/10/2026, ref …, … a week']);
+    fake.next = snapshot([bill('bill:d', 'Rent review 2026-10-10 and 9/10/2026, due 10/10/2026, ref 12345678, $480 a week'),
+      bill('bill:e', 'Invoice $1,250.00 for 4 Fictional St, BSB 062-000 12345678, unit 7')]);
+    notify(run('fictional-dates'));
+    await settle();
+    expect(notices.map(n => [n.title, n.body])).toEqual([
+      ['Bills and calendar', 'Arrears … for 12 Oak St'], ['Bills and calendar', 'Rent … overdue'], ['Bills and calendar', 'AUD … bond'],
+      ['Bills and calendar', 'Rent review 2026-10-10 and 9/10/2026, due 10/10/2026, ref …, … a week'], ['Bills and calendar', 'Invoice … for 4 Fictional St, BSB …, unit 7'],
+    ]);
   });
 
-  it('after a restart with no earlier read, the first run is only the baseline', async () => {
+  it('after a restart with no earlier read, the first run sends its one run notice and becomes the baseline', async () => {
     vi.resetModules();
     const { notifyRoutineRun: notify } = await import('./notify-routine');
     const { notices } = capture();
@@ -225,11 +236,11 @@ describe('Each new item', () => {
     fake.next = snapshot([item('mail:a'), item('mail:b')]);
     notify(mailRun('fictional-restart-1'));
     await settle();
-    expect(notices).toHaveLength(0);
+    expect(notices.map(n => [n.body, n.tag])).toEqual([['2 conversations need you.', 'realbud-inbound-triage']]);
     fake.next = snapshot([item('mail:c'), item('mail:a'), item('mail:b')]);
     notify(mailRun('fictional-restart-2'));
     await settle();
-    expect(notices.map(n => n.body)).toEqual(['Fictional subject mail:c']);
+    expect(notices.slice(1).map(n => [n.body, n.tag])).toEqual([['New conversation to review', 'realbud-mail:c']]);
   });
 
   it('waits for the read queued behind one already in flight, which may predate the run', async () => {
@@ -242,7 +253,7 @@ describe('Each new item', () => {
     fake.queued = snapshot([item('mail:a')]);
     fake.next = snapshot([item('mail:b'), item('mail:a')]);
     notify(mailRun('fictional-queued'));
-    await vi.waitFor(() => expect(notices.map(n => n.body)).toEqual(['Fictional subject mail:b']));
+    await vi.waitFor(() => expect(notices.map(n => n.tag)).toEqual(['realbud-mail:b']));
   });
 
   it('when Needs you cannot be read, or cannot check the area, one notice says the run settled', async () => {

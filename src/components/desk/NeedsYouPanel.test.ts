@@ -89,18 +89,39 @@ describe("Needs you on the Tasks tab", () => {
     expect(plain).not.toContain("Nothing from your workflows");
   });
 
-  it("says nothing to review in one quiet line only when every shown area's job has checked", () => {
-    schedule({ loops: [loop("inbound-triage"), loop("weekly-bills")], loopRuns: [run("inbound-triage"), run("weekly-bills", { status: "failed", finishedAt: undefined })] });
+  it("says nothing to review in one quiet line only when every shown area's job has checked or is checking", () => {
+    schedule({ loops: [loop("inbound-triage"), loop("weekly-bills")], loopRuns: [run("inbound-triage"), run("weekly-bills", { status: "running", finishedAt: undefined })] });
     const html = render(state({ snapshot: snapshot() }));
     expect(text(html).trim()).toBe("Nothing from your workflows to review · checked 9:14 am");
     expect(html).toContain('aria-label="From your workflows"');
     expect(html).not.toContain("<h2");
     expect(html).not.toContain("Finish setup");
-    // A schedule still being read, or unreadable, is claimed neither way.
-    for (const routines of ["loading", "error"]) {
-      schedule({ activityLoad: { jobs: "ready", routines } });
-      expect(text(render(state({ snapshot: snapshot() }))).trim()).toBe("Nothing from your workflows to review · checked 9:14 am");
-    }
+    // With every job area hidden, no job is left to check.
+    schedule();
+    expect(text(render(state({ snapshot: snapshot() }), ["mail", "bills"])).trim()).toBe("Nothing from your workflows to review · checked 9:14 am");
+  });
+
+  it("names a shown area whose last run failed, or whose last check is out of date, instead of saying nothing to review", () => {
+    schedule({ loops: [loop("inbound-triage"), loop("weekly-bills")], loopRuns: [run("inbound-triage"), run("weekly-bills", { status: "failed", finishedAt: undefined })] });
+    const html = render(state({ snapshot: snapshot() }));
+    expect(text(html).trim()).toBe("Nothing to review yet · Didn't run: Bills and calendar");
+    expect(html).not.toContain("Finish setup");
+    const old = Date.now() - 5 * 24 * HOUR;
+    schedule({ loops: [loop("inbound-triage"), loop("weekly-bills")], loopRuns: [run("inbound-triage"), run("weekly-bills", { startedAt: old, finishedAt: old, createdAt: old, scheduledFor: old })] });
+    expect(text(render(state({ snapshot: snapshot() }))).trim()).toBe("Nothing to review yet · Out of date: Bills and calendar");
+    // Each reason in its own segment, in a fixed order.
+    schedule({ loops: [loop("inbound-triage", { enabled: false }), loop("weekly-bills")], loopRuns: [run("weekly-bills", { status: "missed", finishedAt: undefined })] });
+    expect(text(render(state({ snapshot: snapshot() }))).trim()).toBe("Nothing to review yet · Not checked yet: Mail priorities · Didn't run: Bills and calendar Finish setup");
+  });
+
+  it("makes no claim either way while the schedule is first read, or when it can't be read", () => {
+    schedule({ activityLoad: { jobs: "ready", routines: "loading" } });
+    const loading = text(render(state({ snapshot: snapshot() }))).trim();
+    expect(loading).toBe("Nothing listed yet · Checking when your workflows last ran…");
+    schedule({ activityLoad: { jobs: "ready", routines: "error" } });
+    const unreadable = text(render(state({ snapshot: snapshot() }))).trim();
+    expect(unreadable).toBe("Nothing listed yet · When your workflows last checked couldn't be read.");
+    for (const line of [loading, unreadable]) expect(line).not.toMatch(/Nothing (from your workflows|to review)|Finish setup/);
   });
 
   it("names shown areas whose job isn't set up, with Finish setup, instead of saying nothing needs review", () => {
@@ -145,8 +166,14 @@ describe("Needs you on the Tasks tab", () => {
 
   it("offers to show an area this Desk hides instead of a button that would open nothing", () => {
     const html = render(state({ snapshot: snapshot({ items: [item("bill:1", { area: "bills", next: "Assign or resolve it in Bills and calendar" })] }) }), ["bills"]);
-    expect(html).toContain(">Show Bills and calendar on my Desk</button>");
+    expect(html).toContain('<button type="button" class="pm-control needs-you-action">Show Bills and calendar on my Desk</button>');
     expect(text(html)).toContain("Assign or resolve it in Bills and calendar · Hidden on this Desk.");
+  });
+
+  it("waits for a Desk layout save in flight before showing an area again, so a second click can't collide", () => {
+    const html = renderToStaticMarkup(createElement(NeedsYouPanel, { state: state({ snapshot: snapshot({ items: [item("bill:1", { area: "bills" })] }) }),
+      active: true, areas: areas(["bills"]), onShowArea: vi.fn(), saving: true }));
+    expect(html).toContain('<button type="button" class="pm-control needs-you-action" disabled="">Show Bills and calendar on my Desk</button>');
   });
 
   it("has a polite live region for arrivals in every state", () => {

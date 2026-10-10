@@ -100,15 +100,16 @@ describe("Desk layout", () => {
     expect(tabs(render(snapshot()))).toEqual(["Tasks", "Shared work", "Mail priorities", "Hermios"]);
   });
 
-  it("counts what needs you on each area tab, with a text problem marker and a spoken name, and none while unread or at zero", () => {
+  it("counts each area tab's items, with a text problem marker and a spoken description, keeps the title as its name, and shows none while unread or at zero", () => {
     const row = (html: string) => html.slice(html.indexOf('aria-label="Desk workspace"'), html.indexOf("desk-shell-tabs"));
     expect(row(render(snapshot()))).not.toMatch(/need(s)? you/);
     store.needsYou = { error: null, checking: false, snapshot: { checkedAt: new Date(0).toISOString(), items: [], unavailable: [],
       counts: { mail: { problem: 1, review: 2 }, bills: { problem: 0, review: 1 }, schedule: { problem: 4, review: 0 } } } };
     const html = row(render(snapshot()));
-    expect(html).toMatch(/<button type="button" aria-pressed="false" aria-label="Mail priorities, 3 need you, 1 problem">Mail priorities<span class="area-tab-problem" aria-hidden="true">!<\/span><span class="area-tab-count" aria-hidden="true">3<\/span><\/button>/);
-    expect(html).toContain('aria-label="Bills and calendar, 1 needs you">Bills and calendar<span class="area-tab-count" aria-hidden="true">1</span>');
+    expect(html).toContain('<button type="button" aria-pressed="false" aria-describedby="desk-area-tab-mail-count">Mail priorities<span class="area-tab-problem" aria-hidden="true">!</span><span class="area-tab-count" aria-hidden="true">3</span></button><span id="desk-area-tab-mail-count" hidden="">3 items, 1 problem</span>');
+    expect(html).toContain('<button type="button" aria-pressed="false" aria-describedby="desk-area-tab-bills-count">Bills and calendar<span class="area-tab-count" aria-hidden="true">1</span></button><span id="desk-area-tab-bills-count" hidden="">1 item</span>');
     expect(html).toMatch(/<button type="button" aria-pressed="false">Shared work<\/button>/);
+    expect(html).not.toMatch(/aria-label="(Mail|Bills)|need(s)? you/);
   });
 
   it("offers Bank references as a tab only for an office that runs it", () => {

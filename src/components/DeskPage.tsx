@@ -3,7 +3,7 @@ import { useWorkspaceScroll, useWorkspaceViewState } from "@/lib/workspace-view-
 import { openWorkspaceSetup } from "@/lib/workspace-setup";
 import { openDeskArea, useDeskViewState, type DeskOtherWork } from "@/lib/desk-view-state";
 import type { PropertyScope } from "@/lib/book-groups";
-import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Building2, CircleAlert, Loader2, MessageSquare, X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
@@ -42,11 +42,11 @@ import { RemindersPanel } from "./desk/RemindersPanel";
 import { DeskRecoveryNotice, DeskRemindersDisclosure, DeskWorkArea, LicenseeBadge } from "./desk/DeskSections";
 import { NeedsYouPanel } from "./desk/NeedsYouPanel";
 import { CardMenu, DeskCardMenu, useDeskArrangement } from "./shell/DeskArrangement";
-import { AreaBadgeMarks, areaTabBadge } from "./shell/AreaTabs";
+import { AreaBadgeDescription, AreaBadgeMarks, areaTabBadge } from "./shell/AreaTabs";
 import { setDeskTabSlot } from "./shell/use-desk-nav";
 import { openArrangeDesk, useDeskDataStatus } from "./shell/shell-layout";
 import { useWorkspaceTabs } from "@/lib/workspace-tabs";
-import { useNeedsYou } from "@/lib/needs-you";
+import { refreshNeedsYou, useNeedsYou } from "@/lib/needs-you";
 import { coreOfficeDesk } from "@shared/desk-areas";
 import { DESK_SECTION_LABELS, deskSectionsOrDefault, effectiveDeskAreas } from "@shared/workspace-tabs";
 import { BatchWorkspace } from "./desk/BatchWorkspace";
@@ -126,6 +126,10 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   useEffect(() => { if (otherWork) setOpenedOther(current => (current.has(otherWork) ? current : new Set([...current, otherWork]))); }, [otherWork]);
   // One Needs you read while Desk shows: the Tasks panel and every area tab's count share it.
   const needsYou = useNeedsYou();
+  // A decision in an area changes what Tasks and the tab counts show: read again whenever the open tab
+  // changes (back to Tasks too). The read on opening Desk is useNeedsYou's own.
+  const shownWork = useRef(otherWork);
+  useEffect(() => { if (shownWork.current !== otherWork) { shownWork.current = otherWork; void refreshNeedsYou(); } }, [otherWork]);
   const arrangement = useDeskArrangement();
   const setMode = (next: typeof mode) => {
     setHermiosOpen(false);
@@ -595,7 +599,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
           <DeskCardMenu id="brief" />
         </div>
       ) : null}
-      <NeedsYouPanel state={needsYou} active={tasksActive} areas={deskAreas} inert={drawerOpen}
+      <NeedsYouPanel state={needsYou} active={tasksActive} areas={deskAreas} inert={drawerOpen} saving={arrangement.saving}
         onShowArea={id => void arrangement.setSection(id, true).then(saved => { if (saved) openDeskArea(id); })} />
       {emptyWorkspace ? (
         <div className="desk-empty-workspace">
@@ -818,11 +822,14 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
               Tasks{counts.now > 0 ? <span>{counts.now}</span> : null}
             </button>
             {areas.map(area => {
-              const badge = areaTabBadge(area.title, needsYou.snapshot, area.id);
+              const badge = areaTabBadge(needsYou.snapshot, area.id), countId = `desk-area-tab-${area.id}-count`;
               return (
-                <button key={area.id} type="button" aria-pressed={mode === "cases" && !hermiosOpen && otherWork === area.id} aria-label={badge?.name} onClick={() => openOtherWork(area.id)}>
-                  {area.title}{badge ? <AreaBadgeMarks badge={badge} countClass="area-tab-count" /> : null}
-                </button>
+                <Fragment key={area.id}>
+                  <button type="button" aria-pressed={mode === "cases" && !hermiosOpen && otherWork === area.id} aria-describedby={badge ? countId : undefined} onClick={() => openOtherWork(area.id)}>
+                    {area.title}{badge ? <AreaBadgeMarks badge={badge} countClass="area-tab-count" /> : null}
+                  </button>
+                  {badge ? <AreaBadgeDescription id={countId} badge={badge} /> : null}
+                </Fragment>
               );
             })}
             <button type="button" aria-pressed={hermiosOpen} onClick={() => { setOtherWork(null); setHermiosOpen(true); }}>

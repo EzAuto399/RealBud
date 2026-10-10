@@ -40,7 +40,8 @@ export async function undoBudDeskChange(change: BudDeskChange, revert: (toRevisi
 
 type TabsContext = {
   data: WorkspaceTabsResponse | null; loading: boolean; saving: boolean; error: string;
-  /** The office's Desk preset from the last answer; null until one is read. */
+  /** The office's Desk preset from the last good answer; null until one is read. A failed read or save keeps it,
+   *  so pack titles and areas (Bank references) don't fall back to the core preset. */
   office: OfficeDesk | null;
   /** The latest Desk layout Bud saved while this window was open. */
   budChange: BudDeskChange | null;
@@ -57,10 +58,11 @@ export function WorkspaceTabsProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<WorkspaceTabsResponse | null>(null);
   const [loading, setLoading] = useState(true), [saving, setSaving] = useState(false), [error, setError] = useState('');
   const [budChange, setBudChange] = useState<BudDeskChange | null>(null);
+  const [office, setOffice] = useState<OfficeDesk | null>(null);
   const alive = useRef(true), generation = useRef(0), pending = useRef(false);
   // The last state this window holds, and an announcement heard while its own save was in flight.
   const latest = useRef<WorkspaceTabsResponse | null>(null), missed = useRef<Announcement | null>(null);
-  const apply = (next: WorkspaceTabsResponse | null) => { latest.current = next; if (next) lastRead = next; setData(next); };
+  const apply = (next: WorkspaceTabsResponse | null) => { latest.current = next; if (next) { lastRead = next; setOffice(next.office); } setData(next); };
   const refresh = useCallback(async (): Promise<WorkspaceTabsResponse | null> => {
     if (pending.current) return null;
     const request = ++generation.current;
@@ -109,7 +111,7 @@ export function WorkspaceTabsProvider({ children }: { children: ReactNode }) {
       if (heard) hear(heard); else if (conflict) void refresh();
     }
   };
-  return <Context.Provider value={{ data, loading, saving, error, office: data?.office ?? null, budChange, refresh: async () => { await refresh(); },
+  return <Context.Provider value={{ data, loading, saving, error, office, budChange, refresh: async () => { await refresh(); },
     save: (tabs, expectedRevision) => mutate('/api/workspace-tabs', { version: 1, tabs, expectedRevision }, 'PUT'),
     reset: () => mutate('/api/workspace-tabs/reset', { expectedRevision: data?.state?.revision, ...(data?.recovery ? { resetToken: data.recovery.resetToken } : {}), confirm: true }, 'POST'),
     saveDesk: (sections, expectedRevision, shell) => {

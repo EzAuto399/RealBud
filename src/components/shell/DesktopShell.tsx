@@ -34,8 +34,10 @@ export function DesktopShell({ inert, children }: { inert: boolean; children: Re
   const workspaceTabs = useWorkspaceTabs();
   const savedViews = workspaceTabs.data?.state?.tabs.filter(tab => tab.visible) ?? [];
   const areas = effectiveDeskAreas(deskSectionsOrDefault(workspaceTabs.data?.state?.desk.sections), workspaceTabs.office ?? coreOfficeDesk()).filter(area => area.visible);
-  // Desk reads Needs you; off Desk the tabs show its last answer and start no read of their own.
-  const needsYou = useNeedsYou(false).snapshot;
+  // Off Desk the shell reads Needs you itself (on show, focus and every two minutes), so the area tabs' counts
+  // stay current; on Desk, Desk is the one reader.
+  const onDesk = state.activeView === "desk";
+  const needsYou = useNeedsYou(!onDesk).snapshot;
   const toasts = useToasts();
   useBudDeskReceipt(toasts);
   const browser = useShellBrowser();
@@ -46,10 +48,9 @@ export function DesktopShell({ inert, children }: { inert: boolean; children: Re
   // carries Tasks and the areas; elsewhere the shell keeps its own row with them.
   // No fallback row on Desk: a row that appears and then leaves would shift Desk's scroll.
   const slot = useDeskTabSlot();
-  const onDesk = state.activeView === "desk";
   useEffect(() => { if (!deskArea) setDrawer(false); }, [deskArea]);
   const deskTabs: AreaTab[] = [
-    ...(onDesk ? [] : [{ id: "today", label: "Tasks", count: queueCounts(nav.rows).now }, ...areas.map(area => ({ id: area.id, label: area.title, badge: areaTabBadge(area.title, needsYou, area.id) }))]),
+    ...(onDesk ? [] : [{ id: "today", label: "Tasks", count: queueCounts(nav.rows).now }, ...areas.map(area => ({ id: area.id, label: area.title, badge: areaTabBadge(needsYou, area.id) }))]),
     { id: "properties", label: "Properties" },
   ];
   const tabs: AreaTab[] = [...deskTabs, ...savedViews.map(tab => ({ id: tab.id, label: tab.label }))];

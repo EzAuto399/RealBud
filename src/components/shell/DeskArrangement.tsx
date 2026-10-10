@@ -140,15 +140,18 @@ const select = "min-h-11 w-full min-w-0 rounded border border-line bg-sheet px-2
 const LOCKED_REASON = "Always shown: approvals, safety and recovery stay visible.";
 
 /** Presentational Arrange Desk sheet: the work-area tabs (show, order, notices, layout), the
- *  cards on Tasks (show or hide), side panels, Save, Reset to office default, Undo last change,
+ *  cards on Tasks (show or hide), side panels, Save, Reset to office default, Undo last tab or card change,
  *  Simple desk, the change history with Restore and, last, this computer's layout. Locked
  *  items are shown checked, with the reason, and cannot change. */
 export function ArrangeDeskView({ dialogRef, ready, saving, message, stale, stored, current, history, office, layout, onChange, onSave, onRestore, onUndo, onReopen, onClose }: ArrangeDeskViewProps) {
   const officeDefault = { sections: officeDefaultSections(office), shell: { ...defaultShellLayout(), panelWidth: current.shell.panelWidth } };
   const same = (a: Arrangement, b: Arrangement) => sameDeskSections(a.sections, b.sections) && JSON.stringify(a.shell) === JSON.stringify(b.shell);
   const currentEntry = history.findIndex(entry => sameDeskSections(entry.sections, stored.sections));
-  // Undo puts back the saved layout before the current one.
+  // Undo puts back the saved tabs and cards before the current ones (history holds no side panel). It waits
+  // while this sheet holds unsaved changes, which it would otherwise drop.
   const previous = currentEntry >= 0 ? history[currentEntry + 1] : undefined;
+  const undoBlocked = !same(current, stored) ? "Save your changes first, or close Arrange Desk to drop them."
+    : previous ? null : "Nothing to undo: no earlier tab or card layout saved yet.";
   const areas = effectiveDeskAreas(current.sections, office);
   const visibility = (label: string, checked: boolean, locked: boolean, toggle: () => void) => (
     <label className={cn("flex min-h-11 min-w-0 flex-1 items-center gap-2.5 text-[14px] text-ink", locked && "text-ink-secondary")}>
@@ -269,10 +272,10 @@ export function ArrangeDeskView({ dialogRef, ready, saving, message, stale, stor
           <div className="rb-arrange-actions"><div className="flex flex-wrap gap-2">
             <button type="button" className={cn(control, "border-agency bg-agency text-white hover:bg-agency-hover")} disabled={saving || stale || same(current, stored)} onClick={onSave}>{saving ? "Saving…" : "Save"}</button>
             <button type="button" className={control} disabled={saving || same(current, officeDefault)} onClick={() => onChange(officeDefault)}>Reset to office default</button>
-            <button type="button" className={control} disabled={saving || !previous} aria-describedby={previous ? undefined : "rb-arrange-undo-none"} onClick={() => previous && onUndo(previous.revision)}>Undo last change</button>
+            <button type="button" className={control} disabled={saving || !!undoBlocked} aria-describedby={undoBlocked ? "rb-arrange-undo-reason" : undefined} onClick={() => previous && !undoBlocked && onUndo(previous.revision)}>Undo last tab or card change</button>
             <button type="button" className={control} disabled={saving || sameDeskSections(current.sections, simpleDeskSections())} onClick={() => onChange({ sections: simpleDeskSections() })}>Simple desk</button>
           </div>
-          {previous ? null : <p id="rb-arrange-undo-none" className="mt-1 text-[12px] text-ink-muted">Nothing to undo: no earlier saved layout yet.</p>}
+          {undoBlocked ? <p id="rb-arrange-undo-reason" className="mt-1 text-[12px] text-ink-muted">{undoBlocked}</p> : null}
           <p role="status" className="mt-2 min-h-5 text-[13px] text-ink-secondary">{message}</p></div>
         </>}
         {!ready && <p role="status" className="mt-2 min-h-5 text-[13px] text-ink-secondary">{message}</p>}

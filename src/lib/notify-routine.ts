@@ -30,10 +30,15 @@ function areaSetting(id: DeskAreaId): AreaNotice {
   return { area: shown ? id : 'schedule', title: preset.title, level: preset.notify ?? 'off' };
 }
 
-/** A notice names the item, never an amount or account number its title may carry (a mail subject can).
- * Dates (2026-10-10, 9/10/2026) stay. */
+/** A notice names the item, never an amount or account number its title may carry: any number with a currency
+ * sign or three or more digits becomes "…", and a run of them (an account number in groups) one "…". House and
+ * unit numbers (one or two digits) and dates (2026-10-10, 9/10/2026) stay. */
 const DATE = /(\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}\/\d{1,2}\/\d{4}\b)/;
-const noticeTitle = (title: string) => title.split(DATE).map((part, index) => index % 2 ? part : part.replace(/[$€£]\s?\d[\d,]*(?:\.\d+)?|\d[\d ,.-]{4,}\d/g, '…')).join('');
+const NUMBER = /(?:[$€£]\s?)?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?/g;
+const mask = (text: string) => text.replace(NUMBER, number => /[$€£]/.test(number) || number.replace(/\D/g, '').length >= 3 ? '…' : number).replace(/…(?:[\s-]*…)+/g, '…');
+const noticeTitle = (title: string) => title.split(DATE).map((part, index) => index % 2 ? part : mask(part)).join('');
+/** A mail item's title is its Gmail subject, which can carry anything: its notice never shows it. */
+const itemBody = (area: NeedsYouArea, title: string) => area === 'mail' ? 'New conversation to review' : noticeTitle(title);
 
 /** Review keys per area that are not news: the first read after app start, every read while the area is not
  * on Each new item, and every key told since. So neither a restart nor switching to Each new item announces
@@ -85,14 +90,16 @@ async function readAfterRun() {
   return getNeedsYou();
 }
 /** Each new item: one notice per review item the area didn't have before, up to the cap, then one for the rest.
- * When Needs you can't say what is new, one notice for the run instead: unread is never "nothing new". */
+ * When Needs you can't say what is new, one notice for the run instead: unread is never "nothing new". That
+ * includes a first run with no earlier read (this run's own read becomes the baseline). */
 async function noticeNewItems(run: LoopRun, notice: AreaNotice): Promise<void> {
+  const had = known.has(notice.area);
   const { snapshot, error } = await readAfterRun();
   const seen = known.get(notice.area);
-  if (error || !snapshot || !seen || !readable(snapshot, notice.area)) { runNotice(run, notice.area); return; }
+  if (!had || error || !snapshot || !seen || !readable(snapshot, notice.area)) { runNotice(run, notice.area); return; }
   const fresh = reviews(snapshot, notice.area).filter(item => !seen.has(item.key));
   for (const item of fresh) seen.add(item.key);
-  for (const item of fresh.slice(0, ITEM_NOTICES)) tell(notice.title, noticeTitle(item.title), `realbud-${item.key}`, notice.area);
+  for (const item of fresh.slice(0, ITEM_NOTICES)) tell(notice.title, itemBody(notice.area, item.title), `realbud-${item.key}`, notice.area);
   if (fresh.length > ITEM_NOTICES) tell(notice.title, `And ${fresh.length - ITEM_NOTICES} more`, `realbud-${notice.area}-more`, notice.area);
 }
 

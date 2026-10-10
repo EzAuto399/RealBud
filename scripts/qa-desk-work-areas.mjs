@@ -120,6 +120,9 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   await page.getByRole('heading', { name: 'Desk', exact: true }).waitFor();
   const deskRow = page.locator('.pm-desk-header').getByRole('navigation', { name: 'Desk workspace', exact: true });
   const rowTabs = async () => (await deskRow.locator('.desk-workspace-tabs > button').allTextContents()).map(text => text.replace(/[!\d]+$/, '').trim());
+  // An area tab's name stays its title; its count is its accessible description (the aria-describedby target's text).
+  const described = tab => tab.evaluate(element => (element.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean).map(id => document.getElementById(id)?.textContent ?? '').join(' '));
+  const areaTab = name => deskRow.getByRole('button', { name, exact: true });
   const tasksTab = deskRow.getByRole('button', { name: /^Tasks(?:\s*\d+)?$/ });
   // None of the office's area jobs is switched on yet (each is opt-in), so an empty read is not "nothing to review".
   const quietSection = page.getByRole('region', { name: 'From your workflows', exact: true }).and(page.locator('.needs-you-quiet'));
@@ -127,7 +130,7 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   await quiet.waitFor();
   await quietSection.getByRole('button', { name: 'Finish setup', exact: true }).waitFor();
   assert.deepEqual(await rowTabs(), ['Tasks', 'Mail priorities', 'Bills and calendar', 'Bank references', 'Shared work', 'Hermios']);
-  for (const name of ['Mail priorities', 'Bills and calendar', 'Bank references']) await deskRow.getByRole('button', { name, exact: true }).waitFor();
+  for (const name of ['Mail priorities', 'Bills and calendar', 'Bank references']) { await areaTab(name).waitFor(); assert.equal(await described(areaTab(name)), '', `${name} carries no count`); }
   await shot('01-needs-you-nothing-1280.png');
   pass('After a full read that found nothing while no area job is set up, Tasks says "Nothing to review yet · Not checked yet: Mail priorities, Bills and calendar, Bank references" in one line with Finish setup, never "nothing from your workflows"; the area tabs carry no count, and Bank references is a tab for an office that runs it');
 
@@ -170,9 +173,9 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   assert.match(await panel.locator('.needs-you-head > p').innerText(), new RegExp(`^${total} items · checked \\d{1,2}:\\d{2} [ap]m$`));
   const more = panel.getByRole('button', { name: `Show all ${total}`, exact: true });
   assert.equal(await more.getAttribute('aria-expanded'), 'false');
-  const mailName = `Mail priorities, ${mailCounts.problem + mailCounts.review} need you, 1 problem`;
-  const mailTab = deskRow.getByRole('button', { name: mailName, exact: true });
-  await mailTab.waitFor();
+  const mailCount = `${mailCounts.problem + mailCounts.review} items, 1 problem`;
+  const mailTab = areaTab('Mail priorities');
+  await until(async () => await described(mailTab) === mailCount, `The Mail priorities tab is described as "${mailCount}"`);
   assert.match(await mailTab.innerText(), /^Mail priorities\s*!\s*\d+$/, 'The problem shows as a "!" before the count, not colour alone');
   await deskRow.getByRole('button', { name: 'Bills and calendar', exact: true }).waitFor();
   await shot('02-needs-you-1280.png');
@@ -180,7 +183,7 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   assert.equal(await rows.count(), total);
   await panel.getByRole('button', { name: 'Show fewer', exact: true }).click();
   assert.equal(await rows.count(), 5);
-  pass(`Needs you lists the problem first, then To review, five rows then "Show all ${total}"; the head counts "${total} items"; each row names its workflow, what was found, why and a button showing the next step and named "<next step>: <item>"; New marks items found since the panel was last shown and a polite live region announces them; the Mail priorities tab reads "${mailName}" with a visible "!"`);
+  pass(`Needs you lists the problem first, then To review, five rows then "Show all ${total}"; the head counts "${total} items"; each row names its workflow, what was found, why and a button showing the next step and named "<next step>: <item>"; New marks items found since the panel was last shown and a polite live region announces them; the Mail priorities tab keeps its name and is described as "${mailCount}", with a visible "!"`);
 
   await rows.first().getByRole('button', { name: problemAction, exact: true }).click();
   await page.locator('.desk-area-surface[data-other-work="mail"]').waitFor();
@@ -195,7 +198,7 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   await tasksTab.click();
   pass('A row\'s button opens its area (Mail priorities); the Bank references tab opens bank review as a Desk area');
 
-  // Arrange Desk: Bills notices and layout, moved above Mail priorities; Reset to office default; Undo last change.
+  // Arrange Desk: Bills notices and layout, moved above Mail priorities; Reset to office default; Undo last tab or card change.
   const openArrange = async () => {
     const menu = page.locator('.pm-desk-header details.desk-more').filter({ has: page.getByRole('group', { name: 'More Desk tools', exact: true, includeHidden: true }) });
     if (!await menu.evaluate(element => element.open)) await menu.locator(':scope > summary').click();
@@ -211,8 +214,8 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   assert.deepEqual(await names(areasGroup, 'combobox'), ['Mail priorities notices', 'Bills and calendar notices', 'Bills and calendar layout', 'Bank references notices']);
   assert.deepEqual(await names(cardsGroup, 'checkbox'), ['Show Get started on my Desk', 'Show Morning brief on my Desk', 'Needs you always shows', 'Show Activity on my Desk']);
   assert.equal(await cardsGroup.getByRole('button').count(), 0, 'Cards on Tasks have no movers');
-  assert.equal(await sheet.getByRole('button', { name: 'Undo last change', exact: true }).isDisabled(), true);
-  await sheet.getByText('Nothing to undo: no earlier saved layout yet.', { exact: true }).waitFor();
+  assert.equal(await sheet.getByRole('button', { name: 'Undo last tab or card change', exact: true }).isDisabled(), true);
+  await sheet.getByText('Nothing to undo: no earlier tab or card layout saved yet.', { exact: true }).waitFor();
   await areasGroup.getByRole('combobox', { name: 'Bills and calendar notices', exact: true }).selectOption({ label: 'Each new item' });
   await areasGroup.getByRole('combobox', { name: 'Bills and calendar layout', exact: true }).selectOption({ label: 'List' });
   await areasGroup.getByRole('button', { name: 'Move Bills and calendar up', exact: true }).click();
@@ -241,13 +244,13 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   await sheet.getByText('Desk arrangement saved.', { exact: true }).waitFor();
   const reset = (await request('/api/workspace-tabs')).state.desk.sections;
   assert.deepEqual(reset, ['brief', 'mail', 'bills', 'bank', 'shared-work', 'go-live', 'queue', 'activity'].map(id => ({ id, visible: true })));
-  await sheet.getByRole('button', { name: 'Undo last change', exact: true }).click();
+  await sheet.getByRole('button', { name: 'Undo last tab or card change', exact: true }).click();
   await sheet.getByText('Last change undone.', { exact: true }).waitFor();
   const undone = (await request('/api/workspace-tabs')).state.desk.sections;
   assert.deepEqual(undone, stored.desk.sections);
   await sheet.getByRole('button', { name: 'Close Arrange Desk', exact: true }).click();
   await until(async () => JSON.stringify(await rowTabs()) === JSON.stringify(customTabs), 'Undo puts Bills back first');
-  pass('Reset to office default saves the office order with no personal choices; Undo last change puts the earlier saved layout back');
+  pass('Reset to office default saves the office order with no personal choices; Undo last tab or card change puts the earlier saved layout back');
 
   // Labelled browser injections: a failed read keeps the last snapshot; a source that can't be read is a problem row.
   await panel.waitFor();
@@ -271,12 +274,12 @@ console.log(JSON.stringify({summary:'Fictional deterministic preparation',eviden
   assert.equal(await panel.getByRole('alert').count(), 0, 'A good read clears the error');
   assert.match(await unreadable.innerText(), /^Problem\s+Bills and calendar\s+Couldn't check Bills and calendar/);
   assert.equal(await page.getByText(/^Nothing (from your workflows|to review yet)/).count(), 0);
-  await deskRow.getByRole('button', { name: 'Bills and calendar, 1 needs you, 1 problem', exact: true }).waitFor();
+  await until(async () => await described(areaTab('Bills and calendar')) === '1 item, 1 problem', 'The Bills and calendar tab is described as "1 item, 1 problem"');
   await shot('07-needs-you-unavailable-1280.png');
   await page.unroute('**/api/needs-you');
   await unreadable.getByRole('button', { name: 'Try again', exact: true }).click();
   await unreadable.waitFor({ state: 'detached' });
-  await deskRow.getByRole('button', { name: 'Bills and calendar', exact: true }).waitFor();
+  await until(async () => await described(areaTab('Bills and calendar')) === '', 'The Bills and calendar tab carries no count once it can be checked');
   pass('Labelled injections: a failed read keeps the last rows with the error and Try again; a source that cannot be read is a Problem row "Couldn\'t check Bills and calendar" with Try again, never an empty list, and its tab carries a "!"; Try again reads the real service again');
 
   for (const [width, height] of [[1280, 900], [768, 1024], [390, 844]]) {
