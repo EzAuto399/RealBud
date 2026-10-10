@@ -37,7 +37,7 @@
 | Full suite (`pnpm test`) at `31aaf946` | 11,246 passed, 335 skipped, 0 failed (683 files) | local tests |
 | Renderer QA, 32 scripts on one build (fictional data, isolated homes) | 32 of 32 pass in one run at `31aaf946`. Highlights: update-restart 25 (card states, the window's unsaved answer before the shell, docked card at 390 and 1280 px), link-gate 28, setup-stages 29, kevin-sherry-day 28, w1-simulated 13, source-bills 30 | local QA |
 | Updater unit tests (fake electron-updater, fake clock) | 98 passed: safe moment, countdown, Later, required, the re-check after the service stops, abort restarts the service, failed install, newest version wins | local tests |
-| Package Windows (rehearsal) | pending | CI packaging |
+| Package Windows ([run 38064814923](https://github.com/EzAuto399/RealBud/actions/runs/38064814923), rehearsal, at `14f427f7`) | NSIS installer, managed runtime and installed lifecycle passed; `latest.yml` sha512 and size match the uploaded setup.exe. Published as v0.1.51 (latest), 10 Oct 2026 15:59 UTC (11 Oct, Brisbane); realbud.app/download serves it | CI packaging |
 | Independent reviews | Round 1: 2 high, 5 medium, 5 low. Round 2: 0 high, 4 medium. Ledger review: 0 high, 1 medium, 3 low. All fixed except two that were already there: an Ask browser task counts as working while it waits on the person, and a hung loop holds restarts until its own time limit | source review |
 | Automatic restart on an installed Windows PC | not run | not established |
 
