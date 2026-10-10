@@ -23,6 +23,7 @@ describe("Work area tabs", () => {
         mail: createElement("form", { "aria-label": "Review saved mail item" }, "mail draft"),
         bills: createElement("div", null, "bills"),
         "shared-work": createElement("div", null, "shared"),
+        bank: null,
       },
     }));
 

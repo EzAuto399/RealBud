@@ -17,15 +17,16 @@ import type { LoopbackToolServer } from "./web-research-broker.ts";
 import { createWorkspaceTabsHandler } from "./workspace-tabs.ts";
 import { DESK_CONFLICT, startWorkspaceViewsBroker, VIEWS_CONFLICT, type BudWorkspaceViews } from "./workspace-views-broker.ts";
 import { defaultDeskSections, parseWorkspaceTabsResponse } from "../shared/workspace-tabs.ts";
+import type { OfficeDesk } from "../shared/desk-areas.ts";
 
 const { assertCapability } = vi.hoisted(() => ({ assertCapability: vi.fn() }));
 vi.mock("./managed-service.ts", () => ({ managedService: { assertCapability } }));
 
 const directories: string[] = [];
 const seed = { id: "view-waiting", label: "Waiting work", visible: true, view: { kind: "tasks", filter: "waiting" } };
-async function service(tabs: unknown[] = [seed]) {
+async function service(tabs: unknown[] = [seed], officeDesk?: () => OfficeDesk) {
   const directory = await mkdtemp(join(tmpdir(), "realbud-bud-views-")); directories.push(directory);
-  const handler = createWorkspaceTabsHandler({ directory, workspaceId: randomUUID() });
+  const handler = createWorkspaceTabsHandler({ directory, workspaceId: randomUUID(), officeDesk });
   if (tabs.length) expect((await handler.handle("/api/workspace-tabs", "PUT", { version: 1, expectedRevision: 0, tabs }))?.status).toBe(200);
   const views: BudWorkspaceViews = {
     read: async () => (await handler.handle("/api/workspace-tabs", "GET"))!,
@@ -57,9 +58,13 @@ describe("saved views broker", () => {
     expect(result.structuredContent.views).toEqual([{ id: "view-waiting", name: "Waiting work", kind: "tasks", filter: "waiting", visible: true }]);
     // Bud reads the revision, every section in order with its name, and what always shows, before it arranges Desk.
     expect(result.structuredContent).toMatchObject({ revision: 1, locked: ["queue"] });
-    expect(result.structuredContent.desk).toEqual(defaultDeskSections().map(section => ({ id: section.id, name: expect.any(String), visible: true })));
-    expect(result.structuredContent.desk[0].name).toBe("Morning brief");
-    expect(result.content[0].text).toContain("Desk layout (revision 1), in order:\n- brief: Morning brief (shown)");
+    expect(result.structuredContent.desk).toEqual(defaultDeskSections().map(section => expect.objectContaining({ id: section.id, name: expect.any(String), visible: true })));
+    expect(result.structuredContent.desk[0]).toEqual({ id: "brief", name: "Morning brief", visible: true });
+    // Each work area with its effective notices and layout; one this office does not use says so.
+    expect(result.structuredContent.desk[1]).toEqual({ id: "mail", name: "Mail priorities", visible: true, available: true, notify: "summary", layout: "priority-list" });
+    expect(result.structuredContent.desk[3]).toEqual({ id: "bank", name: "Bank references", visible: true, available: false });
+    expect(result.content[0].text).toContain("Desk layout (revision 1), in order:\n- brief: Morning brief (shown)\n- mail: Mail priorities (shown, notify summary, layout priority-list)");
+    expect(result.content[0].text).toContain("- bank: Bank references (shown, not used by this office)\n- shared-work: Shared work (shown, layout review-list)");
     expect(result.content[0].text).toContain("Always shown: queue.");
     expect(cards).toEqual([]);
     expect(approve).not.toHaveBeenCalled();
@@ -146,7 +151,7 @@ describe("saved views broker", () => {
     expect(result.structuredContent).toEqual({ revision: 2, previousRevision: 1 });
     expect(cards).toEqual([]);
     expect(approve).not.toHaveBeenCalled();
-    expect(views.save).toHaveBeenCalledWith({ expectedRevision: 1, version: 2, tabs: before.tabs, desk: { sections } });
+    expect(views.save).toHaveBeenCalledWith({ expectedRevision: 1, version: 3, tabs: before.tabs, desk: { sections } });
     const after = await get();
     expect(after.desk.sections).toEqual(sections);
     expect(after.tabs).toEqual(before.tabs);
@@ -154,6 +159,32 @@ describe("saved views broker", () => {
     expect(after.history.map(entry => entry.revision)).toEqual([2, 1]);
     expect(await call("desk_arrange", { revision: 2, sections })).toMatchObject({ content: [{ text: "Desk already looks like that. Nothing was changed." }] });
     expect(views.save).toHaveBeenCalledTimes(1);
+  });
+
+  it("chooses a work area's notices and layout, reports them by the office's titles, and refuses them where the area has none", async () => {
+    const office: OfficeDesk = { source: { kind: "pack", packId: "fictional-agency", revision: 1 }, areas: [
+      { id: "mail", title: "Morning priorities", layout: "priority-list", notify: "each", available: true },
+      { id: "bills", title: "Bills & calendar", layout: "calendar", notify: "summary", available: true },
+      { id: "bank", title: "Bank references", layout: "review-list", notify: "off", available: false },
+      { id: "shared-work", title: "Shared work", layout: "review-list", notify: null, available: true },
+    ] };
+    const { views, get } = await service([seed], () => office);
+    await start(views, async () => true);
+    const sections = defaultDeskSections().map(section => section.id === "bills" ? { ...section, notify: "each" as const, layout: "review-list" as const } : section);
+    const result = await call("desk_arrange", { revision: 1, sections });
+    expect(result.content[0].text).toBe("Arranged Desk: set Bills and calendar notices to Each new item; showed Bills and calendar as List. Desk now shows Morning brief, Morning priorities, Bills & calendar, Shared work, Get started, Needs you, Activity. The person can Undo it on Desk (previous revision 1, now 2).");
+    expect((await get()).desk.sections).toEqual(sections);
+    const listed = (await call("views_list", {})).structuredContent.desk;
+    expect(listed.filter((row: { available?: boolean }) => row.available)).toEqual([
+      { id: "mail", name: "Morning priorities", visible: true, available: true, notify: "each", layout: "priority-list" },
+      { id: "bills", name: "Bills & calendar", visible: true, available: true, notify: "each", layout: "review-list" },
+      { id: "shared-work", name: "Shared work", visible: true, available: true, notify: null, layout: "review-list" },
+    ]);
+    expect(await call("desk_arrange", { revision: 2, sections: defaultDeskSections().map(section => section.id === "shared-work" ? { ...section, notify: "each" } : section) }))
+      .toMatchObject({ isError: true, content: [{ text: expect.stringContaining("Set notices only for") }] });
+    expect(await call("desk_arrange", { revision: 2, sections: defaultDeskSections().map(section => section.id === "bills" ? { ...section, layout: "table" } : section) }))
+      .toMatchObject({ isError: true, content: [{ text: expect.stringContaining("Choose a layout only for Bills and calendar") }] });
+    expect((await get()).revision).toBe(2);
   });
 
   it("never overwrites a Desk changed after Bud read it", async () => {

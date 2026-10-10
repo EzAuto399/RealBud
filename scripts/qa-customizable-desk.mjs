@@ -58,7 +58,7 @@ try {
   pass('Fictional sample Desk opens');
 
   // Default: today's order.
-  assert.equal((await call('/api/workspace-tabs')).body.state.version, 2);
+  assert.equal((await call('/api/workspace-tabs')).body.state.version, 3);
   const header = page.locator('.pm-desk-header');
   const openArrange = async () => {
     const more = header.locator('details.desk-more').filter({ has: page.getByRole('group', { name: 'More Desk tools', exact: true, includeHidden: true }) });
@@ -74,13 +74,13 @@ try {
   await panel.getByRole('combobox', { name: 'Spacing', exact: true }).waitFor();
   pass('Arrange Desk opens from More with Needs you fixed, a "Saved on this computer" line and this computer\'s layout options');
   // Keyboard reorder: move Needs you to the top with the keyboard, hide mail/bills/shared work.
-  for (let i = 0; i < 5; i++) { const up = panel.getByRole('button', { name: 'Move Needs you up', exact: true }); await up.focus(); await page.keyboard.press('Enter'); }
+  for (let i = 0; i < 6; i++) { const up = panel.getByRole('button', { name: 'Move Needs you up', exact: true }); await up.focus(); await page.keyboard.press('Enter'); }
   for (const label of ['Mail priorities', 'Bills and calendar', 'Shared work']) await panel.getByRole('checkbox', { name: `Show ${label} on my Desk`, exact: true }).uncheck();
   await panel.screenshot({ animations: 'disabled', path: join(output, 'arrange-desk-draft.png') });
   await panel.getByRole('button', { name: 'Save', exact: true }).click();
   await panel.getByText('Desk arrangement saved.', { exact: true }).waitFor();
   const saved = (await call('/api/workspace-tabs')).body.state;
-  assert.deepEqual(saved.desk.sections.map(s => s.id), ['queue', 'brief', 'mail', 'bills', 'shared-work', 'go-live', 'activity']);
+  assert.deepEqual(saved.desk.sections.map(s => s.id), ['queue', 'brief', 'mail', 'bills', 'bank', 'shared-work', 'go-live', 'activity']);
   assert.deepEqual(saved.desk.sections.filter(s => !s.visible).map(s => s.id), ['mail', 'bills', 'shared-work']);
   assert.equal(saved.history.length, 2);
   pass('Save persists the reordered layout with history (earlier layout kept)');

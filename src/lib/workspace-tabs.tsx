@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from '@/state/store';
 import { deskChangeSummary, parseWorkspaceTabsResponse, validWorkspaceRevision, type DeskSection, type ShellLayout, type WorkspaceTab, type WorkspaceTabs, type WorkspaceTabsResponse } from '@shared/workspace-tabs';
+import type { OfficeDesk } from '@shared/desk-areas';
 
 /** The service saved a change (detail `{ revision, by? }` from its event), or the
  *  event stream reconnected (no detail) and announcements may have been missed. */
@@ -39,6 +40,8 @@ export async function undoBudDeskChange(change: BudDeskChange, revert: (toRevisi
 
 type TabsContext = {
   data: WorkspaceTabsResponse | null; loading: boolean; saving: boolean; error: string;
+  /** The office's Desk preset from the last answer; null until one is read. */
+  office: OfficeDesk | null;
   /** The latest Desk layout Bud saved while this window was open. */
   budChange: BudDeskChange | null;
   refresh(): Promise<void>; save(tabs: WorkspaceTab[], expectedRevision: number): Promise<void>; reset(): Promise<void>;
@@ -102,12 +105,12 @@ export function WorkspaceTabsProvider({ children }: { children: ReactNode }) {
       if (heard) hear(heard); else if (conflict) void refresh();
     }
   };
-  return <Context.Provider value={{ data, loading, saving, error, budChange, refresh: async () => { await refresh(); },
+  return <Context.Provider value={{ data, loading, saving, error, office: data?.office ?? null, budChange, refresh: async () => { await refresh(); },
     save: (tabs, expectedRevision) => mutate('/api/workspace-tabs', { version: 1, tabs, expectedRevision }, 'PUT'),
     reset: () => mutate('/api/workspace-tabs/reset', { expectedRevision: data?.state?.revision, ...(data?.recovery ? { resetToken: data.recovery.resetToken } : {}), confirm: true }, 'POST'),
     saveDesk: (sections, expectedRevision, shell) => {
       if (!data?.state) return Promise.reject(new Error('Saved views need checking before the Desk layout can change.'));
-      return mutate('/api/workspace-tabs', { version: 2, tabs: data.state.tabs, desk: { sections }, ...(shell ? { shell } : {}), expectedRevision }, 'PUT', true);
+      return mutate('/api/workspace-tabs', { version: 3, tabs: data.state.tabs, desk: { sections }, ...(shell ? { shell } : {}), expectedRevision }, 'PUT', true);
     },
     revertDesk: (toRevision, expectedRevision) => mutate('/api/workspace-tabs/revert', { expectedRevision, toRevision }, 'POST', true),
   }}>{children}</Context.Provider>;

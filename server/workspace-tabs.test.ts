@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createWorkspaceTabsHandler } from './workspace-tabs.ts';
 import { defaultDeskSections, defaultShellLayout, parseWorkspaceTabsResponse } from '../shared/workspace-tabs.ts';
+import { coreOfficeDesk } from '../shared/desk-areas.ts';
 
 const desk = { sections: defaultDeskSections() };
 import { plantPrivateFile, removeFixture } from './testing/private-fixture.ts';
@@ -37,7 +38,8 @@ describe('private workspace saved views', () => {
   });
   it('adds Get started once to an untouched automatic simple desk from before it existed', async () => {
     const old = await fixture();
-    const legacy = defaultDeskSections().map(section => ({ ...section, visible: section.id === 'brief' || section.id === 'queue' }));
+    // Saved by an older app as version 2, before Bank references existed.
+    const legacy = ['brief', 'mail', 'bills', 'shared-work', 'go-live', 'queue', 'activity'].map(id => ({ id, visible: id === 'brief' || id === 'queue' }));
     expect((await old.call('PUT', { version: 2, expectedRevision: 0, tabs: [], desk: { sections: legacy } }))?.status).toBe(200);
     expect(await old.handler.addGetStartedToAutomaticSimpleDesk()).toBe(true);
     expect((await old.read()).state!.desk.sections.filter(section => section.visible).map(section => section.id).sort()).toEqual(['brief', 'go-live', 'queue']);
@@ -45,7 +47,7 @@ describe('private workspace saved views', () => {
     // A person's own layout is never changed.
     const chosen = await fixture();
     const own = defaultDeskSections().map(section => ({ ...section, visible: section.id !== 'go-live' }));
-    expect((await chosen.call('PUT', { version: 2, expectedRevision: 0, tabs: [], desk: { sections: own } }))?.status).toBe(200);
+    expect((await chosen.call('PUT', { version: 3, expectedRevision: 0, tabs: [], desk: { sections: own } }))?.status).toBe(200);
     expect(await chosen.handler.addGetStartedToAutomaticSimpleDesk()).toBe(false);
     expect((await chosen.read()).state!.desk.sections).toEqual(own);
   });
@@ -60,7 +62,7 @@ describe('private workspace saved views', () => {
   });
   it('persists bounded views across handlers without changing scope or business data', async () => {
     const a = await fixture(), b = await fixture();
-    expect((await a.read()).state).toEqual({ version: 2, revision: 0, tabs: [], desk, history: [] });
+    expect((await a.read()).state).toEqual({ version: 3, revision: 0, tabs: [], desk, history: [] });
     expect((await a.call('PUT', { version: 1, expectedRevision: 0, tabs: [tab] }))?.status).toBe(200);
     const reopened = createWorkspaceTabsHandler({ directory: a.directory, workspaceId: a.workspaceId });
     expect(parseWorkspaceTabsResponse((await reopened.handle('/api/workspace-tabs', 'GET'))?.body).state?.tabs).toEqual([tab]);
@@ -112,7 +114,7 @@ describe('private workspace saved views', () => {
     expect((await a.call('POST', { confirm: true, resetToken: held.recovery?.resetToken }, '/api/workspace-tabs/reset'))?.status).toBe(200);
     const archive = (await readdir(join(a.directory, 'workspace-views'))).find(name => name.startsWith('tabs-recovery-'))!;
     expect(await readFile(join(a.directory, 'workspace-views', archive), 'utf8')).toBe(content);
-    expect((await a.read()).state).toEqual({ version: 2, revision: 1, tabs: [], desk, history: [] });
+    expect((await a.read()).state).toEqual({ version: 3, revision: 1, tabs: [], desk, history: [] });
   });
   it('does not replace a linked configuration or modify its target', async () => {
     const a = await fixture(); await a.read();
@@ -127,27 +129,39 @@ describe('private workspace saved views', () => {
     await a.call('PUT', { version: 1, expectedRevision: 0, tabs: [tab] });
     expect((await a.call('POST', { expectedRevision: 1 }, '/api/workspace-tabs/reset'))?.status).toBe(400);
     expect((await a.call('POST', { expectedRevision: 1, confirm: true }, '/api/workspace-tabs/reset'))?.status).toBe(200);
-    expect((await a.read()).state).toEqual({ version: 2, revision: 2, tabs: [], desk, history: [] });
+    expect((await a.read()).state).toEqual({ version: 3, revision: 2, tabs: [], desk, history: [] });
     expect(await readFile(join(a.directory, 'business-record.json'), 'utf8')).toBe('kept');
   });
 });
 
 describe('customizable Desk layout', () => {
   const custom = () => { const sections = defaultDeskSections().reverse(); sections[0] = { ...sections[0]!, visible: false }; return sections; };
+  it('reads a stored version 2 file as version 3, adding Bank references at the end instead of asking for recovery', async () => {
+    const a = await fixture(); await a.read();
+    const old = ['brief', 'mail', 'bills', 'shared-work', 'go-live', 'queue', 'activity'].map(id => ({ id, visible: id !== 'mail' }));
+    plantPrivateFile(a.path, JSON.stringify({ workspaceId: a.workspaceId, state: { version: 2, revision: 3, tabs: [tab], desk: { sections: old }, history: [{ revision: 3, savedAt: 9, sections: old }] } }));
+    const migrated = [...old, { id: 'bank', visible: true }];
+    expect((await a.read()).state).toEqual({ version: 3, revision: 3, tabs: [tab], desk: { sections: migrated }, history: [{ revision: 3, savedAt: 9, sections: migrated }] });
+    // A version 2 body from an older window is migrated the same way and stored as version 3.
+    expect((await a.call('PUT', { version: 2, expectedRevision: 3, tabs: [], desk: { sections: old.map(section => ({ ...section, visible: true })) } }))?.status).toBe(200);
+    const stored = JSON.parse(await readFile(a.path, 'utf8')).state;
+    expect(stored.version).toBe(3);
+    expect(stored.desk.sections).toEqual(defaultDeskSections().filter(section => section.id !== 'bank').concat({ id: 'bank', visible: true }));
+  });
   it('migrates a stored version 1 file to the default Desk order without changing its tabs or revision', async () => {
     const a = await fixture(); await a.read();
     plantPrivateFile(a.path, JSON.stringify({ workspaceId: a.workspaceId, state: { version: 1, revision: 7, tabs: [tab] } }));
-    expect((await a.read()).state).toEqual({ version: 2, revision: 7, tabs: [tab], desk, history: [] });
-    // A version 1 tabs-only save keeps the Desk layout and writes version 2.
+    expect((await a.read()).state).toEqual({ version: 3, revision: 7, tabs: [tab], desk, history: [] });
+    // A version 1 tabs-only save keeps the Desk layout and writes version 3.
     expect((await a.call('PUT', { version: 1, expectedRevision: 7, tabs: [] }))?.status).toBe(200);
     const stored = JSON.parse(await readFile(a.path, 'utf8'));
-    expect(stored.state).toEqual({ version: 2, revision: 8, tabs: [], desk, history: [] });
+    expect(stored.state).toEqual({ version: 3, revision: 8, tabs: [], desk, history: [] });
   });
   it('saves a layout, keeps history with the earlier layout, and reverts as a new revision', async () => {
     let clock = 1_000;
     const a = await fixture();
     const handler = createWorkspaceTabsHandler({ directory: a.directory, workspaceId: a.workspaceId, now: () => ++clock });
-    const saved = parseWorkspaceTabsResponse((await handler.handle('/api/workspace-tabs', 'PUT', { version: 2, expectedRevision: 0, tabs: [tab], desk: { sections: custom() } }))?.body).state!;
+    const saved = parseWorkspaceTabsResponse((await handler.handle('/api/workspace-tabs', 'PUT', { version: 3, expectedRevision: 0, tabs: [tab], desk: { sections: custom() } }))?.body).state!;
     expect(saved.desk.sections).toEqual(custom());
     expect(saved.history).toEqual([{ revision: 1, savedAt: 1_001, sections: custom() }, { revision: 0, savedAt: null, sections: defaultDeskSections() }]);
     // Tabs-only saves do not add history entries.
@@ -161,11 +175,25 @@ describe('customizable Desk layout', () => {
     // The restored layout moves to the top instead of being listed twice.
     expect(reverted.history.map(entry => entry.revision)).toEqual([3, 1]);
   });
+  it('keeps ten layouts with notices and layouts on every area, and twelve full saved views, inside the size cap', async () => {
+    const a = await fixture();
+    const tabs = Array.from({ length: 12 }, (_, i) => ({ ...tab, id: `view-${'x'.repeat(60)}-${i}`, label: 'L'.repeat(40) }));
+    for (let revision = 0; revision < 11; revision++) {
+      const sections = defaultDeskSections().map((section, index) => ({ ...section, visible: section.id === 'queue' || ((revision >> index) & 1) === 0,
+        ...(['mail', 'bills', 'bank'].includes(section.id) ? { notify: (['each', 'summary', 'off'] as const)[revision % 3] } : {}),
+        ...(section.id === 'bills' ? { layout: revision % 2 ? 'review-list' as const : 'calendar' as const } : {}) }));
+      expect((await a.call('PUT', { version: 3, expectedRevision: revision, tabs, desk: { sections } }))?.status).toBe(200);
+    }
+    const state = (await a.read()).state!;
+    expect(state.history).toHaveLength(10);
+    expect(state.history.every(entry => entry.sections.find(section => section.id === 'bills')?.layout)).toBe(true);
+    expect(Buffer.byteLength(await readFile(a.path, 'utf8'))).toBeLessThan(32_000);
+  });
   it('bounds history to ten layouts inside the size cap', async () => {
     const a = await fixture();
     for (let revision = 0; revision < 14; revision++) {
       const sections = defaultDeskSections().map((section, index) => ({ ...section, visible: section.id === 'queue' || (((revision + 1) >> index) & 1) === 1 }));
-      expect((await a.call('PUT', { version: 2, expectedRevision: revision, tabs: [], desk: { sections } }))?.status).toBe(200);
+      expect((await a.call('PUT', { version: 3, expectedRevision: revision, tabs: [], desk: { sections } }))?.status).toBe(200);
     }
     const state = (await a.read()).state!;
     expect(state.history).toHaveLength(10);
@@ -178,16 +206,19 @@ describe('customizable Desk layout', () => {
     [{ sections: [...defaultDeskSections().slice(1), { id: 'iframe', visible: true }] }],
     [{ sections: defaultDeskSections().map(section => ({ ...section, script: 'x' })) }],
     [{ sections: defaultDeskSections(), url: 'https://example.com' }],
+    [{ sections: defaultDeskSections().map(section => section.id === 'shared-work' ? { ...section, notify: 'each' } : section) }],
+    [{ sections: defaultDeskSections().map(section => section.id === 'bills' ? { ...section, layout: 'table' } : section) }],
+    [{ sections: defaultDeskSections().map(section => section.id === 'mail' ? { ...section, layout: 'priority-list' } : section) }],
     [undefined],
   ])('rejects an invalid Desk layout before mutation', async deskValue => {
     const a = await fixture();
-    expect((await a.call('PUT', { version: 2, expectedRevision: 0, tabs: [], desk: deskValue }))?.status).toBe(400);
+    expect((await a.call('PUT', { version: 3, expectedRevision: 0, tabs: [], desk: deskValue }))?.status).toBe(400);
     expect((await a.read()).state?.revision).toBe(0);
   });
   it('answers a stale layout save with 409 and keeps the stored layout', async () => {
     const a = await fixture();
-    expect((await a.call('PUT', { version: 2, expectedRevision: 0, tabs: [], desk: { sections: custom() } }))?.status).toBe(200);
-    const stale = await a.call('PUT', { version: 2, expectedRevision: 0, tabs: [], desk: { sections: defaultDeskSections() } });
+    expect((await a.call('PUT', { version: 3, expectedRevision: 0, tabs: [], desk: { sections: custom() } }))?.status).toBe(200);
+    const stale = await a.call('PUT', { version: 3, expectedRevision: 0, tabs: [], desk: { sections: defaultDeskSections() } });
     expect(stale?.status).toBe(409);
     expect((await a.read()).state?.desk.sections).toEqual(custom());
   });
@@ -197,9 +228,9 @@ describe('customizable Desk layout', () => {
     const handler = createWorkspaceTabsHandler({ directory: a.directory, workspaceId: a.workspaceId, onSaved: change => heard.push(change) });
     const put = (body: unknown, by?: 'bud') => handler.handle('/api/workspace-tabs', 'PUT', body, by);
     expect(await handler.simpleDeskIfNeverCustomized()).toBe(true);
-    expect((await put({ version: 2, expectedRevision: 1, tabs: [], desk: { sections: custom() } }, 'bud'))?.status).toBe(200);
-    expect((await put({ version: 2, expectedRevision: 1, tabs: [], desk: { sections: custom() } }))?.status).toBe(409);
-    expect((await put({ version: 2, expectedRevision: 2, tabs: [], desk: { sections: [] } }))?.status).toBe(400);
+    expect((await put({ version: 3, expectedRevision: 1, tabs: [], desk: { sections: custom() } }, 'bud'))?.status).toBe(200);
+    expect((await put({ version: 3, expectedRevision: 1, tabs: [], desk: { sections: custom() } }))?.status).toBe(409);
+    expect((await put({ version: 3, expectedRevision: 2, tabs: [], desk: { sections: [] } }))?.status).toBe(400);
     expect((await handler.handle('/api/workspace-tabs/revert', 'POST', { expectedRevision: 2, toRevision: 1 }))?.status).toBe(200);
     expect((await handler.handle('/api/workspace-tabs/reset', 'POST', { expectedRevision: 3, confirm: true }))?.status).toBe(200);
     expect(heard).toEqual([{ revision: 1 }, { revision: 2, by: 'bud' }, { revision: 3 }, { revision: 4 }]);
@@ -208,9 +239,35 @@ describe('customizable Desk layout', () => {
     expect((await throwing.handle('/api/workspace-tabs', 'PUT', { version: 1, expectedRevision: 4, tabs: [tab] }))?.status).toBe(200);
     expect((await a.read()).state?.tabs).toEqual([tab]);
   });
+  it('saves and announces a notice-only change, and keeps the earlier layout for Undo', async () => {
+    const a = await fixture();
+    const heard: unknown[] = [];
+    const handler = createWorkspaceTabsHandler({ directory: a.directory, workspaceId: a.workspaceId, onSaved: change => heard.push(change) });
+    const notified = defaultDeskSections().map(section => section.id === 'mail' ? { ...section, notify: 'each' as const } : section);
+    expect((await handler.handle('/api/workspace-tabs', 'PUT', { version: 3, expectedRevision: 0, tabs: [], desk: { sections: notified } }, 'bud'))?.status).toBe(200);
+    const state = (await a.read()).state!;
+    expect(state.desk.sections).toEqual(notified);
+    expect(state.history.map(entry => entry.sections)).toEqual([notified, defaultDeskSections()]);
+    expect(heard).toEqual([{ revision: 1, by: 'bud' }]);
+  });
+  it('answers every route with the office preset, the core one by default, recovery included', async () => {
+    const a = await fixture();
+    const office = coreOfficeDesk(['bank-references']);
+    const handler = createWorkspaceTabsHandler({ directory: a.directory, workspaceId: a.workspaceId, officeDesk: async () => office });
+    const answers = [
+      await handler.handle('/api/workspace-tabs', 'GET'),
+      await handler.handle('/api/workspace-tabs', 'PUT', { version: 1, expectedRevision: 0, tabs: [tab] }),
+      await handler.handle('/api/workspace-tabs', 'PUT', { version: 3, expectedRevision: 1, tabs: [tab], desk: { sections: custom() } }),
+      await handler.handle('/api/workspace-tabs/revert', 'POST', { expectedRevision: 2, toRevision: 1 }),
+      await handler.handle('/api/workspace-tabs/reset', 'POST', { expectedRevision: 3, confirm: true }),
+    ];
+    for (const answer of answers) { expect(answer?.status).toBe(200); expect(parseWorkspaceTabsResponse(answer?.body).office).toEqual(office); }
+    plantPrivateFile(a.path, '{broken-json');
+    expect(parseWorkspaceTabsResponse((await a.call())?.body)).toMatchObject({ state: null, office: coreOfficeDesk() });
+  });
   it('keeps the Desk layout when saved view shortcuts are reset', async () => {
     const a = await fixture();
-    await a.call('PUT', { version: 2, expectedRevision: 0, tabs: [tab], desk: { sections: custom() } });
+    await a.call('PUT', { version: 3, expectedRevision: 0, tabs: [tab], desk: { sections: custom() } });
     expect((await a.call('POST', { expectedRevision: 1, confirm: true }, '/api/workspace-tabs/reset'))?.status).toBe(200);
     const state = (await a.read()).state!;
     expect(state.tabs).toEqual([]); expect(state.desk.sections).toEqual(custom());
@@ -219,21 +276,21 @@ describe('customizable Desk layout', () => {
     const a = await fixture();
     expect((await a.read()).state!.shell).toBeUndefined();
     const shell = { ...defaultShellLayout(), panelWidth: 420 };
-    expect((await a.call('PUT', { version: 2, expectedRevision: 0, tabs: [], desk, shell }))?.status).toBe(200);
+    expect((await a.call('PUT', { version: 3, expectedRevision: 0, tabs: [], desk, shell }))?.status).toBe(200);
     expect((await a.read()).state!.shell).toEqual(shell);
     // Bud's version 2 writes and tab-only writes keep the stored panel layout.
-    expect((await a.call('PUT', { version: 2, expectedRevision: 1, tabs: [tab], desk }))?.status).toBe(200);
+    expect((await a.call('PUT', { version: 3, expectedRevision: 1, tabs: [tab], desk }))?.status).toBe(200);
     expect((await a.call('PUT', { version: 1, expectedRevision: 2, tabs: [] }))?.status).toBe(200);
     expect((await a.read()).state!.shell).toEqual(shell);
     const hidden = { ...shell, panels: shell.panels.map(panel => panel.id === 'approvals' ? { ...panel, visible: false } : panel) };
-    const refused = await a.call('PUT', { version: 2, expectedRevision: 3, tabs: [], desk, shell: hidden });
+    const refused = await a.call('PUT', { version: 3, expectedRevision: 3, tabs: [], desk, shell: hidden });
     expect(refused?.status).toBe(400);
     expect((refused?.body as { code: string }).code).toBe('invalid_shell');
     const noQueue = { sections: defaultDeskSections().map(section => section.id === 'queue' ? { ...section, visible: false } : section) };
-    expect((await a.call('PUT', { version: 2, expectedRevision: 3, tabs: [], desk: noQueue }))?.status).toBe(400);
-    for (const panelWidth of [279, 561, 300.5]) expect((await a.call('PUT', { version: 2, expectedRevision: 3, tabs: [], desk, shell: { ...shell, panelWidth } }))?.status).toBe(400);
+    expect((await a.call('PUT', { version: 3, expectedRevision: 3, tabs: [], desk: noQueue }))?.status).toBe(400);
+    for (const panelWidth of [279, 561, 300.5]) expect((await a.call('PUT', { version: 3, expectedRevision: 3, tabs: [], desk, shell: { ...shell, panelWidth } }))?.status).toBe(400);
     expect((await a.call('PUT', { version: 1, expectedRevision: 3, tabs: [], shell }))?.status).toBe(400);
-    expect((await a.call('PUT', { version: 2, expectedRevision: 2, tabs: [], desk, shell }))?.status).toBe(409);
+    expect((await a.call('PUT', { version: 3, expectedRevision: 2, tabs: [], desk, shell }))?.status).toBe(409);
     expect((await a.read()).state!.revision).toBe(3);
   });
 });

@@ -32,7 +32,8 @@ export function DesktopShell({ inert, children }: { inert: boolean; children: Re
   const nav = useDeskNav();
   const workspaceTabs = useWorkspaceTabs();
   const savedViews = workspaceTabs.data?.state?.tabs.filter(tab => tab.visible) ?? [];
-  const areas = visibleDeskAreas(workspaceTabs.data?.state?.desk.sections);
+  // Bank references has no Desk surface yet (a later slice), so its tab is not offered.
+  const areas = visibleDeskAreas(workspaceTabs.data?.state?.desk.sections, workspaceTabs.office).filter(id => id !== "bank");
   const toasts = useToasts();
   useBudDeskReceipt(toasts);
   const browser = useShellBrowser();

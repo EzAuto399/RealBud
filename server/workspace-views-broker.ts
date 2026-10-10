@@ -1,16 +1,18 @@
 // Bud's saved-view and Desk layout tools: the person changes their Desk by asking
 // Bud, with no separate management screen. `views_list` is a read with no card.
-// `desk_arrange` changes only this computer's Desk layout, so it applies at once
-// with no card and Desk offers Undo. Every saved-view change shows RealBud's
-// one-time review card first. All writes go through the saved-views service
+// `desk_arrange` changes only this computer's Desk layout (order, what shows, a
+// work area's notices and layout), so it applies at once with no card and Desk
+// offers Undo. Every saved-view change shows RealBud's one-time review card
+// first. All writes go through the saved-views service
 // (`server/workspace-tabs.ts`) with its revision check, so an edit made elsewhere
 // is a conflict, never overwritten. Every view and Desk layout is checked with
 // the shared parser. Mounted per ACP session as a loopback MCP server.
 import { randomUUID } from "node:crypto";
 import {
-  DESK_SECTION_LABELS, LOCKED_DESK_SECTIONS, MAX_WORKSPACE_TABS, WORKSPACE_VIEW_FILTERS, deskChangeSummary, parseDeskSections, parseWorkspaceTabs, parseWorkspaceTabsResponse,
-  sameDeskSections, validWorkspaceRevision, type DeskSection, type WorkspaceTab, type WorkspaceTabs, type WorkspaceViewKind,
+  DESK_SECTION_LABELS, LAYOUT_AREA_IDS, LOCKED_DESK_SECTIONS, MAX_WORKSPACE_TABS, NOTICE_AREA_IDS, WORKSPACE_VIEW_FILTERS, deskChangeSummary, effectiveDeskAreas, parseDeskSections,
+  parseWorkspaceTabs, parseWorkspaceTabsResponse, sameDeskSections, validWorkspaceRevision, type DeskArea, type DeskSection, type WorkspaceTab, type WorkspaceTabs, type WorkspaceViewKind,
 } from "../shared/workspace-tabs.ts";
+import { AREA_LAYOUTS, NOTICE_LEVELS, isDeskAreaId, type OfficeDesk } from "../shared/desk-areas.ts";
 import { startLoopbackToolServer, toolError, type LoopbackToolResult, type LoopbackToolServer } from "./web-research-broker.ts";
 
 export const WORKSPACE_VIEWS_SERVER = "workspace-views";
@@ -22,7 +24,7 @@ export const DESK_CONFLICT = "Desk changed since you read it. Nothing was change
  * the change. Answers are the handler's `{ status, body }`. */
 export interface BudWorkspaceViews {
   read(): Promise<{ status: number; body: unknown }>;
-  save(body: { expectedRevision: number; version: 2; tabs: WorkspaceTab[]; desk: { sections: DeskSection[] } }): Promise<{ status: number; body: unknown }>;
+  save(body: { expectedRevision: number; version: 3; tabs: WorkspaceTab[]; desk: { sections: DeskSection[] } }): Promise<{ status: number; body: unknown }>;
 }
 export interface WorkspaceViewsReceipt { tool: string; outcome: "succeeded" | "failed" | "refused" | "declined" | "conflict"; viewId?: string }
 
@@ -32,14 +34,15 @@ const ID = { type: "string", pattern: "^view-[a-z0-9-]{1,64}$" };
 const NAME = { type: "string", minLength: 1, maxLength: 40 };
 const SECTIONS = {
   type: "array",
-  description: "The whole Desk layout in display order: every section exactly once as {id, visible}. 'queue' (Needs you) must stay visible.",
+  description: `The whole Desk layout in display order: every section exactly once as {id, visible}. 'queue' (Needs you) must stay visible. Optional notify, only for ${NOTICE_AREA_IDS.join(", ")}: each (a desktop notice per new item), summary (one per run) or off (problems only). Optional layout, only for ${LAYOUT_AREA_IDS.map(id => `${id} (${AREA_LAYOUTS[id].join(" or ")})`).join(", ")}. Leave notify or layout out to use the office's setting.`,
   items: { type: "object", additionalProperties: false, required: ["id", "visible"], properties: {
-    id: { type: "string", enum: Object.keys(DESK_SECTION_LABELS) }, visible: { type: "boolean" } } },
+    id: { type: "string", enum: Object.keys(DESK_SECTION_LABELS) }, visible: { type: "boolean" },
+    notify: { type: "string", enum: [...NOTICE_LEVELS] }, layout: { type: "string", enum: [...new Set(LAYOUT_AREA_IDS.flatMap(id => AREA_LAYOUTS[id]))] } } },
 };
 const TOOLS = [
-  { name: "views_list", description: "List the person's saved views (id, name, kind, filter, shown in the sidebar or hidden) and this computer's Desk layout: its revision, every section in display order with its name and whether it shows, and the sections that always show. Read only; call it before desk_arrange.",
+  { name: "views_list", description: "List the person's saved views (id, name, kind, filter, shown in the sidebar or hidden) and this computer's Desk layout: its revision, every section in display order with its name and whether it shows, for each work area whether this office uses it and its current notify and layout, and the sections that always show. Read only; call it before desk_arrange.",
     inputSchema: { type: "object", additionalProperties: false, properties: {} } },
-  { name: "desk_arrange", description: "Show, hide or reorder this computer's Desk sections. revision is the Desk revision views_list returned; sections lists every section id exactly once in display order. 'queue' (Needs you) always stays visible. Changes only this computer's view, applies at once with no card, and the person can Undo it. If Desk changed since views_list, read it again.",
+  { name: "desk_arrange", description: "Show, hide or reorder this computer's Desk sections, and choose a work area's notices or layout. revision is the Desk revision views_list returned; sections lists every section id exactly once in display order. 'queue' (Needs you) always stays visible. Problems always notify, whatever notify says. Changes only this computer's view, applies at once with no card, and the person can Undo it. If Desk changed since views_list, read it again.",
     inputSchema: { type: "object", additionalProperties: false, required: ["revision", "sections"], properties: { revision: { type: "integer", minimum: 0 }, sections: SECTIONS } } },
   { name: "views_create", description: `Propose a new saved view in the sidebar. kind is one of ${KINDS.join(", ")}; filter is optional (defaults to the kind's first filter). The person approves it once on a card.`,
     inputSchema: { type: "object", additionalProperties: false, required: ["name", "kind"], properties: {
@@ -65,19 +68,25 @@ const ARGS: Record<string, { required: string[]; optional: string[] }> = {
 
 const text = (value: string, structuredContent?: Record<string, unknown>): LoopbackToolResult => ({ content: [{ type: "text", text: value }], ...(structuredContent ? { structuredContent } : {}) });
 const quoted = (label: string) => `'${label}'`;
-const sectionList = (sections: DeskSection[]) => sections.filter(section => section.visible).map(section => DESK_SECTION_LABELS[section.id]).join(", ");
+/** The work areas this office uses, as this computer shows them, by id. */
+const officeAreas = (sections: DeskSection[], office: OfficeDesk) => new Map<string, DeskArea>(effectiveDeskAreas(sections, office).map(area => [area.id, area]));
+/** What Desk shows, in order: an area this office does not use never shows, whatever its setting. */
+const sectionList = (sections: DeskSection[], office: OfficeDesk) => {
+  const areas = officeAreas(sections, office);
+  return sections.filter(section => section.visible && (areas.has(section.id) || !isDeskAreaId(section.id))).map(section => areas.get(section.id)?.title ?? DESK_SECTION_LABELS[section.id]).join(", ");
+};
 
 /** A proposed change: the new state's tabs and layout, and its one-line card. */
 type Change = { tabs: WorkspaceTab[]; sections: DeskSection[]; card: string; done: string; viewId?: string; result?: Record<string, unknown> };
 
 /** desk_arrange: the whole layout, checked by the shared parser. The service's PUT always saves revision + 1. */
-function arrangement(args: Record<string, unknown>, state: WorkspaceTabs): Change | string {
+function arrangement(args: Record<string, unknown>, state: WorkspaceTabs, office: OfficeDesk): Change | string {
   if (!validWorkspaceRevision(args.revision)) return "revision must be the Desk revision views_list returned. Nothing was changed.";
   let sections: DeskSection[];
   try { sections = parseDeskSections(args.sections); } catch (error) { return `${error instanceof Error ? error.message : "Check the Desk sections."} Nothing was changed.`; }
   const revision = state.revision + 1;
   return { tabs: state.tabs, sections, card: "", result: { revision, previousRevision: state.revision },
-    done: `Arranged Desk: ${deskChangeSummary(state.desk.sections, sections)}. Desk now shows ${sectionList(sections)}. The person can Undo it on Desk (previous revision ${state.revision}, now ${revision}).` };
+    done: `Arranged Desk: ${deskChangeSummary(state.desk.sections, sections)}. Desk now shows ${sectionList(sections, office)}. The person can Undo it on Desk (previous revision ${state.revision}, now ${revision}).` };
 }
 
 function proposal(name: string, args: Record<string, unknown>, state: WorkspaceTabs): Change | string {
@@ -131,11 +140,11 @@ export async function startWorkspaceViewsBroker(options: {
   receipt?: (receipt: WorkspaceViewsReceipt) => void;
 }): Promise<LoopbackToolServer> {
   const note = (receipt: WorkspaceViewsReceipt) => { try { options.receipt?.(receipt); } catch { /* receipts never change the outcome */ } };
-  const current = async (views: BudWorkspaceViews): Promise<WorkspaceTabs | string> => {
+  const current = async (views: BudWorkspaceViews): Promise<{ state: WorkspaceTabs; office: OfficeDesk } | string> => {
     const answer = await views.read();
     if (answer.status !== 200) return errorOf(answer.body).message;
-    const parsed = parseWorkspaceTabsResponse(answer.body);
-    return parsed.state ?? "Saved views need recovery before they can be changed. Your business records are unchanged.";
+    const { state, office } = parseWorkspaceTabsResponse(answer.body);
+    return state ? { state, office } : "Saved views need recovery before they can be changed. Your business records are unchanged.";
   };
   return startLoopbackToolServer({
     name: WORKSPACE_VIEWS_SERVER,
@@ -150,24 +159,32 @@ export async function startWorkspaceViewsBroker(options: {
       if (Object.keys(args).some(key => !shape.required.includes(key) && !shape.optional.includes(key)) || shape.required.some(key => args[key] === undefined)) {
         return toolError(`${name} takes ${[...shape.required, ...shape.optional.map(key => `optional ${key}`)].join(", ") || "no arguments"}.`);
       }
-      let state: WorkspaceTabs | string;
-      try { state = await current(views); } catch { return toolError("Saved views could not be checked. Nothing was changed."); }
-      if (typeof state === "string") return toolError(state);
+      let read: Awaited<ReturnType<typeof current>>;
+      try { read = await current(views); } catch { return toolError("Saved views could not be checked. Nothing was changed."); }
+      if (typeof read === "string") return toolError(read);
+      const { state, office } = read;
       if (name === "views_list") {
         const rows = state.tabs.map(tab => ({ id: tab.id, name: tab.label, kind: tab.view.kind, filter: tab.view.filter, visible: tab.visible }));
         const lines = rows.map(row => `- ${row.id}: ${JSON.stringify(row.name)} (${KIND_LABELS[row.kind]}, ${row.filter}, ${row.visible ? "shown" : "hidden"})`);
-        const desk = state.desk.sections.map(section => ({ id: section.id, name: DESK_SECTION_LABELS[section.id], visible: section.visible }));
-        const deskLines = desk.map(section => `- ${section.id}: ${section.name} (${section.visible ? "shown" : "hidden"})`);
+        // Each work area as the office presets it, with this computer's own choices applied.
+        const areas = officeAreas(state.desk.sections, office), desk: Record<string, unknown>[] = [], deskLines: string[] = [];
+        for (const section of state.desk.sections) {
+          const area = areas.get(section.id), row: Record<string, unknown> = { id: section.id, name: area?.title ?? DESK_SECTION_LABELS[section.id], visible: section.visible };
+          const notes = [section.visible ? "shown" : "hidden"];
+          if (area) { Object.assign(row, { available: true, notify: area.notify, layout: area.layout }); notes.push(...area.notify ? [`notify ${area.notify}`] : [], `layout ${area.layout}`); }
+          else if (isDeskAreaId(section.id)) { row.available = false; notes.push("not used by this office"); }
+          desk.push(row); deskLines.push(`- ${section.id}: ${row.name} (${notes.join(", ")})`);
+        }
         return text(`${rows.length ? `Saved views:\n${lines.join("\n")}` : "There are no saved views yet."}\nDesk layout (revision ${state.revision}), in order:\n${deskLines.join("\n")}\nAlways shown: ${LOCKED_DESK_SECTIONS.join(", ")}.`,
           { views: rows, revision: state.revision, desk, locked: [...LOCKED_DESK_SECTIONS] });
       }
       const arranging = name === "desk_arrange";
-      const change = arranging ? arrangement(args, state) : proposal(name, args, state);
+      const change = arranging ? arrangement(args, state, office) : proposal(name, args, state);
       if (typeof change === "string") { note({ tool: name, outcome: "refused" }); return toolError(change); }
       if (arranging && args.revision !== state.revision) { note({ tool: name, outcome: "conflict" }); return toolError(DESK_CONFLICT); }
       if (arranging && sameDeskSections(change.sections, state.desk.sections)) return text("Desk already looks like that. Nothing was changed.");
       // The shared parser is the only judge of a valid set of views.
-      try { parseWorkspaceTabs({ version: 2, revision: state.revision, tabs: change.tabs, desk: { sections: change.sections }, history: [] }); }
+      try { parseWorkspaceTabs({ version: 3, revision: state.revision, tabs: change.tabs, desk: { sections: change.sections }, history: [] }); }
       catch { note({ tool: name, outcome: "refused" }); return toolError("Check the saved view name (1 to 40 plain characters), kind and filter. No views were changed."); }
       // A Desk layout changes only this computer's view and Desk offers Undo, so it has no card.
       if (!arranging && !await options.approve(change.card, signal)) {
@@ -177,7 +194,7 @@ export async function startWorkspaceViewsBroker(options: {
       if (signal.aborted || options.turnId() !== turn || options.views() !== views) return toolError("Bud is no longer working on this request. Nothing was changed.");
       try {
         // Compare-and-set on the revision read before the card was shown (or that Bud read for desk_arrange).
-        const answer = await views.save({ expectedRevision: state.revision, version: 2, tabs: change.tabs, desk: { sections: change.sections } });
+        const answer = await views.save({ expectedRevision: state.revision, version: 3, tabs: change.tabs, desk: { sections: change.sections } });
         if (answer.status === 200) {
           note({ tool: name, outcome: "succeeded", ...(change.viewId ? { viewId: change.viewId } : {}) });
           return text(change.done, change.viewId ? { viewId: change.viewId } : change.result);
