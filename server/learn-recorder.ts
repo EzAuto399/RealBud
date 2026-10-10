@@ -10,6 +10,7 @@ import { LEARN_MAX_EVENTS, LEARN_MAX_TEXT, type LearnEvent, type LearnLandmark, 
 import { ownedBrowserEndpoint } from "./hermes-browser-transport.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { learnLabel } from "./learned-recipes.ts";
+import { workLedger, type WorkLedger } from "./work-ledger.ts";
 
 const fail = (message: string, status = 409) => Object.assign(new Error(message), { status });
 type Json = Record<string, unknown>;
@@ -136,6 +137,8 @@ export interface LearnRecorderOptions {
   open(url: string): Promise<{ endpoint: string; targetId: string }>;
   now?: () => number;
   socket?: (url: string) => WebSocket;
+  /** Defaults to the process-wide ledger an update restart reads. */
+  workLedger?: WorkLedger;
 }
 
 export class LearnRecorder {
@@ -145,7 +148,11 @@ export class LearnRecorder {
   private stopping = false;
   /** A stopped recording whose draft was not saved yet: kept until a save succeeds or it is discarded. */
   private held: { portal: string; startedAt: number; events: LearnEvent[] } | null = null;
-  constructor(options: LearnRecorderOptions) { this.options = options; }
+  constructor(options: LearnRecorderOptions) {
+    this.options = options;
+    // A recording, or a stopped one whose draft isn't saved yet, lives only in this process: it waits on the person.
+    (options.workLedger ?? workLedger).probe("learn-recording", () => ({ waiting: this.recording() || this.view().state === "recording" ? 1 : 0 }));
+  }
 
   /** A held recording still shows as recording, so the person can press Stop again to retry saving it. */
   view(): LearnSessionView {

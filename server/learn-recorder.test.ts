@@ -1,5 +1,6 @@
 import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
+import { createWorkLedger } from "./work-ledger.ts";
 import { LearnRecorder, LEARN_LISTENER } from "./learn-recorder.ts";
 import { LEARN_MAX_EVENTS, LEARN_MAX_TEXT } from "../shared/learned-recipes.ts";
 
@@ -62,6 +63,17 @@ async function recording() {
 const click = (name: string, landmark = "main") => ({ kind: "click", role: "button", name, landmark });
 
 describe("LearnRecorder", () => {
+  it("waits on the person in the update restart's ledger while it records, and not once stopped", async () => {
+    const cdp = fakeCdp(), ledger = createWorkLedger();
+    const open = vi.fn(async (_url: string) => ({ endpoint: "ws://127.0.0.1:49231/devtools/browser/fictional-learn", targetId: "FICTIONALTAB" }));
+    const recorder = new LearnRecorder({ open, now: () => 1000, socket: () => cdp.socket, workLedger: ledger });
+    expect(ledger.snapshot().waiting).toBe(0);
+    await recorder.start("fictional-portal", ORIGIN);
+    expect(ledger.snapshot()).toEqual({ working: 0, waiting: 1, byKind: { "learn-recording": { working: 0, waiting: 1 } } });
+    await recorder.stop();
+    expect(ledger.snapshot().waiting).toBe(0);
+  });
+
   it("attaches to the opened tab, installs the binding and listener, and records the first page without its query", async () => {
     const { cdp, open, view } = await recording();
     expect(open).toHaveBeenCalledWith(`${ORIGIN}/`);

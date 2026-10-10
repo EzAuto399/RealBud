@@ -50,6 +50,19 @@ describe("durable property batches", () => {
     expect(ledger.snapshot().working).toBe(0);
   });
 
+  it("counts an auto-continue batch only while a property is being prepared: it is requeued after a restart", async () => {
+    const { input, ask, available, deps } = setup();
+    available.mockResolvedValue(true);
+    const ledger = createWorkLedger(), service = new BatchService({ ...deps, file: join(deps.file, "..", "auto-ledger.json"), workLedger: ledger }); services.push(service);
+    const answer = deferred<ReturnType<typeof receipt>>();
+    ask.mockImplementationOnce(() => answer.promise);
+    const created = service.create({ ...input, requestKey: "request-0003", autoContinue: true });
+    await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(1));
+    expect(ledger.snapshot().byKind.batch).toEqual({ working: 1, waiting: 0 });
+    answer.resolve(receipt()); await service.wait(created.id);
+    expect(ledger.snapshot()).toEqual({ working: 0, waiting: 0, byKind: {} });
+  });
+
   it("isolates each property, saves complete results, and uses only bounded preparation tools", async () => {
     const { service, input, ask, file } = setup();
     const created = service.create(input); await service.wait(created.id);
