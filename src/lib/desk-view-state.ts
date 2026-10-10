@@ -41,6 +41,11 @@ export function openDeskQueueFilter(filter: QueueFilter) {
   Object.assign(view, { mode: "cases", hermios: false, otherWork: null, filter, query: "", caseKind: "all", taskScope: null });
   emit();
 }
+/** Open one work area's tab, from a notice or a Needs you row. Desk shows Tasks instead if the area is hidden. */
+export function openDeskArea(area: DeskOtherWork) {
+  Object.assign(view, { mode: "cases", hermios: false, otherWork: area, query: "", caseKind: "all", taskScope: null });
+  emit();
+}
 /** Explicit task links must open the queue even if the last view was Properties. */
 export function openDeskTasks() {
   Object.assign(view, { mode: "cases", hermios: false, otherWork: null, filter: "now", selectedId: null, query: "", caseKind: "all", taskScope: null });

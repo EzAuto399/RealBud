@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { coreOfficeDesk } from '@shared/desk-areas';
 import { defaultDeskSections } from '@shared/workspace-tabs';
-import { visibleDeskAreas } from './desk-view-state';
+import { openDeskArea, openDeskTasks, useDeskViewState, visibleDeskAreas } from './desk-view-state';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { createElement } from 'react';
 
 describe('Desk work-area tabs', () => {
   it("shows the office's available areas that are shown, in saved order", () => {
@@ -11,5 +13,12 @@ describe('Desk work-area tabs', () => {
   });
   it("uses today's order and the core preset until the layout and the office preset are read", () => {
     expect(visibleDeskAreas(undefined, null)).toEqual(['mail', 'bills', 'shared-work']);
+  });
+  it('opens one work area and leaves it for Tasks', () => {
+    const Probe = () => { const [area] = useDeskViewState('otherWork'); return createElement('i', null, area ?? 'tasks'); };
+    openDeskArea('bills');
+    expect(renderToStaticMarkup(createElement(Probe))).toBe('<i>bills</i>');
+    openDeskTasks();
+    expect(renderToStaticMarkup(createElement(Probe))).toBe('<i>tasks</i>');
   });
 });
