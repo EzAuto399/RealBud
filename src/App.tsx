@@ -7,7 +7,7 @@ import { hasUnsavedMailReviews } from "@/lib/mail-review-drafts";
 import { hasUnsavedOfficeDrafts } from "@/lib/office-draft-journal";
 import { hasUnsavedDepartmentConfigurationDrafts } from '@/lib/department-configuration-draft-journal';
 import { hasUnpersistedBillDrafts } from "@/lib/bill-review-drafts";
-import { scrollYouTarget, youHashTarget, youRecoveryTarget } from "@/lib/you-navigation";
+import { scrollYouTarget, youHashTarget } from "@/lib/you-navigation";
 import { NAVIGATION_CANCELLED } from "@/lib/navigation-guard";
 import { lazy, useCallback, useEffect, useRef, useState } from "react";
 import { WorkspaceScreen } from "@/components/WorkspaceScreen";
@@ -35,7 +35,7 @@ import { SHOW_DESK_EVENT, shownArea } from "@/lib/notify-desktop";
 import { WORKSPACE_SETUP_EVENT, isWorkspaceSetupTarget, type WorkspaceSetupTarget } from "@/lib/workspace-setup";
 import { ActionNotice } from "@/components/ActionNotice";
 import { DESIGN_PREVIEW_REASON } from "@/lib/design-preview";
-import { budFirstSetupCover, budSetupSheetDone, leaveLinkGate, linkGateLeft, officeLinkGate, parseBudStatus } from "@/lib/bud-setup";
+import { budFirstSetupCover, budSetupSheetDone, continueRecovery, leaveLinkGate, linkGateLeft, officeLinkGate, parseBudStatus, resumeSavedRecovery } from "@/lib/bud-setup";
 import { useOfficeLinkView } from "@/lib/use-office-link";
 
 const ChatView = lazy(() => import('@/components/ChatView').then(module => ({ default: module.ChatView })));
@@ -62,7 +62,8 @@ const VIEW_ACTIONS = {
   you: { type: "showYou" },
 } as const satisfies Record<DeskView, { type: string }>;
 
-function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | null }) {
+/** `recoveryStarted`: first run saved a recovery choice, so the office-link screen offers Continue recovery. */
+function Shell({ initialSetup = null, recoveryStarted = false }: { initialSetup?: WorkspaceSetupTarget | null; recoveryStarted?: boolean }) {
   // Keep unfinished wording in memory across navigation; never write it to disk.
   const deskCaseEdits = useRef(new Map<string, CaseEdit>());
   useEffect(() => {
@@ -132,7 +133,8 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
   const [leftSetup, setLeftSetup] = useState(false);
   const recovering = Boolean(state.desk?.recovery?.active);
   // The office link comes first; once linked, Bud's own setup cover takes over.
-  const officeLink = useOfficeLinkView(state.connected);
+  // A computer last read as not linked keeps the screen while the service reconnects.
+  const officeLink = useOfficeLinkView(state.connected, { keepLastRead: true });
   // Desk is home: fetch its code while the service answers. The browser keeps a chunk that failed
   // during an outage failed until reload, and the link gate no longer renders Desk first.
   useEffect(() => { if (state.connected) void loadDeskPage().catch(() => {}); }, [state.connected]);
@@ -150,8 +152,8 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
     if (deskRead.current) return;
     void api("/api/desk", undefined, { timeoutMs: 15_000 }).then(snapshot => { if (!deskRead.current) dispatch({ type: "deskSnapshot", snapshot }); }, () => {});
   }, [dispatch]);
-  // Recovery is the one way past the office-link screen, for this app session.
-  const openRecoveryPastLinkGate = useCallback(() => { location.hash = "you-recovery"; leaveLinkGate(); setLeftLinkGate(true); }, []);
+  // Recovery is the one way past the office-link screen, for this app session; a staged restore keeps its backup target.
+  const openRecoveryPastLinkGate = useCallback(() => { continueRecovery(location); setLeftLinkGate(true); }, []);
   const setupCover = budFirstSetupCover(state.hermes, { connected: state.connected, statusError: Boolean(budStatusRead.error), recovering });
   const settingUp = Boolean(setupCover) && !leftSetup;
   const setupSheetDone = budSetupSheetDone(state.hermes, { connected: state.connected, recovering, openedBySetup: setupFromFlow.current });
@@ -283,7 +285,7 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
         </div>
       )}
       {linkGate === "checking" && !linkCheckStuck ? <OfficeLinkChecking onStuck={linkCheckGaveUp} />
-      : linkGate ? <WorkspaceScreen key="office-link" label="office link"><LinkOfficeScreen gate={linkGate === "checking" ? "unavailable" : linkGate} onRetry={retryLinkGate} onOpenRecovery={openRecoveryPastLinkGate} /></WorkspaceScreen>
+      : linkGate ? <WorkspaceScreen key="office-link" label="office link"><LinkOfficeScreen gate={linkGate === "checking" ? "unavailable" : linkGate} onRetry={retryLinkGate} onOpenRecovery={openRecoveryPastLinkGate} onContinueRecovery={recoveryStarted ? openRecoveryPastLinkGate : undefined} /></WorkspaceScreen>
       : settingUp ? <WorkspaceScreen key="bud-setup" label="Bud setup"><BudSetupScreen running={setupCover === "running"} onLeave={() => setLeftSetup(true)} /></WorkspaceScreen> : <>
       <DesktopShell inert={Boolean(setup)}>
         {/* Keyed on the view: each place rises in once on arrival. Pages already
@@ -351,13 +353,13 @@ function FirstRunGate() {
     setError('');
     void readSavedSetup(api).then(next => {
       if (!active) return;
-      // Recovery comes before the office link: it never waits behind it.
-      if (next.stage === 'recovery') { location.hash = youRecoveryTarget(location.hash); leaveLinkGate(); }
+      // A saved recovery choice reopens recovery; the office-link screen offers Continue recovery.
+      resumeSavedRecovery(next.stage, location);
       setSaved(next);
     }).catch(cause => { if (active) setError(cause instanceof Error ? cause.message : 'Your saved setup could not be checked.'); });
     return () => { active = false; };
   }, [attempt]);
-  if (entered || firstRunDone(saved) || saved?.stage === 'recovery') return <Shell initialSetup={initialSetup} />;
+  if (entered || firstRunDone(saved) || saved?.stage === 'recovery') return <Shell initialSetup={initialSetup} recoveryStarted={saved?.stage === 'recovery'} />;
   if (!saved) return <main className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-paper p-6" role={error ? 'alert' : 'status'}>
     <p>{error || 'Checking your saved setup…'}</p>
     {error && <><button className="pm-control" onClick={() => setAttempt(value => value + 1)}>Try again</button><button className="pm-control" onClick={() => { location.hash = 'you-recovery'; leaveLinkGate(); setEntered(true); }}>Open recovery</button></>}

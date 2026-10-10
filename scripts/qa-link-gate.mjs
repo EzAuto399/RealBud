@@ -10,9 +10,11 @@
 // (revoked), waiting for browser approval and at the computer limit at 1280,
 // 768 and 390 px, with no shell flash and no exit; a check that never answers
 // hands over to Try again and recovery; walks it by keyboard to a link (the
-// screen goes and Bud's setup cover takes over); shows that shortcuts and deep
-// links don't get past it, that recovery does (for this app session only), and
-// that a book in recovery is never held behind it.
+// screen goes and Bud's setup cover takes over); shows that shortcuts, deep
+// links and a dropped service connection don't get past it, that recovery does
+// (for this app session only), that first run's saved recovery choice offers
+// Continue recovery instead of skipping the screen, and that a book in recovery
+// is never held behind it.
 //
 //   REALBUD_UI_DIR=<scratch vite build> PLAYWRIGHT_MODULE=... CHROME_EXECUTABLE=... QA_OUTPUT=<fresh dir> node scripts/qa-link-gate.mjs
 import assert from 'node:assert/strict';
@@ -23,7 +25,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readSessionToken, primeBrowserSession } from './local-session.mjs';
+import { readSessionToken, primeBrowserSession, LINK_GATE_LEFT_KEY } from './local-session.mjs';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { completeFictionalOnboarding } from './qa-onboarding.mjs';
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE to an installed Playwright module.');
@@ -37,7 +39,7 @@ const pass = text => { checks.push(text); console.log(`PASS ${text}`); };
 
 const NOT_LINKED = 'Connect this computer to your office';
 const REVOKED = 'This computer was disconnected from your office';
-const UNAVAILABLE = 'This computer’s office link couldn’t be checked';
+const UNAVAILABLE = 'RealBud couldn’t finish checking this computer';
 const CHECKING = 'Checking this computer’s office link…';
 const CODE = 'FICTIONAL-LINK-CODE-0001';
 const CAP = 'This office already has 5 computers. Disconnect one to pair another. Your code is kept: once your account owner disconnects a computer under Account → Computers on realbud.app, try this same code again.';
@@ -47,6 +49,8 @@ const OLD_EXITS = /sample desk|without Bud/i;
 /** `mode` is this computer's fictional link: what GET /api/office-link answers and what a pasted code does.
  * 'hold' never answers until released; 'fail' is the local service failing the read. */
 let mode = 'unlinked', redeemed = [], holdDesk = false;
+/** While set, the event stream's reconnects are refused: the local service is unreachable. */
+let dropEvents = false, eventsRefused = 0, eventsOpened = 0;
 const heldLinks = [], heldDesks = [];
 let child, browser, logs = '', failure;
 const pages = [];
@@ -76,8 +80,9 @@ try {
   };
   /** Answer every held read with the current mode. */
   const release = async () => { for (const route of heldLinks.splice(0)) await linkReply(route).catch(() => {}); for (const route of heldDesks.splice(0)) await route.continue().catch(() => {}); };
-  /** A fresh app session: its own browser context, the office-link screen kept (not passed). */
-  const session = async ({ deskPatch } = {}) => {
+  /** A fresh app session: its own browser context, the office-link screen kept (not passed).
+   * `onboardingStage` replaces the saved first-run stage the app reads. */
+  const session = async ({ deskPatch, onboardingStage } = {}) => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: 'reduce' });
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base });
     await primeBrowserSession(context, base, token, { linkGate: true });
@@ -87,13 +92,21 @@ try {
       new MutationObserver(() => {
         const now = performance.now();
         if (!seen.shell && document.querySelector('[aria-label="Status bar"]')) seen.shell = now;
-        if (!seen.gate && /Connect this computer to your office|disconnected from your office|couldn’t be checked/.test(document.querySelector('h1')?.textContent ?? '')) seen.gate = now;
+        if (!seen.gate && /Connect this computer to your office|disconnected from your office|couldn’t finish checking/.test(document.querySelector('h1')?.textContent ?? '')) seen.gate = now;
         const status = document.querySelector('main > p[role="status"]');
         if (status && seen.frame === undefined) seen.frame = now;
         if (status && !seen.words && status.textContent.trim()) seen.words = now;
       }).observe(document, { childList: true, subtree: true, characterData: true });
     });
     await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    await context.route(url => url.pathname === '/api/events', route => {
+      if (dropEvents) { eventsRefused++; return route.abort(); }
+      eventsOpened++; return route.continue();
+    });
+    if (onboardingStage) await context.route(url => url.pathname === '/api/onboarding', async route => {
+      if (route.request().method() !== 'GET') return route.continue();
+      const response = await route.fetch(); await route.fulfill({ response, json: { ...(await response.json()), stage: onboardingStage } });
+    });
     await context.route('**/api/office-link', route => {
       if (route.request().method() === 'POST') {
         redeemed.push(JSON.parse(route.request().postData() || '{}').code);
@@ -190,7 +203,8 @@ try {
         detail = 'the approval code, time left, Open the page again and Cancel';
       } else {
         action = page.getByRole('button', { name: 'Connect with this code', exact: true });
-        assert.equal(await page.getByRole('button', { name: 'Open recovery', exact: true }).count(), 0, `${name}: recovery is only for a link that can't be read`);
+        assert.equal(await page.getByRole('button', { name: 'Open recovery', exact: true }).count(), 0, `${name}: recovery is only for a check that can't finish`);
+        assert.equal(await page.getByRole('button', { name: 'Continue recovery', exact: true }).count(), 0, `${name}: Continue recovery is only for a recovery first run started`);
         detail = 'the link-code entry';
         // The heading says it once; the card doesn't repeat it.
         if (name === 'revoked') assert.equal(await page.getByText('This computer was removed from your office.', { exact: false }).count(), 0);
@@ -286,6 +300,23 @@ try {
   await held(second.page, 'a deep link reloaded');
   pass('No way around it: ⌘/Ctrl 1–4 and K, Escape, #/schedule, #you-settings and #/ask (and reloading one) keep the office-link screen, with no shell');
 
+  // ── The service connection drops: the screen stays while it reconnects, never the shell ──
+  dropEvents = true; eventsRefused = 0;
+  await second.page.evaluate(() => window.dispatchEvent(new CustomEvent('realbud:service-unavailable')));
+  for (let i = 0; i < 60 && eventsRefused < 2; i++) await wait(100);
+  assert.ok(eventsRefused >= 2, `the app tried to reconnect while the service was unreachable (${eventsRefused} refused)`);
+  await heading(second.page, NOT_LINKED).waitFor();
+  await held(second.page, 'while the service reconnects');
+  await shot(second.page, '1280-not-linked-reconnecting');
+  const refusedWhileDown = eventsRefused, openedBefore = eventsOpened;
+  dropEvents = false;
+  for (let i = 0; i < 100 && eventsOpened === openedBefore; i++) await wait(100);
+  assert.ok(eventsOpened > openedBefore, 'the app reconnected once the service answered');
+  await wait(500);
+  await heading(second.page, NOT_LINKED).waitFor();
+  await held(second.page, 'after reconnecting');
+  pass(`A dropped service connection: with ${refusedWhileDown} reconnects refused, the not-linked screen stays and the shell never shows; once reconnected it is still the not-linked screen`);
+
   // ── Recovery: the one way past, for this app session only ──
   mode = 'fail';
   await open(second.page);
@@ -303,6 +334,36 @@ try {
   await heading(third.page, UNAVAILABLE).waitFor();
   await held(third.page, 'a new app session');
   pass('Open recovery opens Workspace at #you-recovery; a reload keeps it; a new app session (fresh browser context) shows the office-link screen again');
+
+  // ── First run started recovery: the saved choice no longer skips the screen; Continue recovery passes it for this app session ──
+  mode = 'unlinked';
+  const restoring = await session({ onboardingStage: 'recovery' });
+  await open(restoring.page, '#you-private-backup');
+  await heading(restoring.page, NOT_LINKED).waitFor();
+  await held(restoring.page, 'a saved recovery choice');
+  assert.equal(await restoring.page.evaluate(key => sessionStorage.getItem(key), LINK_GATE_LEFT_KEY), null, 'a saved recovery choice does not pass the screen by itself');
+  const resume = restoring.page.getByRole('button', { name: 'Continue recovery', exact: true });
+  assert.ok(await resume.isVisible(), 'Continue recovery is offered once first run started recovery');
+  assert.equal(await restoring.page.getByRole('button', { name: 'Open recovery', exact: true }).count(), 0, 'not-linked keeps Open recovery for a check that can’t finish');
+  await restoring.page.setViewportSize({ width: 390, height: 844 });
+  await resume.scrollIntoViewIfNeeded();
+  await noSideScroll(restoring.page, 'Continue recovery at 390');
+  await shot(restoring.page, '390-continue-recovery');
+  await restoring.page.setViewportSize({ width: 1280, height: 900 });
+  await shot(restoring.page, '1280-continue-recovery');
+  await resume.focus();
+  await restoring.page.keyboard.press('Enter');
+  await statusBar(restoring.page).waitFor();
+  assert.equal(new URL(restoring.page.url()).hash, '#you-private-backup', 'a staged restore keeps its private-backup target');
+  await restoring.page.locator('#you-private-backup').waitFor();
+  await restoring.page.reload();
+  await statusBar(restoring.page).waitFor();
+  assert.equal(await heading(restoring.page, NOT_LINKED).count(), 0, 'a reload keeps recovery open for this session');
+  const relaunch = await session({ onboardingStage: 'recovery' });
+  await open(relaunch.page, '#you-private-backup');
+  await heading(relaunch.page, NOT_LINKED).waitFor();
+  await held(relaunch.page, 'a saved recovery choice in a new app session');
+  pass('First run started recovery: the saved choice shows the not-linked screen (no session pass) with Continue recovery below the link card; Enter on it opens Workspace at #you-private-backup; a reload keeps it; a new app session shows the screen again');
 
   // ── A book in recovery is never held behind the screen ──
   mode = 'unlinked';

@@ -21,7 +21,7 @@ vi.mock('./ConnectOffice', async importOriginal => ({
 import { LinkOfficeScreen } from './LinkOfficeScreen';
 
 type Gate = 'unavailable' | 'not-linked' | 'revoked';
-const render = (gate: Gate) => renderToStaticMarkup(createElement(LinkOfficeScreen, { gate, onRetry: () => {}, onOpenRecovery: () => {} }));
+const render = (gate: Gate, onContinueRecovery?: () => void) => renderToStaticMarkup(createElement(LinkOfficeScreen, { gate, onRetry: () => {}, onOpenRecovery: () => {}, onContinueRecovery }));
 /** No way past the screen except recovery, and none of the old exits. */
 const noExit = (html: string) => {
   expect(html).not.toMatch(/sample desk/i);
@@ -38,6 +38,7 @@ describe('office link screen', () => {
     expect(html).toContain('Link code');
     expect(html).toContain('>Connect with this code</button>');
     expect(html).not.toContain('Open recovery');
+    expect(html).not.toContain('Continue recovery');
     noExit(html);
     // The computer is named after the person on it.
     expect(fixture.personName).toBe('Fictional Kevin');
@@ -52,7 +53,26 @@ describe('office link screen', () => {
     expect(html).not.toContain('was removed from your office');
     expect(html).toContain('>Connect with this code</button>');
     expect(html).not.toContain('Open recovery');
+    expect(html).not.toContain('Continue recovery');
     noExit(html);
+  });
+
+  it('offers Continue recovery below the link card only once first run started recovery', () => {
+    fixture.error = '';
+    for (const [gate, state] of [['not-linked', 'unlinked'], ['revoked', 'revoked']] as const) {
+      fixture.status = { state };
+      const html = render(gate, () => {});
+      expect(html).toContain('>Connect with this code</button>');
+      // A secondary button after the link card, reachable by keyboard like every other button.
+      expect(html).toMatch(/<button type="button" class="pm-control[^"]*">Continue recovery<\/button>/);
+      expect(html.indexOf('Continue recovery')).toBeGreaterThan(html.indexOf('Connect with this code'));
+      expect(html).not.toContain('Open recovery');
+      noExit(html);
+    }
+    // Can't finish checking keeps its own Open recovery and nothing else.
+    const unavailable = render('unavailable', () => {});
+    expect(unavailable).toContain('>Open recovery</button>');
+    expect(unavailable).not.toContain('Continue recovery');
   });
 
   it('keeps the owner hand-off on screen when the office is at its computer limit', () => {
@@ -65,11 +85,12 @@ describe('office link screen', () => {
     noExit(html);
   });
 
-  it('offers Try again and recovery when the link can’t be read, without asking for a code', () => {
+  it('offers Try again and recovery when the check can’t finish, without asking for a code', () => {
     fixture.reads = 0;
     const html = render('unavailable');
     expect(html).toContain('<h1 tabindex="-1"');
-    expect(html).toContain('>This computer’s office link couldn’t be checked</h1>');
+    // True whether the link read failed or only the book read never answered.
+    expect(html).toContain('>RealBud couldn’t finish checking this computer</h1>');
     expect(html).toContain('RealBud’s local service didn’t answer. Everything saved here is kept.');
     expect(html).toMatch(/<button type="button" class="pm-decision[^"]*">Try again<\/button>/);
     expect(html).toMatch(/<button type="button" class="pm-control[^"]*">Open recovery<\/button>/);

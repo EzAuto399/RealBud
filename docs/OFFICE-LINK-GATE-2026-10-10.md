@@ -27,9 +27,12 @@ Owner decision (10 Oct 2026): every RealBud computer links to its office before 
 | Waiting for browser approval | the code on this computer, time left | Open the page again / Cancel |
 | Computer limit | alert, code kept | Copy request for your owner (free a place) |
 | Disconnected (revoked) | "This computer was disconnected from your office" and "Everything saved here is kept." | Connect with this code |
-| Can't be read (local service failed) | "This computer's office link couldn't be checked" | Try again; Open recovery |
+| Can't be read (local service failed, or the book didn't answer within 20 s) | "RealBud couldn't finish checking this computer" | Try again; Open recovery |
+| Service reconnecting, last read not linked or revoked | the same link screen | Connect with this code once the service is back |
+| Service reconnecting, linked or not read yet | no gate: the shell's own startup and reconnect screens | none (it resolves) |
 | Linked | gate gone | Bud setup screen, or Desk |
 | Book in recovery | no gate | recovery first |
+| Recovery started in first run, not finished | link screen with "Continue recovery" | Continue recovery, or link |
 
 ## Edge paths
 - **Wrong code:** an inline alert, and the typed code is kept.
@@ -38,6 +41,7 @@ Owner decision (10 Oct 2026): every RealBud computer links to its office before 
 
 ## Exits
 - First run keeps "Restore a private backup" and, for a protected book, "Open recovery".
+- Once recovery is started there, the link screen offers "Continue recovery" on each launch. That lasts until recovery finishes or the person returns to welcome. A saved recovery stage never skips the screen by itself.
 - The gate keeps "Open recovery" only when the link can't be read.
 - Each of these lets the person past the screen for the current app session only.
 - QA scripts skip the screen through `primeBrowserSession` (`scripts/local-session.mjs`). No screen sets that flag.

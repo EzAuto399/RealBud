@@ -16,11 +16,13 @@ const secondary = "pm-control w-full rounded border border-line bg-sheet px-3 te
 
 /** Takes the shell's place until this computer is linked to its office: every
  * computer links before anything else opens, ahead of Bud's own setup. Update
- * and handoff banners stay above it. The only way past is recovery, offered
- * when the link can't be read; first run keeps its own backup and recovery
- * choices. While the link is still being read, App shows the same frame from
- * the main bundle (`OfficeLinkChecking`), so a linked computer never loads this. */
-export function LinkOfficeScreen({ gate, onRetry, onOpenRecovery }: { gate: Exclude<OfficeLinkGate, "checking">; onRetry: () => void; onOpenRecovery: () => void }) {
+ * and handoff banners stay above it. The only way past is recovery: "Open
+ * recovery" when the check can't finish, and "Continue recovery" below the link
+ * card once first run started recovery (`onContinueRecovery`); first run keeps
+ * its own backup and recovery choices. While the link is still being read, App
+ * shows the same frame from the main bundle (`OfficeLinkChecking`), so a linked
+ * computer never loads this. */
+export function LinkOfficeScreen({ gate, onRetry, onOpenRecovery, onContinueRecovery }: { gate: Exclude<OfficeLinkGate, "checking">; onRetry: () => void; onOpenRecovery: () => void; onContinueRecovery?: () => void }) {
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => { heading.current?.focus(); }, [gate]);
   const [retrying, setRetrying] = useState(false);
@@ -46,7 +48,7 @@ export function LinkOfficeScreen({ gate, onRetry, onOpenRecovery }: { gate: Excl
           <header className="flex flex-col items-center gap-2 text-center">
             <MausAvatar color="green" state={gate === "not-linked" ? "idle" : "curious"} size={72} label="Bud" trackPointer={false} />
             <h1 ref={heading} tabIndex={-1} className="mt-2 text-2xl font-semibold text-ink outline-none">
-              {unavailable ? "This computer’s office link couldn’t be checked" : revoked ? "This computer was disconnected from your office" : "Connect this computer to your office"}
+              {unavailable ? "RealBud couldn’t finish checking this computer" : revoked ? "This computer was disconnected from your office" : "Connect this computer to your office"}
             </h1>
             <p className="text-sm text-ink-secondary">
               {unavailable ? "RealBud’s local service didn’t answer. Everything saved here is kept."
@@ -62,7 +64,10 @@ export function LinkOfficeScreen({ gate, onRetry, onOpenRecovery }: { gate: Excl
               </button>
               <button type="button" onClick={onOpenRecovery} className={secondary}>Open recovery</button>
             </div>
-          ) : <LinkCard revoked={revoked} />}
+          ) : <>
+            <LinkCard revoked={revoked} />
+            {onContinueRecovery && <button type="button" onClick={onContinueRecovery} className={secondary}>Continue recovery</button>}
+          </>}
         </main>
       </div>
     </div>
